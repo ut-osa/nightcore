@@ -1,0 +1,9 @@
+# Build related
+/build/
+/bin/
+/deps/out/
+/.release_time
+/.debug_time
+
+# Editor related
+/.vscode/
