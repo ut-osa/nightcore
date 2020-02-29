@@ -12,7 +12,7 @@ COMPILE_FLAGS = -std=c++11 -Wall
 # Additional release-specific flags
 RCOMPILE_FLAGS = -DNDEBUG -O2
 # Additional debug-specific flags
-DCOMPILE_FLAGS = -DDEBUG
+DCOMPILE_FLAGS = -DDEBUG -g
 # Add additional include paths
 INCLUDES = -I$(SRC_PATH) -Ideps/out/include
 # General linker settings
@@ -21,7 +21,7 @@ ABSL_LIBRARIES = $(shell find deps/out/lib/libabsl_*.a -printf '%f\n' \
 LINK_FLAGS = -Ldeps/out/lib \
 	-Wl,-Bstatic -lglog -luv_a -lhttp_parser \
 	-Wl,--start-group $(ABSL_LIBRARIES) -Wl,--end-group \
-	-Wl,-Bdynamic -lpthread
+	-Wl,-Bdynamic -lpthread -ldl
 # Additional release-specific linker settings
 RLINK_FLAGS =
 # Additional debug-specific linker settings
@@ -126,10 +126,7 @@ all: $(BIN_OUTPUTS)
 # Link the executable
 $(BIN_PATH)/%: $(BUILD_PATH)/bin/%.o $(NON_BIN_OBJECTS)
 	@echo "Linking: $@"
-	@$(START_TIME)
 	$(CMD_PREFIX)$(CXX) $(NON_BIN_OBJECTS) $< $(LDFLAGS) -o $@
-	@echo -en "\t Link time: "
-	@$(END_TIME)
 
 .SECONDARY: $(OBJECTS)
 
@@ -141,7 +138,4 @@ $(BIN_PATH)/%: $(BUILD_PATH)/bin/%.o $(NON_BIN_OBJECTS)
 # dependency files to provide header dependencies
 $(BUILD_PATH)/%.o: $(SRC_PATH)/%.$(SRC_EXT)
 	@echo "Compiling: $< -> $@"
-	@$(START_TIME)
 	$(CMD_PREFIX)$(CXX) $(CXXFLAGS) $(INCLUDES) -MP -MMD -c $< -o $@
-	@echo -en "\t Compile time: "
-	@$(END_TIME)
