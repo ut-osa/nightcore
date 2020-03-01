@@ -128,6 +128,7 @@ void Connection::HttpParserOnMessageBegin() {
     header_field_value_flag_ = -1;
     header_field_buffer_.Reset();
     header_value_buffer_.Reset();
+    header_value_buffer_pos_ = 0;
     url_buffer_.Reset();
 }
 
@@ -194,10 +195,12 @@ void Connection::HttpParserOnMessageComplete() {
 
 void Connection::HttpParserOnNewHeader() {
     std::string field(header_field_buffer_.data(), header_field_buffer_.length());
-    std::string value(header_value_buffer_.data(), header_value_buffer_.length());
-    HVLOG(1) << "Parse new HTTP header: " << field << " = " << value;
     header_field_buffer_.Reset();
-    header_value_buffer_.Reset();
+    header_value_buffer_.AppendData("\0", 1);
+    const char* value = header_value_buffer_.data() + header_value_buffer_pos_;
+    header_value_buffer_pos_ = header_value_buffer_.length();
+    HVLOG(1) << "Parse new HTTP header: " << field << " = " << value;
+    headers_[field] = value;
 }
 
 void Connection::ResetHttpParser() {

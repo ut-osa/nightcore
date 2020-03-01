@@ -52,13 +52,17 @@ private:
     http_parser http_parser_;
     int header_field_value_flag_;
 
+    // For request
     utils::AppendableBuffer url_buffer_;
     utils::AppendableBuffer header_field_buffer_;
     utils::AppendableBuffer header_value_buffer_;
     utils::AppendableBuffer body_buffer_;
+    size_t header_value_buffer_pos_;
+    absl::flat_hash_map<std::string, const char*> headers_;
+
+    // For response
     utils::AppendableBuffer response_header_buffer_;
     utils::AppendableBuffer response_body_buffer_;
-
     uv_write_t response_write_req_;
 
     void StartRecvData();
