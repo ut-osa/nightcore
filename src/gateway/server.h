@@ -28,7 +28,7 @@ public:
 
 private:
     enum State { kReady, kRunning, kStopping, kStopped };
-    State state_;
+    std::atomic<State> state_;
 
     std::string address_;
     int port_;
@@ -39,7 +39,7 @@ private:
     uv_tcp_t uv_tcp_handle_;
     uv_async_t stop_event_;
 
-    std::unique_ptr<std::thread> thread_;
+    base::Thread event_loop_thread_;
     std::vector<std::unique_ptr<IOWorker>> io_workers_;
     absl::flat_hash_map<IOWorker*, std::unique_ptr<uv_pipe_t>> pipes_to_io_worker_;
 

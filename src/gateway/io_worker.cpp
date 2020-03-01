@@ -8,15 +8,18 @@ namespace gateway {
 
 IOWorker::IOWorker(Server* server, int worker_id)
     : server_(server), worker_id_(worker_id), state_(kReady),
-      log_header_(absl::StrFormat("IOWorker[%d]: ", worker_id)) {
+      log_header_(absl::StrFormat("IOWorker[%d]: ", worker_id)),
+      event_loop_thread_(absl::StrFormat("IOWorker[%d]_EventLoop", worker_id),
+                         std::bind(&IOWorker::EventLoopThreadMain, this)) {
     LIBUV_CHECK_OK(uv_loop_init(&uv_loop_));
-    uv_loop_.data = this;
+    uv_loop_.data = &event_loop_thread_;
     LIBUV_CHECK_OK(uv_async_init(&uv_loop_, &stop_event_, &IOWorker::StopCallback));
     stop_event_.data = this;
 }
 
 IOWorker::~IOWorker() {
-    CHECK(state_ == kReady || state_ == kStopped);
+    State state = state_.load();
+    CHECK(state == kReady || state == kStopped);
     CHECK(connections_.empty());
     LIBUV_CHECK_OK(uv_loop_close(&uv_loop_));
 }
@@ -30,15 +33,15 @@ void PipeReadBufferAllocCallback(uv_handle_t* handle, size_t suggested_size, uv_
 }
 
 void IOWorker::Start(int pipe_to_server_fd) {
-    CHECK(state_ == kReady);
+    CHECK(state_.load() == kReady);
     LIBUV_CHECK_OK(uv_pipe_init(&uv_loop_, &pipe_to_server_, 1));
     pipe_to_server_.data = this;
     LIBUV_CHECK_OK(uv_pipe_open(&pipe_to_server_, pipe_to_server_fd));
     LIBUV_CHECK_OK(uv_read_start(reinterpret_cast<uv_stream_t*>(&pipe_to_server_),
                                  &PipeReadBufferAllocCallback,
                                  &IOWorker::NewConnectionCallback));
-    thread_ = absl::make_unique<std::thread>(&IOWorker::EventLoopThreadMain, this);
-    state_ = kRunning;
+    event_loop_thread_.Start();
+    state_.store(kRunning);
 }
 
 void IOWorker::ScheduleStop() {
@@ -46,12 +49,13 @@ void IOWorker::ScheduleStop() {
 }
 
 void IOWorker::WaitForFinish() {
-    CHECK(state_ != kReady);
-    thread_->join();
-    CHECK(state_ == kStopped);
+    CHECK(state_.load() != kReady);
+    event_loop_thread_.Join();
+    CHECK(state_.load() == kStopped);
 }
 
 void IOWorker::NewReadBuffer(size_t suggested_size, uv_buf_t* buf) {
+    CHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
     if (available_read_buffers_.empty()) {
         std::unique_ptr<char[]> new_buffer(new char[kReadBufferSize]);
         available_read_buffers_.push_back(new_buffer.get());
@@ -64,11 +68,13 @@ void IOWorker::NewReadBuffer(size_t suggested_size, uv_buf_t* buf) {
 }
 
 void IOWorker::ReturnReadBuffer(const uv_buf_t* buf) {
+    CHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
     CHECK_EQ(buf->len, kReadBufferSize);
     available_read_buffers_.push_back(buf->base);
 }
 
 void IOWorker::OnConnectionClose(Connection* connection) {
+    CHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
     CHECK(connections_.contains(connection));
     connections_.erase(connection);
     HVLOG(1) << "Connection with ID " << connection->id() << " closed, "
@@ -81,7 +87,7 @@ void IOWorker::OnConnectionClose(Connection* connection) {
     write_req->data = this;
     LIBUV_CHECK_OK(uv_write(write_req, reinterpret_cast<uv_stream_t*>(&pipe_to_server_),
                             &uv_buf, 1, &IOWorker::PipeWriteCallback));
-    if (state_ == kStopping && connections_.empty()) {
+    if (state_.load(std::memory_order_consume) == kStopping && connections_.empty()) {
         // We have returned all Connection objects to Server
         uv_close(reinterpret_cast<uv_handle_t*>(&pipe_to_server_), nullptr);
     }
@@ -94,11 +100,11 @@ void IOWorker::EventLoopThreadMain() {
         HLOG(WARNING) << "uv_run returns non-zero value: " << ret;
     }
     HLOG(INFO) << "Event loop finishes";
-    state_ = kStopped;
+    state_.store(kStopped);
 }
 
 UV_ASYNC_CB_FOR_CLASS(IOWorker, Stop) {
-    if (state_ == kStopping) {
+    if (state_.load(std::memory_order_consume) == kStopping) {
         HLOG(WARNING) << "Already in stopping state";
         return;
     }
@@ -112,7 +118,7 @@ UV_ASYNC_CB_FOR_CLASS(IOWorker, Stop) {
         }
     }
     uv_close(reinterpret_cast<uv_handle_t*>(&stop_event_), nullptr);
-    state_ = kStopping;
+    state_.store(kStopping);
 }
 
 UV_READ_CB_FOR_CLASS(IOWorker, NewConnection) {
@@ -126,7 +132,7 @@ UV_READ_CB_FOR_CLASS(IOWorker, NewConnection) {
                              reinterpret_cast<uv_stream_t*>(client)));
     connection->Start(this);
     connections_.insert(connection);
-    if (state_ == kStopping) {
+    if (state_.load(std::memory_order_consume) == kStopping) {
         LOG(WARNING) << "Receive new connection in stopping state, will close it directly";
         connection->ScheduleClose();
     } else {

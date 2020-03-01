@@ -11,9 +11,10 @@ namespace gateway {
 Server::Server()
     : state_(kReady), address_(kDefaultListenAddress), port_(kDefaultListenPort),
       listen_backlog_(kDefaultListenBackLog), num_io_workers_(kDefaultNumIOWorkers),
+      event_loop_thread_("Server_EventLoop", std::bind(&Server::EventLoopThreadMain, this)),
       next_connection_id_(0), next_io_worker_id_(0) {
     LIBUV_CHECK_OK(uv_loop_init(&uv_loop_));
-    uv_loop_.data = this;
+    uv_loop_.data = &event_loop_thread_;
     LIBUV_CHECK_OK(uv_tcp_init(&uv_loop_, &uv_tcp_handle_));
     uv_tcp_handle_.data = this;
     LIBUV_CHECK_OK(uv_async_init(&uv_loop_, &stop_event_, &Server::StopCallback));
@@ -21,7 +22,8 @@ Server::Server()
 }
 
 Server::~Server() {
-    CHECK(state_ == kReady || state_ == kStopped);
+    State state = state_.load();
+    CHECK(state == kReady || state == kStopped);
     LIBUV_CHECK_OK(uv_loop_close(&uv_loop_));
 }
 
@@ -34,7 +36,7 @@ void PipeReadBufferAllocCallback(uv_handle_t* handle, size_t suggested_size, uv_
 }
 
 void Server::Start() {
-    CHECK(state_ == kReady);
+    CHECK(state_.load() == kReady);
     // Listen on address:port
     struct sockaddr_in bind_addr;
     LIBUV_CHECK_OK(uv_ip4_addr(address_.c_str(), port_, &bind_addr));
@@ -55,8 +57,8 @@ void Server::Start() {
         io_worker->Start(pipe_fd_for_worker);
         io_workers_.push_back(std::move(io_worker));
     }
-    thread_ = absl::make_unique<std::thread>(&Server::EventLoopThreadMain, this);
-    state_ = kRunning;
+    event_loop_thread_.Start();
+    state_.store(kRunning);
 }
 
 void Server::ScheduleStop() {
@@ -65,12 +67,12 @@ void Server::ScheduleStop() {
 }
 
 void Server::WaitForFinish() {
-    CHECK(state_ != kReady);
+    CHECK(state_.load() != kReady);
     for (const auto& io_worker : io_workers_) {
         io_worker->WaitForFinish();
     }
-    thread_->join();
-    CHECK(state_ == kStopped);
+    event_loop_thread_.Join();
+    CHECK(state_.load() == kStopped);
     HLOG(INFO) << "Stopped";
 }
 
@@ -81,7 +83,7 @@ void Server::EventLoopThreadMain() {
         HLOG(WARNING) << "uv_run returns non-zero value: " << ret;
     }
     HLOG(INFO) << "Event loop finishes";
-    state_ = kStopped;
+    state_.store(kStopped);
 }
 
 IOWorker* Server::PickIOWorker() {
@@ -103,6 +105,7 @@ std::unique_ptr<uv_pipe_t> Server::CreatePipeToWorker(int* pipe_fd_for_worker) {
 }
 
 void Server::TransferConnectionToWorker(IOWorker* io_worker, Connection* connection) {
+    CHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
     uv_write_t* write_req = connection->uv_write_req_for_transfer();
     size_t buf_len = sizeof(void*);
     char* buf = connection->pipe_write_buf_for_transfer();
@@ -117,6 +120,7 @@ void Server::TransferConnectionToWorker(IOWorker* io_worker, Connection* connect
 }
 
 void Server::ReturnConnection(Connection* connection) {
+    CHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
     idle_connections_.push_back(connection);
     active_connections_.erase(connection);
     HLOG(INFO) << "Connection with ID " << connection->id() << " is returned, "
@@ -173,7 +177,7 @@ UV_READ_CB_FOR_CLASS(Server, ReturnConnection) {
 }
 
 UV_ASYNC_CB_FOR_CLASS(Server, Stop) {
-    if (state_ == kStopping) {
+    if (state_.load(std::memory_order_consume) == kStopping) {
         HLOG(WARNING) << "Already in stopping state";
         return;
     }
@@ -186,7 +190,7 @@ UV_ASYNC_CB_FOR_CLASS(Server, Stop) {
     }
     uv_close(reinterpret_cast<uv_handle_t*>(&uv_tcp_handle_), nullptr);
     uv_close(reinterpret_cast<uv_handle_t*>(&stop_event_), nullptr);
-    state_ = kStopping;
+    state_.store(kStopping);
 }
 
 UV_WRITE_CB_FOR_CLASS(Server, PipeWrite2) {

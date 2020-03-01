@@ -49,6 +49,7 @@ void Connection::Reset(int connection_id) {
 }
 
 void Connection::ScheduleClose() {
+    CHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
     if (state_ == kClosing) {
         HLOG(INFO) << "Connection is already scheduled for closing";
         return;
@@ -60,6 +61,7 @@ void Connection::ScheduleClose() {
 }
 
 void Connection::StartRecvData() {
+    CHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
     if (state_ != kRunning) {
         HLOG(WARNING) << "Connection is closing or has closed, will not enable read event";
         return;
@@ -70,6 +72,7 @@ void Connection::StartRecvData() {
 }
 
 void Connection::StopRecvData() {
+    CHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
     if (state_ != kRunning) {
         HLOG(WARNING) << "Connection is closing or has closed, will not enable read event";
         return;
