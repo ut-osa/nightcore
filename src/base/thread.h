@@ -20,7 +20,7 @@ public:
     void Join();
 
     const std::string& name() const { return name_; }
-    int tid() { return tid_.load(); }
+    int tid() { return tid_; }
     static Thread* current() { return current_; }
 
 private:
@@ -29,7 +29,9 @@ private:
     std::atomic<State> state_;
     std::string name_;
     std::function<void()> fn_;
-    std::atomic<int> tid_;
+    int tid_;
+
+    absl::Notification started_;
     pthread_t pthread_;
 
     static thread_local Thread* current_;

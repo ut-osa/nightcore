@@ -16,7 +16,8 @@ pid_t gettid() {
 void Thread::Start() {
     state_.store(kStarting);
     CHECK_EQ(pthread_create(&pthread_, nullptr, &Thread::StartRoutine, this), 0);
-    while (state_.load() == kStarting);
+    started_.WaitForNotification();
+    CHECK(state_.load() == kRunning);
 }
 
 void Thread::Join() {
@@ -29,8 +30,9 @@ void Thread::Join() {
 }
 
 void Thread::Run() {
-    tid_.store(static_cast<int>(gettid()));
+    tid_ = gettid();
     state_.store(kRunning);
+    started_.Notify();
     LOG(INFO) << "Start thread: " << name_;
     fn_();
     state_.store(kFinished);
