@@ -27,7 +27,6 @@ int main(int argc, char* argv[]) {
     server->Start();
     server_ptr = server.get();
     signal(SIGINT, SignalHandlerToCloseServer);
-    signal(SIGABRT, SignalHandlerToCloseServer);
     signal(SIGTERM, SignalHandlerToCloseServer);
 
     server->WaitForFinish();
