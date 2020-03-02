@@ -24,6 +24,23 @@ int main(int argc, char* argv[]) {
     server->set_port(absl::GetFlag(FLAGS_listen_port));
     server->set_num_io_workers(absl::GetFlag(FLAGS_num_io_workers));
 
+    server->RegisterSyncRequestHandler(
+        [] (const std::string& method, const std::string& path) -> bool {
+            return method == "GET" && path == "/hello";
+        },
+        [] (faas::gateway::SyncRequestContext* context) {
+            context->AppendStrToResponseBody("hello\n");
+        });
+
+    server->RegisterSyncRequestHandler(
+        [] (const std::string& method, const std::string& path) -> bool {
+            return method == "POST" && path == "/shutdown";
+        },
+        [&server] (faas::gateway::SyncRequestContext* context) {
+            context->AppendStrToResponseBody("Server is shutting down\n");
+            server->ScheduleStop();
+        });
+
     server->Start();
     server_ptr = server.get();
     signal(SIGINT, SignalHandlerToCloseServer);

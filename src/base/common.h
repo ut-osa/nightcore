@@ -13,6 +13,7 @@
 #include <sstream>
 #include <atomic>
 #include <functional>
+#include <algorithm>
 
 #include <glog/logging.h>
 #include <absl/memory/memory.h>

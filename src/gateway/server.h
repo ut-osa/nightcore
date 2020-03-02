@@ -3,6 +3,7 @@
 #include "base/common.h"
 #include "gateway/connection.h"
 #include "gateway/io_worker.h"
+#include "gateway/request_context.h"
 
 namespace faas {
 namespace gateway {
@@ -25,6 +26,48 @@ public:
     void Start();
     void ScheduleStop();
     void WaitForFinish();
+
+    typedef std::function<bool(const std::string& /* method */,
+                               const std::string& /* path */)> RequestMatcher;
+    typedef std::function<void(SyncRequestContext*)> SyncRequestHandler;
+    typedef std::function<void(std::shared_ptr<AsyncRequestContext>)> AsyncRequestHandler;
+
+    // mathcer and handler must be thread-safe
+    void RegisterSyncRequestHandler(RequestMatcher matcher, SyncRequestHandler handler);
+    void RegisterAsyncRequestHandler(RequestMatcher matcher, AsyncRequestHandler handler);
+
+    class RequestHandler {
+    public:
+        bool async() const { return async_; }
+
+        void CallSync(SyncRequestContext* context) const {
+            CHECK(!async_);
+            sync_handler_(context);
+        }
+
+        void CallAsync(std::shared_ptr<AsyncRequestContext> context) const {
+            CHECK(async_);
+            async_handler_(std::move(context));
+        }
+
+    private:
+        bool async_;
+        RequestMatcher matcher_;
+        SyncRequestHandler sync_handler_;
+        AsyncRequestHandler async_handler_;
+
+        friend class Server;
+
+        RequestHandler(RequestMatcher matcher, SyncRequestHandler handler)
+            : async_(false), matcher_(matcher), sync_handler_(handler) {}
+        RequestHandler(RequestMatcher matcher, AsyncRequestHandler handler)
+            : async_(true), matcher_(matcher), async_handler_(handler) {}
+
+        DISALLOW_COPY_AND_ASSIGN(RequestHandler);
+    };
+
+    bool MatchRequest(const std::string& method, const std::string& path,
+                      const RequestHandler** request_handler) const;
 
 private:
     enum State { kReady, kRunning, kStopping, kStopped };
@@ -50,6 +93,8 @@ private:
 
     int next_connection_id_;
     int next_io_worker_id_;
+
+    std::vector<std::unique_ptr<RequestHandler>> request_handlers_;
 
     std::unique_ptr<uv_pipe_t> CreatePipeToWorker(int* pipe_fd_for_worker);
     void TransferConnectionToWorker(IOWorker* io_worker, Connection* connection);

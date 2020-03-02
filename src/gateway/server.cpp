@@ -76,6 +76,27 @@ void Server::WaitForFinish() {
     HLOG(INFO) << "Stopped";
 }
 
+void Server::RegisterSyncRequestHandler(RequestMatcher matcher, SyncRequestHandler handler) {
+    CHECK(state_.load() == kReady);
+    request_handlers_.emplace_back(new RequestHandler(std::move(matcher), std::move(handler)));
+}
+
+void Server::RegisterAsyncRequestHandler(RequestMatcher matcher, AsyncRequestHandler handler) {
+    CHECK(state_.load() == kReady);
+    request_handlers_.emplace_back(new RequestHandler(std::move(matcher), std::move(handler)));
+}
+
+bool Server::MatchRequest(const std::string& method, const std::string& path,
+                          const RequestHandler** request_handler) const {
+    for (const std::unique_ptr<RequestHandler>& entry : request_handlers_) {
+        if (entry->matcher_(method, path)) {
+            *request_handler = entry.get();
+            return true;
+        }
+    }
+    return false;
+}
+
 void Server::EventLoopThreadMain() {
     HLOG(INFO) << "Event loop starts";
     int ret = uv_run(&uv_loop_, UV_RUN_DEFAULT);

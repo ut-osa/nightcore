@@ -54,9 +54,45 @@ public:
 
     void Reset() { pos_ = 0; }
 
+    const char* data() const { return buf_; }
     char* data() { return buf_; }
     size_t length() const { return pos_; }
     size_t buffer_size() const { return buf_size_; }
+
+    void Swap(AppendableBuffer& other) {
+        // In all cases, buffer size and position can be directly swapped
+        std::swap(pos_, other.pos_);
+        std::swap(buf_size_, other.buf_size_);
+        if (buf_ != inline_buf_) {
+            // Myself uses malloc buffer
+            if (other.buf_ != other.inline_buf_) {
+                // The other also uses malloc buffer, just swap two buffers
+                std::swap(buf_, other.buf_);
+            } else {
+                // The other uses inline buffer
+                // Set other's buffer to my malloc buffer
+                other.buf_ = buf_;
+                // Copy other's inline buffer data to my inline buffer
+                memcpy(inline_buf_, other.inline_buf_, kInlineBufferSize);
+                // Set my buffer to use inline buffer
+                buf_ = inline_buf_;
+            }
+        } else {
+            // Myself uses inline buffer
+            if (other.buf_ != other.inline_buf_) {
+                // The other uses malloc buffer
+                buf_ = other.buf_;
+                memcpy(other.inline_buf_, inline_buf_, kInlineBufferSize);
+                other.buf_ = other.inline_buf_;
+            } else {
+                // The other also uses inline buffer, just swap contents of two inline buffers
+                char tmp_buffer[kInlineBufferSize];
+                memcpy(tmp_buffer, inline_buf_, kInlineBufferSize);
+                memcpy(inline_buf_, other.inline_buf_, kInlineBufferSize);
+                memcpy(other.inline_buf_, tmp_buffer, kInlineBufferSize);
+            }
+        }
+    }
 
 private:
     int buf_size_;

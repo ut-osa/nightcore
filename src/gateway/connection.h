@@ -11,9 +11,12 @@ namespace gateway {
 
 class Server;
 class IOWorker;
+class AsyncRequestContext;
 
 class Connection {
 public:
+    static constexpr const char* kDefaultContentType = "text/plain";
+
     Connection(Server* server, int connection_id);
     ~Connection();
 
@@ -40,6 +43,8 @@ private:
     IOWorker* io_worker_;
     uv_tcp_t uv_tcp_handle_;
     State state_;
+    int closed_uv_handles_;
+    int uv_handles_is_closing_;
 
     uv_tcp_t uv_tcp_handle_for_transfer_;
     uv_write_t uv_write_req_for_transfer_;
@@ -63,7 +68,13 @@ private:
     // For response
     utils::AppendableBuffer response_header_buffer_;
     utils::AppendableBuffer response_body_buffer_;
+    int response_status_;
+    std::string response_content_type_;
     uv_write_t response_write_req_;
+    std::shared_ptr<AsyncRequestContext> async_request_context_;
+    uv_async_t async_request_finished_event_;
+
+    friend class AsyncRequestContext;
 
     void StartRecvData();
     void StopRecvData();
@@ -71,6 +82,7 @@ private:
     DECLARE_UV_READ_CB_FOR_CLASS(RecvData);
     DECLARE_UV_WRITE_CB_FOR_CLASS(DataWritten);
     DECLARE_UV_ALLOC_CB_FOR_CLASS(BufferAlloc);
+    DECLARE_UV_ASYNC_CB_FOR_CLASS(AsyncRequestFinish);
     DECLARE_UV_CLOSE_CB_FOR_CLASS(Close);
 
     void HttpParserOnMessageBegin();
@@ -85,7 +97,8 @@ private:
     void ResetHttpParser();
     void OnNewHttpRequest(const std::string& method, const std::string& path,
                           const char* body, size_t body_length);
-    void SendHttpResponse(int status);
+    void AsyncRequestFinish(AsyncRequestContext* context);
+    void SendHttpResponse();
 
     static int HttpParserOnMessageBeginCallback(http_parser* http_parser);
     static int HttpParserOnUrlCallback(http_parser* http_parser, const char* data, size_t length);

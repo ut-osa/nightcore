@@ -14,7 +14,8 @@ namespace gateway {
 
 Connection::Connection(Server* server, int connection_id)
     : server_(server), connection_id_(connection_id), io_worker_(nullptr),
-      state_(kReady), log_header_(absl::StrFormat("Connection[%d]: ", connection_id)) {
+      state_(kReady), log_header_(absl::StrFormat("Connection[%d]: ", connection_id)),
+      async_request_context_(nullptr) {
     http_parser_init(&http_parser_, HTTP_REQUEST);
     http_parser_.data = this;
     http_parser_settings_init(&http_parser_settings_);
@@ -36,6 +37,10 @@ void Connection::Start(IOWorker* io_worker) {
     io_worker_ = io_worker;
     uv_tcp_handle_.data = this;
     response_write_req_.data = this;
+    LIBUV_CHECK_OK(uv_async_init(uv_tcp_handle_.loop,
+                                 &async_request_finished_event_,
+                                 &Connection::AsyncRequestFinishCallback));
+    async_request_finished_event_.data = this;
     state_ = kRunning;
     StartRecvData();
 }
@@ -55,7 +60,14 @@ void Connection::ScheduleClose() {
         return;
     }
     CHECK(state_ == kRunning);
+    if (async_request_context_ != nullptr) {
+        async_request_context_->OnConnectionClose();
+    }
+    closed_uv_handles_ = 0;
+    uv_handles_is_closing_ = 2;
     uv_close(reinterpret_cast<uv_handle_t*>(&uv_tcp_handle_),
+             &Connection::CloseCallback);
+    uv_close(reinterpret_cast<uv_handle_t*>(&async_request_finished_event_),
              &Connection::CloseCallback);
     state_ = kClosing;
 }
@@ -120,11 +132,29 @@ UV_ALLOC_CB_FOR_CLASS(Connection, BufferAlloc) {
     io_worker_->NewReadBuffer(suggested_size, buf);
 }
 
+UV_ASYNC_CB_FOR_CLASS(Connection, AsyncRequestFinish) {
+    AsyncRequestContext* context = async_request_context_.get();
+    std::swap(context->headers_, headers_);
+    context->body_buffer_.Swap(body_buffer_);
+    response_status_ = context->status_;
+    response_content_type_ = context->content_type_;
+    context->response_body_buffer_.Swap(response_body_buffer_);
+    async_request_context_ = nullptr;
+    if (state_ != kRunning) {
+        HLOG(WARNING) << "Connection is closing or has closed, will not send response";
+        return;
+    }
+    SendHttpResponse();
+}
+
 UV_CLOSE_CB_FOR_CLASS(Connection, Close) {
     CHECK(state_ == kClosing);
-    io_worker_->OnConnectionClose(this);
-    io_worker_ = nullptr;
-    state_ = kClosed;
+    closed_uv_handles_++;
+    if (closed_uv_handles_ == uv_handles_is_closing_) {
+        io_worker_->OnConnectionClose(this);
+        io_worker_ = nullptr;
+        state_ = kClosed;
+    }
 }
 
 void Connection::HttpParserOnMessageBegin() {
@@ -212,26 +242,55 @@ void Connection::ResetHttpParser() {
 
 void Connection::OnNewHttpRequest(const std::string& method, const std::string& path,
                                   const char* body, size_t body_length) {
+    CHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
     HVLOG(1) << "New HTTP request: " << method << " " << path;
+    response_status_ = 200;
+    response_content_type_ = kDefaultContentType;
     response_body_buffer_.Reset();
-    int status = 200;
-    if (method == "GET" && path == "/hello") {
-        response_body_buffer_.AppendStr("Hellxo\n");
-    } else if (method == "POST" && path == "/shutdown") {
-        server_->ScheduleStop();
-        response_body_buffer_.AppendStr("Server is shutting down\n");
-    } else {
-        status = 404;
+    const Server::RequestHandler* request_handler;
+    if (!server_->MatchRequest(method, path, &request_handler)) {
+        response_status_ = 404;
+        SendHttpResponse();
+        return;
     }
-    SendHttpResponse(status);
+    if (request_handler->async()) {
+        async_request_context_ = std::shared_ptr<AsyncRequestContext>(new AsyncRequestContext);
+        AsyncRequestContext* context = async_request_context_.get();
+        context->method_ = method;
+        context->path_ = path;
+        std::swap(context->headers_, headers_);
+        context->body_buffer_.Swap(body_buffer_);
+        context->status_ = 200;
+        context->content_type_ = kDefaultContentType;
+        context->response_body_buffer_.Swap(response_body_buffer_);
+        context->connection_ = this;
+        request_handler->CallAsync(async_request_context_);
+    } else {
+        SyncRequestContext context;
+        context.method_ = &method;
+        context.path_ = &path;
+        context.headers_ = &headers_;
+        context.body_ = body_buffer_.data();
+        context.body_length_ = body_buffer_.length();
+        context.status_ = &response_status_;
+        context.content_type_ = &response_content_type_;
+        context.response_body_buffer_ = &response_body_buffer_;
+        request_handler->CallSync(&context);
+        SendHttpResponse();
+    }
 }
 
-void Connection::SendHttpResponse(int status) {
-    HVLOG(1) << "Send HTTP response with status " << status;
+void Connection::AsyncRequestFinish(AsyncRequestContext* context) {
+    LIBUV_CHECK_OK(uv_async_send(&async_request_finished_event_));
+}
+
+void Connection::SendHttpResponse() {
+    CHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
+    HVLOG(1) << "Send HTTP response with status " << response_status_;
     static const char* CRLF = "\r\n";
     std::ostringstream header;
-    header << "HTTP/1.1 " << status << " ";
-    switch (status) {
+    header << "HTTP/1.1 " << response_status_ << " ";
+    switch (response_status_) {
     case 200:
         header << "OK";
         break;
@@ -245,13 +304,12 @@ void Connection::SendHttpResponse(int status) {
         header << "Internal Server Error";
         break;
     default:
-        LOG(FATAL) << "Unsupported status code " << status;
+        LOG(FATAL) << "Unsupported status code " << response_status_;
     }
     header << CRLF;
     header << "Date: " << absl::FormatTime(absl::RFC1123_full, absl::Now(), absl::UTCTimeZone()) << CRLF;
     header << "Server: FaaS/0.1" << CRLF;
-    header << "Access-Control-Allow-Origin: *" << CRLF;
-    header << "Content-Type: application/x-faas" << CRLF;
+    header << "Content-Type: " << response_content_type_ << CRLF;
     header << "Content-Length: " << response_body_buffer_.length() << CRLF;
     header << "Connection: Keep-Alive" << CRLF;
     header << CRLF;
