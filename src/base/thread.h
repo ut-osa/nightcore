@@ -8,7 +8,7 @@ namespace base {
 
 class Thread {
 public:
-    Thread(const std::string& name, std::function<void()>&& fn)
+    Thread(const std::string& name, std::function<void()> fn)
         : state_(kReady), name_(name), fn_(fn), tid_(-1) {}
 
     ~Thread() {
