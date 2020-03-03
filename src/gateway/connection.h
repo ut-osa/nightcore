@@ -71,6 +71,7 @@ private:
     int response_status_;
     std::string response_content_type_;
     uv_write_t response_write_req_;
+    bool within_async_request_;
     std::shared_ptr<AsyncRequestContext> async_request_context_;
     uv_async_t async_request_finished_event_;
 

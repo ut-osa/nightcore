@@ -15,7 +15,7 @@ namespace gateway {
 Connection::Connection(Server* server, int connection_id)
     : server_(server), connection_id_(connection_id), io_worker_(nullptr),
       state_(kReady), log_header_(absl::StrFormat("Connection[%d]: ", connection_id)),
-      async_request_context_(nullptr) {
+      within_async_request_(false) {
     http_parser_init(&http_parser_, HTTP_REQUEST);
     http_parser_.data = this;
     http_parser_settings_init(&http_parser_settings_);
@@ -60,8 +60,10 @@ void Connection::ScheduleClose() {
         return;
     }
     CHECK(state_ == kRunning);
-    if (async_request_context_ != nullptr) {
+    if (within_async_request_) {
         async_request_context_->OnConnectionClose();
+        async_request_context_ = nullptr;
+        within_async_request_ = false;
     }
     closed_uv_handles_ = 0;
     uv_handles_is_closing_ = 2;
@@ -134,12 +136,17 @@ UV_ALLOC_CB_FOR_CLASS(Connection, BufferAlloc) {
 
 UV_ASYNC_CB_FOR_CLASS(Connection, AsyncRequestFinish) {
     AsyncRequestContext* context = async_request_context_.get();
+    CHECK(context != nullptr);
+    if (!within_async_request_) {
+        HLOG(WARNING) << "Connection is closing or has closed, will not handle the finish of async request";
+        return;
+    }
     std::swap(context->headers_, headers_);
     context->body_buffer_.Swap(body_buffer_);
     response_status_ = context->status_;
     response_content_type_ = context->content_type_;
     context->response_body_buffer_.Swap(response_body_buffer_);
-    async_request_context_ = nullptr;
+    within_async_request_ = false;
     if (state_ != kRunning) {
         HLOG(WARNING) << "Connection is closing or has closed, will not send response";
         return;
@@ -254,7 +261,9 @@ void Connection::OnNewHttpRequest(const std::string& method, const std::string& 
         return;
     }
     if (request_handler->async()) {
-        async_request_context_ = std::shared_ptr<AsyncRequestContext>(new AsyncRequestContext);
+        if (async_request_context_ == nullptr) {
+            async_request_context_.reset(new AsyncRequestContext());
+        }
         AsyncRequestContext* context = async_request_context_.get();
         context->method_ = method;
         context->path_ = path;
@@ -264,6 +273,7 @@ void Connection::OnNewHttpRequest(const std::string& method, const std::string& 
         context->content_type_ = kDefaultContentType;
         context->response_body_buffer_.Swap(response_body_buffer_);
         context->connection_ = this;
+        within_async_request_ = true;
         request_handler->CallAsync(async_request_context_);
     } else {
         SyncRequestContext context;

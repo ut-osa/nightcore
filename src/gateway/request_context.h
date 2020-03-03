@@ -74,11 +74,14 @@ public:
     void AppendStrToResponseBody(const std::string& str) {
         response_body_buffer_.AppendStr(str);
     }
-    void Finish() {
+    // Handler should not use AsyncRequestContext any longer after calling Finish()
+    bool Finish() {
         absl::MutexLock lk(&mu_);
         if (connection_ != nullptr) {
             connection_->AsyncRequestFinish(this);
+            return true;
         }
+        return false;
     }
 
 private:
