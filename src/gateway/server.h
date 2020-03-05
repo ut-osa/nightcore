@@ -102,7 +102,7 @@ private:
 
     std::vector<std::unique_ptr<RequestHandler>> request_handlers_;
 
-    absl::flat_hash_map<WatchdogPipe*, std::unique_ptr<WatchdogPipe>> watchdog_pipes_;
+    absl::flat_hash_set<std::unique_ptr<WatchdogPipe>> watchdog_pipes_;
     utils::BufferPool buffer_pool_for_watchdog_pipes_;
 
     std::unique_ptr<uv_pipe_t> CreatePipeToWorker(int* pipe_fd_for_worker);

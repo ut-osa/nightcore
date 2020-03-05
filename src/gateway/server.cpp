@@ -163,7 +163,12 @@ void Server::ReturnConnection(Connection* connection) {
 }
 
 void Server::OnWatchdogPipeClose(WatchdogPipe* watchdog_pipe) {
-    // TODO
+    if (watchdog_pipe->function_name().empty()) {
+        HLOG(INFO) << "Watchdog pipe closed";
+    } else {
+        HLOG(INFO) << "Watchdog pipe closed for function " << watchdog_pipe->function_name();
+    }
+    watchdog_pipes_.erase(watchdog_pipe);
 }
 
 UV_CONNECTION_CB_FOR_CLASS(Server, Connection) {
@@ -226,8 +231,7 @@ UV_ASYNC_CB_FOR_CLASS(Server, Stop) {
         UV_CHECK_OK(uv_read_stop(reinterpret_cast<uv_stream_t*>(pipe)));
         uv_close(reinterpret_cast<uv_handle_t*>(pipe), nullptr);
     }
-    for (const auto& entry : watchdog_pipes_) {
-        WatchdogPipe* watchdog_pipe = entry.first;
+    for (const auto& watchdog_pipe : watchdog_pipes_) {
         watchdog_pipe->ScheduleClose();
     }
     uv_close(reinterpret_cast<uv_handle_t*>(&uv_tcp_handle_), nullptr);
@@ -256,7 +260,7 @@ UV_CONNECTION_CB_FOR_CLASS(Server, WatchdogConnection) {
     UV_CHECK_OK(uv_accept(reinterpret_cast<uv_stream_t*>(&uv_ipc_handle_),
                           reinterpret_cast<uv_stream_t*>(client)));
     watchdog_pipe->Start(&buffer_pool_for_watchdog_pipes_);
-    watchdog_pipes_[watchdog_pipe.get()] = std::move(watchdog_pipe);
+    watchdog_pipes_.insert(std::move(watchdog_pipe));
 }
 
 }  // namespace gateway
