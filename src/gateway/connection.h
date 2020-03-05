@@ -62,8 +62,9 @@ private:
     utils::AppendableBuffer header_field_buffer_;
     utils::AppendableBuffer header_value_buffer_;
     utils::AppendableBuffer body_buffer_;
+    size_t header_field_buffer_pos_;
     size_t header_value_buffer_pos_;
-    absl::flat_hash_map<std::string, const char*> headers_;
+    absl::flat_hash_map<absl::string_view, absl::string_view> headers_;
 
     // For response
     utils::AppendableBuffer response_header_buffer_;
@@ -96,8 +97,7 @@ private:
 
     void HttpParserOnNewHeader();
     void ResetHttpParser();
-    void OnNewHttpRequest(const std::string& method, const std::string& path,
-                          const char* body, size_t body_length);
+    void OnNewHttpRequest(absl::string_view method, absl::string_view path);
     void AsyncRequestFinish(AsyncRequestContext* context);
     void SendHttpResponse();
 

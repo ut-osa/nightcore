@@ -19,8 +19,8 @@ public:
     Server();
     ~Server();
 
-    void set_address(const std::string& address) { address_ = address; }
-    void set_ipc_path(const std::string& path) { ipc_path_ = path; }
+    void set_address(absl::string_view address) { address_ = std::string(address); }
+    void set_ipc_path(absl::string_view address) { ipc_path_ = std::string(address); }
     void set_port(int port) { port_ = port; }
     void set_listen_backlog(int value) { listen_backlog_ = value; }
     void set_num_io_workers(int value) { num_io_workers_ = value; }
@@ -29,8 +29,8 @@ public:
     void ScheduleStop();
     void WaitForFinish();
 
-    typedef std::function<bool(const std::string& /* method */,
-                               const std::string& /* path */)> RequestMatcher;
+    typedef std::function<bool(absl::string_view /* method */,
+                               absl::string_view /* path */)> RequestMatcher;
     typedef std::function<void(SyncRequestContext*)> SyncRequestHandler;
     typedef std::function<void(std::shared_ptr<AsyncRequestContext>)> AsyncRequestHandler;
 
@@ -68,7 +68,7 @@ public:
         DISALLOW_COPY_AND_ASSIGN(RequestHandler);
     };
 
-    bool MatchRequest(const std::string& method, const std::string& path,
+    bool MatchRequest(absl::string_view method, absl::string_view path,
                       const RequestHandler** request_handler) const;
     
     void OnWatchdogPipeClose(WatchdogPipe* watchdog_pipe);

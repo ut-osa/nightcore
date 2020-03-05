@@ -12,31 +12,33 @@ class SyncRequestContext {
 public:
     ~SyncRequestContext() {}
 
-    const std::string& method() const { return *method_; }
-    const std::string& path() const { return *path_; }
-    const char* header(const std::string& field) const {
+    absl::string_view method() const { return method_; }
+    absl::string_view path() const { return path_; }
+    absl::string_view header(absl::string_view field) const {
         if (headers_->contains(field)) {
             return headers_->at(field);
         } else {
-            return nullptr;
+            return "";
         }
     }
     const char* body() const { return body_; }
     size_t body_length() const { return body_length_; }
 
     void SetStatus(int status) { *status_ = status; }
-    void SetContentType(const std::string& content_type) { *content_type_ = content_type; }
+    void SetContentType(absl::string_view content_type) {
+        *content_type_ = std::string(content_type);
+    }
     void AppendDataToResponseBody(const char* data, size_t length) {
         response_body_buffer_->AppendData(data, length);
     }
-    void AppendStrToResponseBody(const std::string& str) {
+    void AppendStrToResponseBody(absl::string_view str) {
         response_body_buffer_->AppendStr(str);
     }
 
 private:
-    const std::string* method_;
-    const std::string* path_;
-    const absl::flat_hash_map<std::string, const char*>* headers_;
+    absl::string_view method_;
+    absl::string_view path_;
+    const absl::flat_hash_map<absl::string_view, absl::string_view>* headers_;
     const char* body_;
     size_t body_length_;
 
@@ -54,24 +56,26 @@ class AsyncRequestContext {
 public:
     ~AsyncRequestContext() {}
 
-    const std::string& method() const { return method_; }
-    const std::string& path() const { return path_; }
-    const char* header(const std::string& field) const {
+    absl::string_view method() const { return method_; }
+    absl::string_view path() const { return path_; }
+    absl::string_view header(absl::string_view field) const {
         if (headers_.contains(field)) {
             return headers_.at(field);
         } else {
-            return nullptr;
+            return "";
         }
     }
     const char* body() const { return body_buffer_.data(); }
     size_t body_length() const { return body_buffer_.length(); }
 
     void SetStatus(int status) { status_ = status; }
-    void SetContentType(const std::string& content_type) { content_type_ = content_type; }
+    void SetContentType(absl::string_view content_type) {
+        content_type_ = std::string(content_type);
+    }
     void AppendDataToResponseBody(const char* data, size_t length) {
         response_body_buffer_.AppendData(data, length);
     }
-    void AppendStrToResponseBody(const std::string& str) {
+    void AppendStrToResponseBody(absl::string_view str) {
         response_body_buffer_.AppendStr(str);
     }
     // Handler should not use AsyncRequestContext any longer after calling Finish()
@@ -87,7 +91,7 @@ public:
 private:
     std::string method_;
     std::string path_;
-    absl::flat_hash_map<std::string, const char*> headers_;
+    absl::flat_hash_map<std::string, std::string> headers_;
     utils::AppendableBuffer body_buffer_;
 
     int status_;

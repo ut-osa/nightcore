@@ -48,7 +48,7 @@ public:
         AppendData(str, strlen(str));
     }
 
-    void AppendStr(const std::string& str) {
+    void AppendStr(absl::string_view str) {
         AppendData(str.data(), str.length());
     }
 

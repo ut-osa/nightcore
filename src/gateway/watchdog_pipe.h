@@ -19,7 +19,7 @@ public:
     ~WatchdogPipe();
 
     uv_pipe_t* uv_pipe_handle() { return &uv_pipe_handle_; }
-    const std::string& function_name() const { return function_name_; }
+    absl::string_view function_name() const { return function_name_; }
 
     void Start(utils::BufferPool* buffer_pool);
     void ScheduleClose();

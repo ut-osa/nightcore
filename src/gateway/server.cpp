@@ -99,7 +99,7 @@ void Server::RegisterAsyncRequestHandler(RequestMatcher matcher, AsyncRequestHan
     request_handlers_.emplace_back(new RequestHandler(std::move(matcher), std::move(handler)));
 }
 
-bool Server::MatchRequest(const std::string& method, const std::string& path,
+bool Server::MatchRequest(absl::string_view method, absl::string_view path,
                           const RequestHandler** request_handler) const {
     for (const std::unique_ptr<RequestHandler>& entry : request_handlers_) {
         if (entry->matcher_(method, path)) {

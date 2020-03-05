@@ -142,7 +142,6 @@ UV_ASYNC_CB_FOR_CLASS(Connection, AsyncRequestFinish) {
         HLOG(WARNING) << "Connection is closing or has closed, will not handle the finish of async request";
         return;
     }
-    std::swap(context->headers_, headers_);
     context->body_buffer_.Swap(body_buffer_);
     response_status_ = context->status_;
     response_content_type_ = context->content_type_;
@@ -170,8 +169,10 @@ void Connection::HttpParserOnMessageBegin() {
     header_field_value_flag_ = -1;
     header_field_buffer_.Reset();
     header_value_buffer_.Reset();
+    header_field_buffer_pos_ = 0;
     header_value_buffer_pos_ = 0;
     url_buffer_.Reset();
+    headers_.clear();
 }
 
 void Connection::HttpParserOnUrl(const char* data, size_t length) {
@@ -204,12 +205,12 @@ void Connection::HttpParserOnBody(const char* data, size_t length) {
 
 namespace {
 static bool ReadParsedUrlField(const http_parser_url* parsed_url, http_parser_url_fields field,
-                               const char* url_buf, std::string* result) {
+                               const char* url_buf, absl::string_view* result) {
     if ((parsed_url->field_set & (1 << field)) == 0) {
         return false;
     } else {
-        result->assign(url_buf + parsed_url->field_data[field].off,
-                       parsed_url->field_data[field].len);
+        *result = absl::string_view(url_buf + parsed_url->field_data[field].off,
+                                    parsed_url->field_data[field].len);
         return true;
     }
 }
@@ -224,22 +225,22 @@ void Connection::HttpParserOnMessageComplete() {
         ScheduleClose();
         return;
     }
-    std::string path;
+    absl::string_view path;
     if (!ReadParsedUrlField(&parsed_url, UF_PATH, url_buffer_.data(), &path)) {
         HLOG(WARNING) << "Parsed URL misses some fields";
         ScheduleClose();
         return;
     }
-    OnNewHttpRequest(http_method_str(static_cast<http_method>(http_parser_.method)),
-                     path, body_buffer_.data(), body_buffer_.length());
+    OnNewHttpRequest(http_method_str(static_cast<http_method>(http_parser_.method)), path);
     ResetHttpParser();   
 }
 
 void Connection::HttpParserOnNewHeader() {
-    std::string field(header_field_buffer_.data(), header_field_buffer_.length());
-    header_field_buffer_.Reset();
-    header_value_buffer_.AppendData("\0", 1);
-    const char* value = header_value_buffer_.data() + header_value_buffer_pos_;
+    absl::string_view field(header_field_buffer_.data() + header_field_buffer_pos_,
+                            header_field_buffer_.length() - header_field_buffer_pos_);
+    header_field_buffer_pos_ = header_field_buffer_.length();
+    absl::string_view value(header_value_buffer_.data() + header_value_buffer_pos_,
+                            header_value_buffer_.length() - header_value_buffer_pos_);
     header_value_buffer_pos_ = header_value_buffer_.length();
     HVLOG(1) << "Parse new HTTP header: " << field << " = " << value;
     headers_[field] = value;
@@ -249,8 +250,7 @@ void Connection::ResetHttpParser() {
     http_parser_init(&http_parser_, HTTP_REQUEST);
 }
 
-void Connection::OnNewHttpRequest(const std::string& method, const std::string& path,
-                                  const char* body, size_t body_length) {
+void Connection::OnNewHttpRequest(absl::string_view method, absl::string_view path) {
     CHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
     HVLOG(1) << "New HTTP request: " << method << " " << path;
     response_status_ = 200;
@@ -267,9 +267,11 @@ void Connection::OnNewHttpRequest(const std::string& method, const std::string& 
             async_request_context_.reset(new AsyncRequestContext());
         }
         AsyncRequestContext* context = async_request_context_.get();
-        context->method_ = method;
-        context->path_ = path;
-        std::swap(context->headers_, headers_);
+        context->method_ = std::string(method);
+        context->path_ = std::string(path);
+        for (const auto& item : headers_) {
+            context->headers_[std::string(item.first)] = std::string(item.second);
+        }
         context->body_buffer_.Swap(body_buffer_);
         context->status_ = 200;
         context->content_type_ = kDefaultContentType;
@@ -279,8 +281,8 @@ void Connection::OnNewHttpRequest(const std::string& method, const std::string& 
         request_handler->CallAsync(async_request_context_);
     } else {
         SyncRequestContext context;
-        context.method_ = &method;
-        context.path_ = &path;
+        context.method_ = method;
+        context.path_ = path;
         context.headers_ = &headers_;
         context.body_ = body_buffer_.data();
         context.body_length_ = body_buffer_.length();

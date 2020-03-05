@@ -30,7 +30,7 @@ int main(int argc, char* argv[]) {
     server->set_num_io_workers(absl::GetFlag(FLAGS_num_io_workers));
 
     // server->RegisterSyncRequestHandler(
-    //     [] (const std::string& method, const std::string& path) -> bool {
+    //     [] (absl::string_view method, absl::string_view path) -> bool {
     //         return method == "GET" && path == "/hello";
     //     },
     //     [] (faas::gateway::SyncRequestContext* context) {
@@ -38,7 +38,7 @@ int main(int argc, char* argv[]) {
     //     });
     
     server->RegisterAsyncRequestHandler(
-        [] (const std::string& method, const std::string& path) -> bool {
+        [] (absl::string_view method, absl::string_view  path) -> bool {
             return method == "GET" && path == "/hello";
         },
         [] (std::shared_ptr<faas::gateway::AsyncRequestContext> context) {
@@ -50,7 +50,7 @@ int main(int argc, char* argv[]) {
         });
 
     server->RegisterSyncRequestHandler(
-        [] (const std::string& method, const std::string& path) -> bool {
+        [] (absl::string_view method, absl::string_view  path) -> bool {
             return method == "POST" && path == "/shutdown";
         },
         [&server] (faas::gateway::SyncRequestContext* context) {

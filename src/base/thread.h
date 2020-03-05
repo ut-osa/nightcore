@@ -8,8 +8,8 @@ namespace base {
 
 class Thread {
 public:
-    Thread(const std::string& name, std::function<void()> fn)
-        : state_(kCreated), name_(name), fn_(fn), tid_(-1) {}
+    Thread(absl::string_view name, std::function<void()> fn)
+        : state_(kCreated), name_(std::string(name)), fn_(fn), tid_(-1) {}
 
     ~Thread() {
         State state = state_.load();
@@ -19,7 +19,7 @@ public:
     void Start();
     void Join();
 
-    const std::string& name() const { return name_; }
+    absl::string_view name() const { return name_; }
     int tid() { return tid_; }
     static Thread* current() { return current_; }
 
