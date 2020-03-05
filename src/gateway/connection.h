@@ -20,7 +20,7 @@ public:
     Connection(Server* server, int connection_id);
     ~Connection();
 
-    int id() { return connection_id_; }
+    int id() const { return connection_id_; }
     uv_tcp_t* uv_tcp_handle() { return &uv_tcp_handle_; }
 
     void Start(IOWorker* io_worker);
@@ -36,7 +36,7 @@ public:
     char* pipe_write_buf_for_transfer() { return pipe_write_buf_for_transfer_; }
 
 private:
-    enum State { kReady, kRunning, kClosing, kClosed };
+    enum State { kCreated, kRunning, kClosing, kClosed };
 
     Server* server_;
     int connection_id_;

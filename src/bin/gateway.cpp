@@ -2,12 +2,16 @@
 #include "base/common.h"
 #include "gateway/server.h"
 
+#include <thread>
+
 #include <signal.h>
 #include <absl/flags/flag.h>
 
 ABSL_FLAG(std::string, listen_addr, "0.0.0.0", "Address to listen");
 ABSL_FLAG(int, listen_port, 8080, "Port to listen");
 ABSL_FLAG(int, num_io_workers, 2, "Number of IO workers");
+ABSL_FLAG(std::string, ipc_path, "/tmp/faas_gateway",
+          "Domain socket path for IPC with watchdog processes");
 
 static faas::gateway::Server* server_ptr = nullptr;
 void SignalHandlerToCloseServer(int signal) {
@@ -21,15 +25,28 @@ int main(int argc, char* argv[]) {
 
     auto server = absl::make_unique<faas::gateway::Server>();
     server->set_address(absl::GetFlag(FLAGS_listen_addr));
+    server->set_ipc_path(absl::GetFlag(FLAGS_ipc_path));
     server->set_port(absl::GetFlag(FLAGS_listen_port));
     server->set_num_io_workers(absl::GetFlag(FLAGS_num_io_workers));
 
-    server->RegisterSyncRequestHandler(
+    // server->RegisterSyncRequestHandler(
+    //     [] (const std::string& method, const std::string& path) -> bool {
+    //         return method == "GET" && path == "/hello";
+    //     },
+    //     [] (faas::gateway::SyncRequestContext* context) {
+    //         context->AppendStrToResponseBody("hello\n");
+    //     });
+    
+    server->RegisterAsyncRequestHandler(
         [] (const std::string& method, const std::string& path) -> bool {
             return method == "GET" && path == "/hello";
         },
-        [] (faas::gateway::SyncRequestContext* context) {
-            context->AppendStrToResponseBody("hello\n");
+        [] (std::shared_ptr<faas::gateway::AsyncRequestContext> context) {
+            std::thread thread([context] () {
+                context->AppendStrToResponseBody("hello\n");
+                context->Finish();
+            });
+            thread.detach();
         });
 
     server->RegisterSyncRequestHandler(

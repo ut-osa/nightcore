@@ -7,10 +7,11 @@ namespace faas {
 namespace gateway {
 
 IOWorker::IOWorker(Server* server, int worker_id)
-    : server_(server), worker_id_(worker_id), state_(kReady),
+    : server_(server), worker_id_(worker_id), state_(kCreated),
       log_header_(absl::StrFormat("IOWorker[%d]: ", worker_id)),
       event_loop_thread_(absl::StrFormat("IOWorker[%d]_EventLoop", worker_id),
-                         std::bind(&IOWorker::EventLoopThreadMain, this)) {
+                         std::bind(&IOWorker::EventLoopThreadMain, this)),
+      read_buffer_pool_(absl::StrFormat("IOWorker-%d", worker_id), kReadBufferSize) {
     LIBUV_CHECK_OK(uv_loop_init(&uv_loop_));
     uv_loop_.data = &event_loop_thread_;
     LIBUV_CHECK_OK(uv_async_init(&uv_loop_, &stop_event_, &IOWorker::StopCallback));
@@ -19,7 +20,7 @@ IOWorker::IOWorker(Server* server, int worker_id)
 
 IOWorker::~IOWorker() {
     State state = state_.load();
-    CHECK(state == kReady || state == kStopped);
+    CHECK(state == kCreated || state == kStopped);
     CHECK(connections_.empty());
     LIBUV_CHECK_OK(uv_loop_close(&uv_loop_));
 }
@@ -33,7 +34,7 @@ void PipeReadBufferAllocCallback(uv_handle_t* handle, size_t suggested_size, uv_
 }
 
 void IOWorker::Start(int pipe_to_server_fd) {
-    CHECK(state_.load() == kReady);
+    CHECK(state_.load() == kCreated);
     LIBUV_CHECK_OK(uv_pipe_init(&uv_loop_, &pipe_to_server_, 1));
     pipe_to_server_.data = this;
     LIBUV_CHECK_OK(uv_pipe_open(&pipe_to_server_, pipe_to_server_fd));
@@ -49,28 +50,19 @@ void IOWorker::ScheduleStop() {
 }
 
 void IOWorker::WaitForFinish() {
-    CHECK(state_.load() != kReady);
+    CHECK(state_.load() != kCreated);
     event_loop_thread_.Join();
     CHECK(state_.load() == kStopped);
 }
 
 void IOWorker::NewReadBuffer(size_t suggested_size, uv_buf_t* buf) {
     CHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
-    if (available_read_buffers_.empty()) {
-        std::unique_ptr<char[]> new_buffer(new char[kReadBufferSize]);
-        available_read_buffers_.push_back(new_buffer.get());
-        all_read_buffers_.push_back(std::move(new_buffer));
-        HLOG(INFO) << "Allocate new read buffer, current buffer count is " << all_read_buffers_.size();
-    }
-    buf->base = available_read_buffers_.back();
-    buf->len = kReadBufferSize;
-    available_read_buffers_.pop_back();
+    read_buffer_pool_.Get(buf);
 }
 
 void IOWorker::ReturnReadBuffer(const uv_buf_t* buf) {
     CHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
-    CHECK_EQ(buf->len, kReadBufferSize);
-    available_read_buffers_.push_back(buf->base);
+    read_buffer_pool_.Return(buf);
 }
 
 void IOWorker::OnConnectionClose(Connection* connection) {

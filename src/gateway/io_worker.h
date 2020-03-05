@@ -2,6 +2,7 @@
 
 #include "base/common.h"
 #include "utils/uv_utils.h"
+#include "utils/buffer_pool.h"
 #include "gateway/connection.h"
 
 namespace faas {
@@ -16,14 +17,14 @@ public:
     IOWorker(Server* server, int worker_id);
     ~IOWorker();
 
-    int id() { return worker_id_; }
+    int id() const { return worker_id_; }
 
     void Start(int pipe_to_server_fd);
     void ScheduleStop();
     void WaitForFinish();
 
 private:
-    enum State { kReady, kRunning, kStopping, kStopped };
+    enum State { kCreated, kRunning, kStopping, kStopped };
 
     Server* server_;
     int worker_id_;
@@ -37,9 +38,7 @@ private:
 
     base::Thread event_loop_thread_;
     absl::flat_hash_set<Connection*> connections_;
-
-    std::vector<char*> available_read_buffers_;
-    std::vector<std::unique_ptr<char[]>> all_read_buffers_;
+    utils::BufferPool read_buffer_pool_;
 
     void EventLoopThreadMain();
 

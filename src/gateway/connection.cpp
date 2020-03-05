@@ -14,7 +14,7 @@ namespace gateway {
 
 Connection::Connection(Server* server, int connection_id)
     : server_(server), connection_id_(connection_id), io_worker_(nullptr),
-      state_(kReady), log_header_(absl::StrFormat("Connection[%d]: ", connection_id)),
+      state_(kCreated), log_header_(absl::StrFormat("Connection[%d]: ", connection_id)),
       within_async_request_(false) {
     http_parser_init(&http_parser_, HTTP_REQUEST);
     http_parser_.data = this;
@@ -29,11 +29,12 @@ Connection::Connection(Server* server, int connection_id)
 }
 
 Connection::~Connection() {
-    CHECK(state_ == kReady || state_ == kClosed);
+    CHECK(state_ == kCreated || state_ == kClosed);
 }
 
 void Connection::Start(IOWorker* io_worker) {
-    CHECK(state_ == kReady);
+    CHECK(state_ == kCreated);
+    CHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
     io_worker_ = io_worker;
     uv_tcp_handle_.data = this;
     response_write_req_.data = this;
@@ -50,13 +51,13 @@ void Connection::Reset(int connection_id) {
     connection_id_ = connection_id;
     log_header_ = absl::StrFormat("Connection[%d]: ", connection_id);
     ResetHttpParser();
-    state_ = kReady;
+    state_ = kCreated;
 }
 
 void Connection::ScheduleClose() {
     CHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
     if (state_ == kClosing) {
-        HLOG(INFO) << "Connection is already scheduled for closing";
+        HLOG(INFO) << "Already scheduled for closing";
         return;
     }
     CHECK(state_ == kRunning);
@@ -111,7 +112,7 @@ UV_READ_CB_FOR_CLASS(Connection, RecvData) {
             HLOG(INFO) << "Connection closed by client";
         } else {
             HLOG(WARNING) << "Read error, will close the connection: "
-                         << uv_strerror(nread);
+                          << uv_strerror(nread);
         }
         ScheduleClose();
     }
@@ -158,9 +159,10 @@ UV_CLOSE_CB_FOR_CLASS(Connection, Close) {
     CHECK(state_ == kClosing);
     closed_uv_handles_++;
     if (closed_uv_handles_ == uv_handles_is_closing_) {
-        io_worker_->OnConnectionClose(this);
-        io_worker_ = nullptr;
         state_ = kClosed;
+        IOWorker* io_worker = io_worker_;
+        io_worker_ = nullptr;
+        io_worker->OnConnectionClose(this);
     }
 }
 

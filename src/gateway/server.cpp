@@ -9,10 +9,11 @@ namespace faas {
 namespace gateway {
 
 Server::Server()
-    : state_(kReady), address_(kDefaultListenAddress), port_(kDefaultListenPort),
-      listen_backlog_(kDefaultListenBackLog), num_io_workers_(kDefaultNumIOWorkers),
+    : state_(kCreated), port_(-1), listen_backlog_(kDefaultListenBackLog),
+      num_io_workers_(kDefaultNumIOWorkers),
       event_loop_thread_("Server_EventLoop", std::bind(&Server::EventLoopThreadMain, this)),
-      next_connection_id_(0), next_io_worker_id_(0) {
+      next_connection_id_(0), next_io_worker_id_(0),
+      buffer_pool_for_watchdog_pipes_("WatchdogPipe", kWatchdogPipeBufferSize) {
     LIBUV_CHECK_OK(uv_loop_init(&uv_loop_));
     uv_loop_.data = &event_loop_thread_;
     LIBUV_CHECK_OK(uv_tcp_init(&uv_loop_, &uv_tcp_handle_));
@@ -23,7 +24,7 @@ Server::Server()
 
 Server::~Server() {
     State state = state_.load();
-    CHECK(state == kReady || state == kStopped);
+    CHECK(state == kCreated || state == kStopped);
     LIBUV_CHECK_OK(uv_loop_close(&uv_loop_));
 }
 
@@ -36,9 +37,11 @@ void PipeReadBufferAllocCallback(uv_handle_t* handle, size_t suggested_size, uv_
 }
 
 void Server::Start() {
-    CHECK(state_.load() == kReady);
+    CHECK(state_.load() == kCreated);
     // Listen on address:port
     struct sockaddr_in bind_addr;
+    CHECK(!address_.empty());
+    CHECK_NE(port_, -1);
     LIBUV_CHECK_OK(uv_ip4_addr(address_.c_str(), port_, &bind_addr));
     LIBUV_CHECK_OK(uv_tcp_bind(&uv_tcp_handle_, (const struct sockaddr *)&bind_addr, 0));
     HLOG(INFO) << "Listen on " << address_ << ":" << port_;
@@ -57,6 +60,16 @@ void Server::Start() {
         io_worker->Start(pipe_fd_for_worker);
         io_workers_.push_back(std::move(io_worker));
     }
+    // Listen on ipc_path
+    LIBUV_CHECK_OK(uv_pipe_init(&uv_loop_, &uv_ipc_handle_, 0));
+    uv_ipc_handle_.data = this;
+    unlink(ipc_path_.c_str());
+    LIBUV_CHECK_OK(uv_pipe_bind(&uv_ipc_handle_, ipc_path_.c_str()));
+    HLOG(INFO) << "Listen on " << ipc_path_ << " for IPC with watchdog processes";
+    LIBUV_CHECK_OK(uv_listen(
+        reinterpret_cast<uv_stream_t*>(&uv_ipc_handle_), listen_backlog_,
+        &Server::WatchdogConnectionCallback));
+    // Start thread for running event loop
     event_loop_thread_.Start();
     state_.store(kRunning);
 }
@@ -67,7 +80,7 @@ void Server::ScheduleStop() {
 }
 
 void Server::WaitForFinish() {
-    CHECK(state_.load() != kReady);
+    CHECK(state_.load() != kCreated);
     for (const auto& io_worker : io_workers_) {
         io_worker->WaitForFinish();
     }
@@ -77,12 +90,12 @@ void Server::WaitForFinish() {
 }
 
 void Server::RegisterSyncRequestHandler(RequestMatcher matcher, SyncRequestHandler handler) {
-    CHECK(state_.load() == kReady);
+    CHECK(state_.load() == kCreated);
     request_handlers_.emplace_back(new RequestHandler(std::move(matcher), std::move(handler)));
 }
 
 void Server::RegisterAsyncRequestHandler(RequestMatcher matcher, AsyncRequestHandler handler) {
-    CHECK(state_.load() == kReady);
+    CHECK(state_.load() == kCreated);
     request_handlers_.emplace_back(new RequestHandler(std::move(matcher), std::move(handler)));
 }
 
@@ -149,6 +162,10 @@ void Server::ReturnConnection(Connection* connection) {
              << "active connection is " << active_connections_.size();
 }
 
+void Server::OnWatchdogPipeClose(WatchdogPipe* watchdog_pipe) {
+    // TODO
+}
+
 UV_CONNECTION_CB_FOR_CLASS(Server, Connection) {
     Connection* connection;
     if (!idle_connections_.empty()) {
@@ -209,7 +226,12 @@ UV_ASYNC_CB_FOR_CLASS(Server, Stop) {
         LIBUV_CHECK_OK(uv_read_stop(reinterpret_cast<uv_stream_t*>(pipe)));
         uv_close(reinterpret_cast<uv_handle_t*>(pipe), nullptr);
     }
+    for (const auto& entry : watchdog_pipes_) {
+        WatchdogPipe* watchdog_pipe = entry.first;
+        watchdog_pipe->ScheduleClose();
+    }
     uv_close(reinterpret_cast<uv_handle_t*>(&uv_tcp_handle_), nullptr);
+    uv_close(reinterpret_cast<uv_handle_t*>(&uv_ipc_handle_), nullptr);
     uv_close(reinterpret_cast<uv_handle_t*>(&stop_event_), nullptr);
     state_.store(kStopping);
 }
@@ -218,6 +240,23 @@ UV_WRITE_CB_FOR_CLASS(Server, PipeWrite2) {
     if (status != 0) {
         HLOG(ERROR) << "Failed to write to pipe: " << uv_strerror(status);
     }
+}
+
+UV_CONNECTION_CB_FOR_CLASS(Server, WatchdogConnection) {
+    if (status != 0) {
+        HLOG(WARNING) << "Failed to open connection with watchdog pipe: "
+                      << uv_strerror(status);
+        return;
+    }
+    CHECK_EQ(status, 0);
+    HLOG(INFO) << "New watchdog connection";
+    std::unique_ptr<WatchdogPipe> watchdog_pipe = absl::make_unique<WatchdogPipe>(this);
+    uv_pipe_t* client = watchdog_pipe->uv_pipe_handle();
+    LIBUV_CHECK_OK(uv_pipe_init(&uv_loop_, client, 0));
+    LIBUV_CHECK_OK(uv_accept(reinterpret_cast<uv_stream_t*>(&uv_ipc_handle_),
+                             reinterpret_cast<uv_stream_t*>(client)));
+    watchdog_pipe->Start(&buffer_pool_for_watchdog_pipes_);
+    watchdog_pipes_[watchdog_pipe.get()] = std::move(watchdog_pipe);
 }
 
 }  // namespace gateway

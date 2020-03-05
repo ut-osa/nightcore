@@ -9,11 +9,11 @@ namespace base {
 class Thread {
 public:
     Thread(const std::string& name, std::function<void()> fn)
-        : state_(kReady), name_(name), fn_(fn), tid_(-1) {}
+        : state_(kCreated), name_(name), fn_(fn), tid_(-1) {}
 
     ~Thread() {
         State state = state_.load();
-        CHECK(state == kReady || state == kFinished);
+        CHECK(state == kCreated || state == kFinished);
     }
 
     void Start();
@@ -24,7 +24,7 @@ public:
     static Thread* current() { return current_; }
 
 private:
-    enum State { kReady, kStarting, kRunning, kFinished };
+    enum State { kCreated, kStarting, kRunning, kFinished };
 
     std::atomic<State> state_;
     std::string name_;

@@ -1,24 +1,26 @@
 #pragma once
 
 #include "base/common.h"
+#include "utils/buffer_pool.h"
 #include "gateway/connection.h"
 #include "gateway/io_worker.h"
 #include "gateway/request_context.h"
+#include "gateway/watchdog_pipe.h"
 
 namespace faas {
 namespace gateway {
 
 class Server {
 public:
-    static constexpr const char* kDefaultListenAddress = "127.0.0.1";
-    static constexpr int kDefaultListenPort = 8080;
     static constexpr int kDefaultListenBackLog = 32;
     static constexpr int kDefaultNumIOWorkers = 2;
+    static constexpr size_t kWatchdogPipeBufferSize = 256;
 
     Server();
     ~Server();
 
     void set_address(const std::string& address) { address_ = address; }
+    void set_ipc_path(const std::string& path) { ipc_path_ = path; }
     void set_port(int port) { port_ = port; }
     void set_listen_backlog(int value) { listen_backlog_ = value; }
     void set_num_io_workers(int value) { num_io_workers_ = value; }
@@ -68,21 +70,25 @@ public:
 
     bool MatchRequest(const std::string& method, const std::string& path,
                       const RequestHandler** request_handler) const;
+    
+    void OnWatchdogPipeClose(WatchdogPipe* watchdog_pipe);
 
 private:
-    enum State { kReady, kRunning, kStopping, kStopped };
+    enum State { kCreated, kRunning, kStopping, kStopped };
     std::atomic<State> state_;
 
     std::string address_;
+    std::string ipc_path_;
     int port_;
     int listen_backlog_;
     int num_io_workers_;
 
     uv_loop_t uv_loop_;
     uv_tcp_t uv_tcp_handle_;
+    uv_pipe_t uv_ipc_handle_;
     uv_async_t stop_event_;
-
     base::Thread event_loop_thread_;
+
     std::vector<std::unique_ptr<IOWorker>> io_workers_;
     absl::flat_hash_map<IOWorker*, std::unique_ptr<uv_pipe_t>> pipes_to_io_worker_;
 
@@ -96,6 +102,9 @@ private:
 
     std::vector<std::unique_ptr<RequestHandler>> request_handlers_;
 
+    absl::flat_hash_map<WatchdogPipe*, std::unique_ptr<WatchdogPipe>> watchdog_pipes_;
+    utils::BufferPool buffer_pool_for_watchdog_pipes_;
+
     std::unique_ptr<uv_pipe_t> CreatePipeToWorker(int* pipe_fd_for_worker);
     void TransferConnectionToWorker(IOWorker* io_worker, Connection* connection);
     void ReturnConnection(Connection* connection);
@@ -107,6 +116,7 @@ private:
     DECLARE_UV_CONNECTION_CB_FOR_CLASS(Connection);
     DECLARE_UV_READ_CB_FOR_CLASS(ReturnConnection);
     DECLARE_UV_WRITE_CB_FOR_CLASS(PipeWrite2);
+    DECLARE_UV_CONNECTION_CB_FOR_CLASS(WatchdogConnection);
 
     DISALLOW_COPY_AND_ASSIGN(Server);
 };
