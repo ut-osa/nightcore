@@ -51,7 +51,7 @@ void GatewayPipe::ScheduleClose() {
 
 void GatewayPipe::RecvHandshakeResponse() {
     CHECK_IN_EVENT_LOOP_THREAD(uv_pipe_handle_.loop);
-    LIBUV_CHECK_OK(uv_read_stop(reinterpret_cast<uv_stream_t*>(&uv_pipe_handle_)));
+    UV_CHECK_OK(uv_read_stop(reinterpret_cast<uv_stream_t*>(&uv_pipe_handle_)));
     WatchdogHandshakeResponse* message = reinterpret_cast<WatchdogHandshakeResponse*>(
         message_buffer_.data());
     if (message->status != OK_STATUS) {
@@ -60,9 +60,9 @@ void GatewayPipe::RecvHandshakeResponse() {
         return;
     }
     HLOG(INFO) << "Handshake done";
-    LIBUV_CHECK_OK(uv_read_start(reinterpret_cast<uv_stream_t*>(&uv_pipe_handle_),
-                                 &GatewayPipe::BufferAllocCallback,
-                                 &GatewayPipe::ReadMessageCallback));
+    UV_CHECK_OK(uv_read_start(reinterpret_cast<uv_stream_t*>(&uv_pipe_handle_),
+                              &GatewayPipe::BufferAllocCallback,
+                              &GatewayPipe::ReadMessageCallback));
     state_ = kRunning;
 }
 
@@ -78,8 +78,8 @@ UV_CONNECT_CB_FOR_CLASS(GatewayPipe, Connect) {
         .base = reinterpret_cast<char*>(&handshake_message_),
         .len = sizeof(WatchdogHandshakeMessage)
     };
-    LIBUV_CHECK_OK(uv_write(&write_req_, reinterpret_cast<uv_stream_t*>(&uv_pipe_handle_),
-                            &buf, 1, &GatewayPipe::WriteHandshakeCallback));
+    UV_CHECK_OK(uv_write(&write_req_, reinterpret_cast<uv_stream_t*>(&uv_pipe_handle_),
+                         &buf, 1, &GatewayPipe::WriteHandshakeCallback));
 }
 
 UV_ALLOC_CB_FOR_CLASS(GatewayPipe, BufferAlloc) {
@@ -110,9 +110,9 @@ UV_WRITE_CB_FOR_CLASS(GatewayPipe, WriteHandshake) {
         ScheduleClose();
         return;
     }
-    LIBUV_CHECK_OK(uv_read_start(reinterpret_cast<uv_stream_t*>(&uv_pipe_handle_),
-                                 &GatewayPipe::BufferAllocCallback,
-                                 &GatewayPipe::ReadHandshakeResponseCallback));
+    UV_CHECK_OK(uv_read_start(reinterpret_cast<uv_stream_t*>(&uv_pipe_handle_),
+                              &GatewayPipe::BufferAllocCallback,
+                              &GatewayPipe::ReadHandshakeResponseCallback));
 }
 
 UV_READ_CB_FOR_CLASS(GatewayPipe, ReadMessage) {

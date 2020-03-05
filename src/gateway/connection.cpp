@@ -38,9 +38,9 @@ void Connection::Start(IOWorker* io_worker) {
     io_worker_ = io_worker;
     uv_tcp_handle_.data = this;
     response_write_req_.data = this;
-    LIBUV_CHECK_OK(uv_async_init(uv_tcp_handle_.loop,
-                                 &async_request_finished_event_,
-                                 &Connection::AsyncRequestFinishCallback));
+    UV_CHECK_OK(uv_async_init(uv_tcp_handle_.loop,
+                              &async_request_finished_event_,
+                              &Connection::AsyncRequestFinishCallback));
     async_request_finished_event_.data = this;
     state_ = kRunning;
     StartRecvData();
@@ -81,9 +81,9 @@ void Connection::StartRecvData() {
         HLOG(WARNING) << "Connection is closing or has closed, will not enable read event";
         return;
     }
-    LIBUV_CHECK_OK(uv_read_start(reinterpret_cast<uv_stream_t*>(&uv_tcp_handle_),
-                                 &Connection::BufferAllocCallback,
-                                 &Connection::RecvDataCallback));
+    UV_CHECK_OK(uv_read_start(reinterpret_cast<uv_stream_t*>(&uv_tcp_handle_),
+                              &Connection::BufferAllocCallback,
+                              &Connection::RecvDataCallback));
 }
 
 void Connection::StopRecvData() {
@@ -92,7 +92,7 @@ void Connection::StopRecvData() {
         HLOG(WARNING) << "Connection is closing or has closed, will not enable read event";
         return;
     }
-    LIBUV_CHECK_OK(uv_read_stop(reinterpret_cast<uv_stream_t*>(&uv_tcp_handle_)));
+    UV_CHECK_OK(uv_read_stop(reinterpret_cast<uv_stream_t*>(&uv_tcp_handle_)));
 }
 
 UV_READ_CB_FOR_CLASS(Connection, RecvData) {
@@ -293,7 +293,7 @@ void Connection::OnNewHttpRequest(const std::string& method, const std::string& 
 }
 
 void Connection::AsyncRequestFinish(AsyncRequestContext* context) {
-    LIBUV_CHECK_OK(uv_async_send(&async_request_finished_event_));
+    UV_CHECK_OK(uv_async_send(&async_request_finished_event_));
 }
 
 void Connection::SendHttpResponse() {
@@ -331,7 +331,7 @@ void Connection::SendHttpResponse() {
         { .base = response_header_buffer_.data(), .len = response_header_buffer_.length() },
         { .base = response_body_buffer_.data(), .len = response_body_buffer_.length() }
     };
-    LIBUV_CHECK_OK(uv_write(&response_write_req_, reinterpret_cast<uv_stream_t*>(&uv_tcp_handle_),
+    UV_CHECK_OK(uv_write(&response_write_req_, reinterpret_cast<uv_stream_t*>(&uv_tcp_handle_),
                             bufs, 2, &Connection::DataWrittenCallback));
 }
 

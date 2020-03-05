@@ -14,18 +14,18 @@ Server::Server()
       event_loop_thread_("Server_EventLoop", std::bind(&Server::EventLoopThreadMain, this)),
       next_connection_id_(0), next_io_worker_id_(0),
       buffer_pool_for_watchdog_pipes_("WatchdogPipe", kWatchdogPipeBufferSize) {
-    LIBUV_CHECK_OK(uv_loop_init(&uv_loop_));
+    UV_CHECK_OK(uv_loop_init(&uv_loop_));
     uv_loop_.data = &event_loop_thread_;
-    LIBUV_CHECK_OK(uv_tcp_init(&uv_loop_, &uv_tcp_handle_));
+    UV_CHECK_OK(uv_tcp_init(&uv_loop_, &uv_tcp_handle_));
     uv_tcp_handle_.data = this;
-    LIBUV_CHECK_OK(uv_async_init(&uv_loop_, &stop_event_, &Server::StopCallback));
+    UV_CHECK_OK(uv_async_init(&uv_loop_, &stop_event_, &Server::StopCallback));
     stop_event_.data = this;
 }
 
 Server::~Server() {
     State state = state_.load();
     CHECK(state == kCreated || state == kStopped);
-    LIBUV_CHECK_OK(uv_loop_close(&uv_loop_));
+    UV_CHECK_OK(uv_loop_close(&uv_loop_));
 }
 
 namespace {
@@ -42,10 +42,10 @@ void Server::Start() {
     struct sockaddr_in bind_addr;
     CHECK(!address_.empty());
     CHECK_NE(port_, -1);
-    LIBUV_CHECK_OK(uv_ip4_addr(address_.c_str(), port_, &bind_addr));
-    LIBUV_CHECK_OK(uv_tcp_bind(&uv_tcp_handle_, (const struct sockaddr *)&bind_addr, 0));
+    UV_CHECK_OK(uv_ip4_addr(address_.c_str(), port_, &bind_addr));
+    UV_CHECK_OK(uv_tcp_bind(&uv_tcp_handle_, (const struct sockaddr *)&bind_addr, 0));
     HLOG(INFO) << "Listen on " << address_ << ":" << port_;
-    LIBUV_CHECK_OK(uv_listen(
+    UV_CHECK_OK(uv_listen(
         reinterpret_cast<uv_stream_t*>(&uv_tcp_handle_), listen_backlog_,
         &Server::ConnectionCallback));
     // Start IO workers
@@ -54,19 +54,19 @@ void Server::Start() {
         int pipe_fd_for_worker;
         pipes_to_io_worker_[io_worker.get()] = CreatePipeToWorker(&pipe_fd_for_worker);
         uv_pipe_t* pipe_to_worker = pipes_to_io_worker_[io_worker.get()].get();
-        LIBUV_CHECK_OK(uv_read_start(reinterpret_cast<uv_stream_t*>(pipe_to_worker),
-                                     &PipeReadBufferAllocCallback,
-                                     &Server::ReturnConnectionCallback));
+        UV_CHECK_OK(uv_read_start(reinterpret_cast<uv_stream_t*>(pipe_to_worker),
+                                  &PipeReadBufferAllocCallback,
+                                  &Server::ReturnConnectionCallback));
         io_worker->Start(pipe_fd_for_worker);
         io_workers_.push_back(std::move(io_worker));
     }
     // Listen on ipc_path
-    LIBUV_CHECK_OK(uv_pipe_init(&uv_loop_, &uv_ipc_handle_, 0));
+    UV_CHECK_OK(uv_pipe_init(&uv_loop_, &uv_ipc_handle_, 0));
     uv_ipc_handle_.data = this;
     unlink(ipc_path_.c_str());
-    LIBUV_CHECK_OK(uv_pipe_bind(&uv_ipc_handle_, ipc_path_.c_str()));
+    UV_CHECK_OK(uv_pipe_bind(&uv_ipc_handle_, ipc_path_.c_str()));
     HLOG(INFO) << "Listen on " << ipc_path_ << " for IPC with watchdog processes";
-    LIBUV_CHECK_OK(uv_listen(
+    UV_CHECK_OK(uv_listen(
         reinterpret_cast<uv_stream_t*>(&uv_ipc_handle_), listen_backlog_,
         &Server::WatchdogConnectionCallback));
     // Start thread for running event loop
@@ -76,7 +76,7 @@ void Server::Start() {
 
 void Server::ScheduleStop() {
     HLOG(INFO) << "Scheduled to stop";
-    LIBUV_CHECK_OK(uv_async_send(&stop_event_));
+    UV_CHECK_OK(uv_async_send(&stop_event_));
 }
 
 void Server::WaitForFinish() {
@@ -131,9 +131,9 @@ std::unique_ptr<uv_pipe_t> Server::CreatePipeToWorker(int* pipe_fd_for_worker) {
     // pipe2 does not work with uv_write2, use socketpair instead
     CHECK_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, pipe_fds), 0);
     std::unique_ptr<uv_pipe_t> pipe_to_worker = absl::make_unique<uv_pipe_t>();
-    LIBUV_CHECK_OK(uv_pipe_init(&uv_loop_, pipe_to_worker.get(), 1));
+    UV_CHECK_OK(uv_pipe_init(&uv_loop_, pipe_to_worker.get(), 1));
     pipe_to_worker->data = this;
-    LIBUV_CHECK_OK(uv_pipe_open(pipe_to_worker.get(), pipe_fds[0]));
+    UV_CHECK_OK(uv_pipe_open(pipe_to_worker.get(), pipe_fds[0]));
     *pipe_fd_for_worker = pipe_fds[1];
     return pipe_to_worker;
 }
@@ -147,9 +147,9 @@ void Server::TransferConnectionToWorker(IOWorker* io_worker, Connection* connect
     uv_buf_t uv_buf = uv_buf_init(buf, buf_len);
     uv_tcp_t* send_handle = connection->uv_tcp_handle_for_transfer();
     uv_pipe_t* pipe_to_worker = pipes_to_io_worker_[io_worker].get();
-    LIBUV_CHECK_OK(uv_write2(write_req, reinterpret_cast<uv_stream_t*>(pipe_to_worker),
-                             &uv_buf, 1, reinterpret_cast<uv_stream_t*>(send_handle),
-                             &PipeWrite2Callback));
+    UV_CHECK_OK(uv_write2(write_req, reinterpret_cast<uv_stream_t*>(pipe_to_worker),
+                          &uv_buf, 1, reinterpret_cast<uv_stream_t*>(send_handle),
+                          &PipeWrite2Callback));
     uv_close(reinterpret_cast<uv_handle_t*>(send_handle), nullptr);
 }
 
@@ -178,9 +178,9 @@ UV_CONNECTION_CB_FOR_CLASS(Server, Connection) {
         HLOG(INFO) << "Allocate new Connection object, current count is " << connections_.size();
     }
     uv_tcp_t* client = connection->uv_tcp_handle_for_transfer();
-    LIBUV_CHECK_OK(uv_tcp_init(&uv_loop_, client));
-    LIBUV_CHECK_OK(uv_accept(reinterpret_cast<uv_stream_t*>(&uv_tcp_handle_),
-                             reinterpret_cast<uv_stream_t*>(client)));
+    UV_CHECK_OK(uv_tcp_init(&uv_loop_, client));
+    UV_CHECK_OK(uv_accept(reinterpret_cast<uv_stream_t*>(&uv_tcp_handle_),
+                          reinterpret_cast<uv_stream_t*>(client)));
     TransferConnectionToWorker(PickIOWorker(), connection);
     active_connections_.insert(connection);
 }
@@ -223,7 +223,7 @@ UV_ASYNC_CB_FOR_CLASS(Server, Stop) {
     for (const auto& io_worker : io_workers_) {
         io_worker->ScheduleStop();
         uv_pipe_t* pipe = pipes_to_io_worker_[io_worker.get()].get();
-        LIBUV_CHECK_OK(uv_read_stop(reinterpret_cast<uv_stream_t*>(pipe)));
+        UV_CHECK_OK(uv_read_stop(reinterpret_cast<uv_stream_t*>(pipe)));
         uv_close(reinterpret_cast<uv_handle_t*>(pipe), nullptr);
     }
     for (const auto& entry : watchdog_pipes_) {
@@ -252,9 +252,9 @@ UV_CONNECTION_CB_FOR_CLASS(Server, WatchdogConnection) {
     HLOG(INFO) << "New watchdog connection";
     std::unique_ptr<WatchdogPipe> watchdog_pipe = absl::make_unique<WatchdogPipe>(this);
     uv_pipe_t* client = watchdog_pipe->uv_pipe_handle();
-    LIBUV_CHECK_OK(uv_pipe_init(&uv_loop_, client, 0));
-    LIBUV_CHECK_OK(uv_accept(reinterpret_cast<uv_stream_t*>(&uv_ipc_handle_),
-                             reinterpret_cast<uv_stream_t*>(client)));
+    UV_CHECK_OK(uv_pipe_init(&uv_loop_, client, 0));
+    UV_CHECK_OK(uv_accept(reinterpret_cast<uv_stream_t*>(&uv_ipc_handle_),
+                          reinterpret_cast<uv_stream_t*>(client)));
     watchdog_pipe->Start(&buffer_pool_for_watchdog_pipes_);
     watchdog_pipes_[watchdog_pipe.get()] = std::move(watchdog_pipe);
 }

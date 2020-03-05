@@ -29,9 +29,9 @@ void WatchdogPipe::Start(utils::BufferPool* buffer_pool) {
     uv_pipe_handle_.data = this;
     write_req_.data = this;
     buffer_pool_ = buffer_pool;
-    LIBUV_CHECK_OK(uv_read_start(reinterpret_cast<uv_stream_t*>(&uv_pipe_handle_),
-                                 &WatchdogPipe::BufferAllocCallback,
-                                 &WatchdogPipe::ReadHandshakeCallback));
+    UV_CHECK_OK(uv_read_start(reinterpret_cast<uv_stream_t*>(&uv_pipe_handle_),
+                              &WatchdogPipe::BufferAllocCallback,
+                              &WatchdogPipe::ReadHandshakeCallback));
     state_ = kHandshake;
 }
 
@@ -49,7 +49,7 @@ void WatchdogPipe::ScheduleClose() {
 
 void WatchdogPipe::RecvHandshakeMessage() {
     CHECK_IN_EVENT_LOOP_THREAD(uv_pipe_handle_.loop);
-    LIBUV_CHECK_OK(uv_read_stop(reinterpret_cast<uv_stream_t*>(&uv_pipe_handle_)));
+    UV_CHECK_OK(uv_read_stop(reinterpret_cast<uv_stream_t*>(&uv_pipe_handle_)));
     WatchdogHandshakeMessage* message = reinterpret_cast<WatchdogHandshakeMessage*>(
         message_buffer_.data());
     size_t function_name_length = strnlen(
@@ -62,8 +62,8 @@ void WatchdogPipe::RecvHandshakeMessage() {
         .base = reinterpret_cast<char*>(&handshake_response_),
         .len = sizeof(WatchdogHandshakeResponse)
     };
-    LIBUV_CHECK_OK(uv_write(&write_req_, reinterpret_cast<uv_stream_t*>(&uv_pipe_handle_),
-                            &buf, 1, &WatchdogPipe::WriteHandshakeResponseCallback));
+    UV_CHECK_OK(uv_write(&write_req_, reinterpret_cast<uv_stream_t*>(&uv_pipe_handle_),
+                         &buf, 1, &WatchdogPipe::WriteHandshakeResponseCallback));
 }
 
 UV_ALLOC_CB_FOR_CLASS(WatchdogPipe, BufferAlloc) {
@@ -95,9 +95,9 @@ UV_WRITE_CB_FOR_CLASS(WatchdogPipe, WriteHandshakeResponse) {
         return;
     }
     HLOG(INFO) << "Handshake done";
-    LIBUV_CHECK_OK(uv_read_start(reinterpret_cast<uv_stream_t*>(&uv_pipe_handle_),
-                                 &WatchdogPipe::BufferAllocCallback,
-                                 &WatchdogPipe::ReadMessageCallback));
+    UV_CHECK_OK(uv_read_start(reinterpret_cast<uv_stream_t*>(&uv_pipe_handle_),
+                              &WatchdogPipe::BufferAllocCallback,
+                              &WatchdogPipe::ReadMessageCallback));
     state_ = kRunning;
 }
 

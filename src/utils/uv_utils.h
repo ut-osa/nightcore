@@ -4,7 +4,7 @@
 
 // libuv-related helper macros
 
-#define LIBUV_CHECK_OK(UV_CALL)                  \
+#define UV_CHECK_OK(UV_CALL)                  \
     do {                                         \
         int ret = UV_CALL;                       \
         if (ret != 0) {                          \
