@@ -10,8 +10,8 @@ namespace watchdog {
 
 using protocol::Status;
 using protocol::kMaxFuncNameLength;
-using protocol::WatchdogHandshakeMessage;
-using protocol::WatchdogHandshakeResponse;
+using protocol::HandshakeMessage;
+using protocol::HandshakeResponse;
 
 GatewayPipe::GatewayPipe(Watchdog* watchdog)
     : watchdog_(watchdog), state_(kCreated) {}
@@ -24,7 +24,7 @@ void GatewayPipe::Start(absl::string_view ipc_path, absl::string_view func_name,
                         int func_id, utils::BufferPool* buffer_pool) {
     CHECK(state_ == kCreated);
     buffer_pool_ = buffer_pool;
-    memset(&handshake_message_, 0, sizeof(WatchdogHandshakeMessage));
+    memset(&handshake_message_, 0, sizeof(HandshakeMessage));
     CHECK_LE(func_name.length(), kMaxFuncNameLength);
     memcpy(handshake_message_.func_name,
            func_name.data(), func_name.length());
@@ -53,7 +53,7 @@ void GatewayPipe::ScheduleClose() {
 void GatewayPipe::RecvHandshakeResponse() {
     CHECK_IN_EVENT_LOOP_THREAD(uv_pipe_handle_.loop);
     UV_CHECK_OK(uv_read_stop(reinterpret_cast<uv_stream_t*>(&uv_pipe_handle_)));
-    WatchdogHandshakeResponse* message = reinterpret_cast<WatchdogHandshakeResponse*>(
+    HandshakeResponse* message = reinterpret_cast<HandshakeResponse*>(
         message_buffer_.data());
     if (static_cast<Status>(message->status) != Status::OK) {
         HLOG(WARNING) << "Handshake failed, will close the pipe";
@@ -77,7 +77,7 @@ UV_CONNECT_CB_FOR_CLASS(GatewayPipe, Connect) {
     HLOG(INFO) << "Connected to gateway, start writing handshake message";
     uv_buf_t buf = {
         .base = reinterpret_cast<char*>(&handshake_message_),
-        .len = sizeof(WatchdogHandshakeMessage)
+        .len = sizeof(HandshakeMessage)
     };
     UV_CHECK_OK(uv_write(&write_req_, reinterpret_cast<uv_stream_t*>(&uv_pipe_handle_),
                          &buf, 1, &GatewayPipe::WriteHandshakeCallback));
@@ -94,8 +94,8 @@ UV_READ_CB_FOR_CLASS(GatewayPipe, ReadHandshakeResponse) {
         ScheduleClose();
     } else if (nread > 0) {
         message_buffer_.AppendData(buf->base, nread);
-        CHECK_LE(message_buffer_.length(), sizeof(WatchdogHandshakeResponse));
-        if (message_buffer_.length() == sizeof(WatchdogHandshakeResponse)) {
+        CHECK_LE(message_buffer_.length(), sizeof(HandshakeResponse));
+        if (message_buffer_.length() == sizeof(HandshakeResponse)) {
             RecvHandshakeResponse();
         }
     }

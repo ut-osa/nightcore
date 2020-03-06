@@ -6,20 +6,16 @@
 namespace faas {
 namespace gateway {
 
-class Connection;
+class HttpConnection;
 
-class SyncRequestContext {
+class HttpSyncRequestContext {
 public:
-    ~SyncRequestContext() {}
+    ~HttpSyncRequestContext() {}
 
     absl::string_view method() const { return method_; }
     absl::string_view path() const { return path_; }
     absl::string_view header(absl::string_view field) const {
-        if (headers_->contains(field)) {
-            return headers_->at(field);
-        } else {
-            return "";
-        }
+        return headers_->contains(field) ? headers_->at(field) : "";
     }
     const char* body() const { return body_; }
     size_t body_length() const { return body_length_; }
@@ -46,24 +42,20 @@ private:
     std::string* content_type_;
     utils::AppendableBuffer* response_body_buffer_;
 
-    friend class Connection;
-    SyncRequestContext() {}
+    friend class HttpConnection;
+    HttpSyncRequestContext() {}
 
-    DISALLOW_COPY_AND_ASSIGN(SyncRequestContext);
+    DISALLOW_COPY_AND_ASSIGN(HttpSyncRequestContext);
 };
 
-class AsyncRequestContext {
+class HttpAsyncRequestContext {
 public:
-    ~AsyncRequestContext() {}
+    ~HttpAsyncRequestContext() {}
 
     absl::string_view method() const { return method_; }
     absl::string_view path() const { return path_; }
     absl::string_view header(absl::string_view field) const {
-        if (headers_.contains(field)) {
-            return headers_.at(field);
-        } else {
-            return "";
-        }
+        return headers_.contains(field) ? headers_.at(field) : "";
     }
     const char* body() const { return body_buffer_.data(); }
     size_t body_length() const { return body_buffer_.length(); }
@@ -78,15 +70,8 @@ public:
     void AppendStrToResponseBody(absl::string_view str) {
         response_body_buffer_.AppendStr(str);
     }
-    // Handler should not use AsyncRequestContext any longer after calling Finish()
-    bool Finish() {
-        absl::MutexLock lk(&mu_);
-        if (connection_ != nullptr) {
-            connection_->AsyncRequestFinish(this);
-            return true;
-        }
-        return false;
-    }
+    // Handler should not use HttpAsyncRequestContext any longer after calling Finish()
+    bool Finish();
 
 private:
     std::string method_;
@@ -98,18 +83,14 @@ private:
     std::string content_type_;
     utils::AppendableBuffer response_body_buffer_;
 
-    Connection* connection_;
+    HttpConnection* connection_;
     absl::Mutex mu_;
 
-    friend class Connection;
-    AsyncRequestContext() {}
-    void OnConnectionClose() {
-        absl::MutexLock lk(&mu_);
-        CHECK(connection_ != nullptr);
-        connection_ = nullptr;
-    }
+    friend class HttpConnection;
+    HttpAsyncRequestContext() {}
+    void OnConnectionClose();
 
-    DISALLOW_COPY_AND_ASSIGN(AsyncRequestContext);
+    DISALLOW_COPY_AND_ASSIGN(HttpAsyncRequestContext);
 };
 
 }  // namespace gateway

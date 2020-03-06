@@ -12,12 +12,12 @@ enum class Status {
     OK = 1
 };
 
-struct WatchdogHandshakeMessage {
+struct HandshakeMessage {
     char func_name[kMaxFuncNameLength+1];
     uint16_t func_id;
 } __attribute__((packed));
 
-struct WatchdogHandshakeResponse {
+struct HandshakeResponse {
     uint16_t status;
     uint16_t caller_id;
 } __attribute__((packed));

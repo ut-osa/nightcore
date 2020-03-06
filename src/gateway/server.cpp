@@ -8,12 +8,15 @@
 namespace faas {
 namespace gateway {
 
+using protocol::Status;
+using protocol::HandshakeMessage;
+using protocol::HandshakeResponse;
+
 Server::Server()
     : state_(kCreated), port_(-1), listen_backlog_(kDefaultListenBackLog),
-      num_io_workers_(kDefaultNumIOWorkers),
+      num_http_workers_(kDefaultNumHttpWorkers), num_ipc_workers_(kDefaultNumIpcWorkers),
       event_loop_thread_("Server_EventLoop", std::bind(&Server::EventLoopThreadMain, this)),
-      next_connection_id_(0), next_io_worker_id_(0),
-      buffer_pool_for_watchdog_pipes_("WatchdogPipe", kWatchdogPipeBufferSize) {
+      next_http_connection_id_(0), next_http_worker_id_(0), next_ipc_worker_id_(0) {
     UV_CHECK_OK(uv_loop_init(&uv_loop_));
     uv_loop_.data = &event_loop_thread_;
     UV_CHECK_OK(uv_tcp_init(&uv_loop_, &uv_tcp_handle_));
@@ -38,6 +41,17 @@ void PipeReadBufferAllocCallback(uv_handle_t* handle, size_t suggested_size, uv_
 
 void Server::Start() {
     CHECK(state_.load() == kCreated);
+    // Start IO workers
+    for (int i = 0; i < num_http_workers_; i++) {
+        auto io_worker = CreateAndStartIOWorker(absl::StrFormat("HttpWorker-%d", i));
+        http_workers_.push_back(io_worker.get());
+        io_workers_.push_back(std::move(io_worker));
+    }
+    for (int i = 0; i < num_ipc_workers_; i++) {
+        auto io_worker = CreateAndStartIOWorker(absl::StrFormat("IpcWorker-%d", i));
+        ipc_workers_.push_back(io_worker.get());
+        io_workers_.push_back(std::move(io_worker));
+    }
     // Listen on address:port
     struct sockaddr_in bind_addr;
     CHECK(!address_.empty());
@@ -47,19 +61,7 @@ void Server::Start() {
     HLOG(INFO) << "Listen on " << address_ << ":" << port_;
     UV_CHECK_OK(uv_listen(
         reinterpret_cast<uv_stream_t*>(&uv_tcp_handle_), listen_backlog_,
-        &Server::ConnectionCallback));
-    // Start IO workers
-    for (int i = 0; i < num_io_workers_; i++) {
-        std::unique_ptr<IOWorker> io_worker = absl::make_unique<IOWorker>(this, i);
-        int pipe_fd_for_worker;
-        pipes_to_io_worker_[io_worker.get()] = CreatePipeToWorker(&pipe_fd_for_worker);
-        uv_pipe_t* pipe_to_worker = pipes_to_io_worker_[io_worker.get()].get();
-        UV_CHECK_OK(uv_read_start(reinterpret_cast<uv_stream_t*>(pipe_to_worker),
-                                  &PipeReadBufferAllocCallback,
-                                  &Server::ReturnConnectionCallback));
-        io_worker->Start(pipe_fd_for_worker);
-        io_workers_.push_back(std::move(io_worker));
-    }
+        &Server::HttpConnectionCallback));
     // Listen on ipc_path
     UV_CHECK_OK(uv_pipe_init(&uv_loop_, &uv_ipc_handle_, 0));
     uv_ipc_handle_.data = this;
@@ -68,7 +70,7 @@ void Server::Start() {
     HLOG(INFO) << "Listen on " << ipc_path_ << " for IPC with watchdog processes";
     UV_CHECK_OK(uv_listen(
         reinterpret_cast<uv_stream_t*>(&uv_ipc_handle_), listen_backlog_,
-        &Server::WatchdogConnectionCallback));
+        &Server::MessageConnectionCallback));
     // Start thread for running event loop
     event_loop_thread_.Start();
     state_.store(kRunning);
@@ -120,9 +122,27 @@ void Server::EventLoopThreadMain() {
     state_.store(kStopped);
 }
 
-IOWorker* Server::PickIOWorker() {
-    IOWorker* io_worker = io_workers_[next_io_worker_id_].get();
-    next_io_worker_id_ = (next_io_worker_id_ + 1) % io_workers_.size();
+IOWorker* Server::PickHttpWorker() {
+    IOWorker* io_worker = http_workers_[next_http_worker_id_];
+    next_http_worker_id_ = (next_http_worker_id_ + 1) % http_workers_.size();
+    return io_worker;
+}
+
+IOWorker* Server::PickIpcWorker() {
+    IOWorker* io_worker = ipc_workers_[next_ipc_worker_id_];
+    next_ipc_worker_id_ = (next_ipc_worker_id_ + 1) % ipc_workers_.size();
+    return io_worker;
+}
+
+std::unique_ptr<IOWorker> Server::CreateAndStartIOWorker(absl::string_view worker_name) {
+    std::unique_ptr<IOWorker> io_worker = absl::make_unique<IOWorker>(this, worker_name);
+    int pipe_fd_for_worker;
+    pipes_to_io_worker_[io_worker.get()] = CreatePipeToWorker(&pipe_fd_for_worker);
+    uv_pipe_t* pipe_to_worker = pipes_to_io_worker_[io_worker.get()].get();
+    UV_CHECK_OK(uv_read_start(reinterpret_cast<uv_stream_t*>(pipe_to_worker),
+                                &PipeReadBufferAllocCallback,
+                                &Server::ReturnConnectionCallback));
+    io_worker->Start(pipe_fd_for_worker);
     return io_worker;
 }
 
@@ -138,14 +158,14 @@ std::unique_ptr<uv_pipe_t> Server::CreatePipeToWorker(int* pipe_fd_for_worker) {
     return pipe_to_worker;
 }
 
-void Server::TransferConnectionToWorker(IOWorker* io_worker, Connection* connection) {
+void Server::TransferConnectionToWorker(IOWorker* io_worker, Connection* connection,
+                                        uv_stream_t* send_handle) {
     CHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
     uv_write_t* write_req = connection->uv_write_req_for_transfer();
     size_t buf_len = sizeof(void*);
     char* buf = connection->pipe_write_buf_for_transfer();
     memcpy(buf, &connection, buf_len);
     uv_buf_t uv_buf = uv_buf_init(buf, buf_len);
-    uv_tcp_t* send_handle = connection->uv_tcp_handle_for_transfer();
     uv_pipe_t* pipe_to_worker = pipes_to_io_worker_[io_worker].get();
     UV_CHECK_OK(uv_write2(write_req, reinterpret_cast<uv_stream_t*>(pipe_to_worker),
                           &uv_buf, 1, reinterpret_cast<uv_stream_t*>(send_handle),
@@ -155,39 +175,63 @@ void Server::TransferConnectionToWorker(IOWorker* io_worker, Connection* connect
 
 void Server::ReturnConnection(Connection* connection) {
     CHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
-    idle_connections_.push_back(connection);
-    active_connections_.erase(connection);
-    HLOG(INFO) << "Connection with ID " << connection->id() << " is returned, "
-             << "idle connection count is " << idle_connections_.size() << ", "
-             << "active connection is " << active_connections_.size();
+    if (connection->type() == Connection::Type::Http) {
+        HttpConnection* http_connection = static_cast<HttpConnection*>(connection);
+        free_http_connections_.push_back(http_connection);
+        active_http_connections_.erase(http_connection);
+        HLOG(INFO) << "HttpConnection with ID " << http_connection->id() << " is returned, "
+                   << "free connection count is " << free_http_connections_.size() << ", "
+                   << "active connection is " << active_http_connections_.size();
+    } else if (connection->type() == Connection::Type::Message) {
+        MessageConnection* message_connection = static_cast<MessageConnection*>(connection);
+        message_connections_.erase(message_connection);
+    } else {
+        LOG(FATAL) << "Unknown connection type!";
+    }
 }
 
-void Server::OnWatchdogPipeClose(WatchdogPipe* watchdog_pipe) {
-    if (watchdog_pipe->func_name().empty()) {
-        HLOG(INFO) << "Watchdog pipe closed";
-    } else {
-        HLOG(INFO) << "Watchdog pipe closed for function " << watchdog_pipe->func_name();
-    }
-    watchdog_pipes_.erase(watchdog_pipe);
+void Server::OnNewHandshake(MessageConnection* connection,
+                            const HandshakeMessage& message, HandshakeResponse* response) {
+    response->status = static_cast<uint16_t>(Status::OK);
 }
 
-UV_CONNECTION_CB_FOR_CLASS(Server, Connection) {
-    Connection* connection;
-    if (!idle_connections_.empty()) {
-        connection = idle_connections_.back();
-        idle_connections_.pop_back();
-        connection->Reset(next_connection_id_++);
-    } else {
-        connections_.push_back(absl::make_unique<Connection>(this, next_connection_id_++));
-        connection = connections_.back().get();
-        HLOG(INFO) << "Allocate new Connection object, current count is " << connections_.size();
+UV_CONNECTION_CB_FOR_CLASS(Server, HttpConnection) {
+    if (status != 0) {
+        HLOG(WARNING) << "Failed to open HTTP connection: " << uv_strerror(status);
+        return;
     }
-    uv_tcp_t* client = connection->uv_tcp_handle_for_transfer();
-    UV_CHECK_OK(uv_tcp_init(&uv_loop_, client));
+    HttpConnection* connection;
+    if (!free_http_connections_.empty()) {
+        connection = free_http_connections_.back();
+        free_http_connections_.pop_back();
+        connection->Reset(next_http_connection_id_++);
+    } else {
+        http_connections_.push_back(absl::make_unique<HttpConnection>(this, next_http_connection_id_++));
+        connection = http_connections_.back().get();
+        HLOG(INFO) << "Allocate new HttpConnection object, current count is " << http_connections_.size();
+    }
+    uv_tcp_t client;
+    UV_CHECK_OK(uv_tcp_init(&uv_loop_, &client));
     UV_CHECK_OK(uv_accept(reinterpret_cast<uv_stream_t*>(&uv_tcp_handle_),
-                          reinterpret_cast<uv_stream_t*>(client)));
-    TransferConnectionToWorker(PickIOWorker(), connection);
-    active_connections_.insert(connection);
+                          reinterpret_cast<uv_stream_t*>(&client)));
+    TransferConnectionToWorker(PickHttpWorker(), connection, reinterpret_cast<uv_stream_t*>(&client));
+    active_http_connections_.insert(connection);
+}
+
+UV_CONNECTION_CB_FOR_CLASS(Server, MessageConnection) {
+    if (status != 0) {
+        HLOG(WARNING) << "Failed to open message connection: " << uv_strerror(status);
+        return;
+    }
+    HLOG(INFO) << "New message connection";
+    std::unique_ptr<MessageConnection> connection = absl::make_unique<MessageConnection>(this);
+    uv_pipe_t client;
+    UV_CHECK_OK(uv_pipe_init(&uv_loop_, &client, 0));
+    UV_CHECK_OK(uv_accept(reinterpret_cast<uv_stream_t*>(&uv_ipc_handle_),
+                          reinterpret_cast<uv_stream_t*>(&client)));
+    TransferConnectionToWorker(PickIpcWorker(), connection.get(),
+                               reinterpret_cast<uv_stream_t*>(&client));
+    message_connections_.insert(std::move(connection));
 }
 
 UV_READ_CB_FOR_CLASS(Server, ReturnConnection) {
@@ -231,8 +275,8 @@ UV_ASYNC_CB_FOR_CLASS(Server, Stop) {
         UV_CHECK_OK(uv_read_stop(reinterpret_cast<uv_stream_t*>(pipe)));
         uv_close(reinterpret_cast<uv_handle_t*>(pipe), nullptr);
     }
-    for (const auto& watchdog_pipe : watchdog_pipes_) {
-        watchdog_pipe->ScheduleClose();
+    for (const auto& message_connection : message_connections_) {
+        message_connection->ScheduleClose();
     }
     uv_close(reinterpret_cast<uv_handle_t*>(&uv_tcp_handle_), nullptr);
     uv_close(reinterpret_cast<uv_handle_t*>(&uv_ipc_handle_), nullptr);
@@ -244,23 +288,6 @@ UV_WRITE_CB_FOR_CLASS(Server, PipeWrite2) {
     if (status != 0) {
         HLOG(ERROR) << "Failed to write to pipe: " << uv_strerror(status);
     }
-}
-
-UV_CONNECTION_CB_FOR_CLASS(Server, WatchdogConnection) {
-    if (status != 0) {
-        HLOG(WARNING) << "Failed to open connection with watchdog pipe: "
-                      << uv_strerror(status);
-        return;
-    }
-    CHECK_EQ(status, 0);
-    HLOG(INFO) << "New watchdog connection";
-    std::unique_ptr<WatchdogPipe> watchdog_pipe = absl::make_unique<WatchdogPipe>(this);
-    uv_pipe_t* client = watchdog_pipe->uv_pipe_handle();
-    UV_CHECK_OK(uv_pipe_init(&uv_loop_, client, 0));
-    UV_CHECK_OK(uv_accept(reinterpret_cast<uv_stream_t*>(&uv_ipc_handle_),
-                          reinterpret_cast<uv_stream_t*>(client)));
-    watchdog_pipe->Start(&buffer_pool_for_watchdog_pipes_);
-    watchdog_pipes_.insert(std::move(watchdog_pipe));
 }
 
 }  // namespace gateway

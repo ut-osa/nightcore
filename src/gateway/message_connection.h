@@ -5,38 +5,33 @@
 #include "utils/uv_utils.h"
 #include "utils/appendable_buffer.h"
 #include "utils/buffer_pool.h"
+#include "gateway/connection.h"
 
 namespace faas {
 namespace gateway {
 
 class Server;
 
-// Well, although called WatchdogPipe, it's actually backed by
-// Unix domain socket for bidirectional communication
-class WatchdogPipe {
+class MessageConnection : public Connection {
 public:
-    explicit WatchdogPipe(Server* server);
-    ~WatchdogPipe();
+    explicit MessageConnection(Server* server);
+    ~MessageConnection();
 
-    uv_pipe_t* uv_pipe_handle() { return &uv_pipe_handle_; }
-    absl::string_view func_name() const { return func_name_; }
-
-    void Start(utils::BufferPool* buffer_pool);
-    void ScheduleClose();
+    uv_stream_t* InitUVHandle(uv_loop_t* uv_loop) override;
+    void Start(IOWorker* io_worker) override;
+    void ScheduleClose() override;
 
 private:
     enum State { kCreated, kHandshake, kRunning, kClosing, kClosed };
 
-    Server* server_;
+    IOWorker* io_worker_;
     State state_;
     uv_pipe_t uv_pipe_handle_;
-    std::string func_name_;
 
     std::string log_header_;
 
-    utils::BufferPool* buffer_pool_;
     utils::AppendableBuffer message_buffer_;
-    protocol::WatchdogHandshakeResponse handshake_response_;
+    protocol::HandshakeResponse handshake_response_;
     uv_write_t write_req_;
 
     void RecvHandshakeMessage();
@@ -48,7 +43,7 @@ private:
     DECLARE_UV_WRITE_CB_FOR_CLASS(WriteResponse);
     DECLARE_UV_CLOSE_CB_FOR_CLASS(Close);
 
-    DISALLOW_COPY_AND_ASSIGN(WatchdogPipe);
+    DISALLOW_COPY_AND_ASSIGN(MessageConnection);
 };
 
 }

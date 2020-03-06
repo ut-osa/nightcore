@@ -33,7 +33,7 @@ private:
 
     utils::BufferPool* buffer_pool_;
     utils::AppendableBuffer message_buffer_;
-    protocol::WatchdogHandshakeMessage handshake_message_;
+    protocol::HandshakeMessage handshake_message_;
     uv_write_t write_req_;
 
     void RecvHandshakeResponse();

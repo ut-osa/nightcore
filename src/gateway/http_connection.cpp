@@ -1,4 +1,4 @@
-#include "gateway/connection.h"
+#include "gateway/http_connection.h"
 
 #include "gateway/server.h"
 #include "gateway/io_worker.h"
@@ -12,27 +12,33 @@
 namespace faas {
 namespace gateway {
 
-Connection::Connection(Server* server, int connection_id)
-    : server_(server), connection_id_(connection_id), io_worker_(nullptr),
-      state_(kCreated), log_header_(absl::StrFormat("Connection[%d]: ", connection_id)),
+HttpConnection::HttpConnection(Server* server, int connection_id)
+    : Connection(Connection::Type::Http, server),
+      connection_id_(connection_id), io_worker_(nullptr),
+      state_(kCreated), log_header_(absl::StrFormat("HttpConnection[%d]: ", connection_id)),
       within_async_request_(false) {
     http_parser_init(&http_parser_, HTTP_REQUEST);
     http_parser_.data = this;
     http_parser_settings_init(&http_parser_settings_);
-    http_parser_settings_.on_message_begin = &Connection::HttpParserOnMessageBeginCallback;
-    http_parser_settings_.on_url = &Connection::HttpParserOnUrlCallback;
-    http_parser_settings_.on_header_field = &Connection::HttpParserOnHeaderFieldCallback;
-    http_parser_settings_.on_header_value = &Connection::HttpParserOnHeaderValueCallback;
-    http_parser_settings_.on_headers_complete = &Connection::HttpParserOnHeadersCompleteCallback;
-    http_parser_settings_.on_body = &Connection::HttpParserOnBodyCallback;
-    http_parser_settings_.on_message_complete = &Connection::HttpParserOnMessageCompleteCallback;
+    http_parser_settings_.on_message_begin = &HttpConnection::HttpParserOnMessageBeginCallback;
+    http_parser_settings_.on_url = &HttpConnection::HttpParserOnUrlCallback;
+    http_parser_settings_.on_header_field = &HttpConnection::HttpParserOnHeaderFieldCallback;
+    http_parser_settings_.on_header_value = &HttpConnection::HttpParserOnHeaderValueCallback;
+    http_parser_settings_.on_headers_complete = &HttpConnection::HttpParserOnHeadersCompleteCallback;
+    http_parser_settings_.on_body = &HttpConnection::HttpParserOnBodyCallback;
+    http_parser_settings_.on_message_complete = &HttpConnection::HttpParserOnMessageCompleteCallback;
 }
 
-Connection::~Connection() {
+HttpConnection::~HttpConnection() {
     CHECK(state_ == kCreated || state_ == kClosed);
 }
 
-void Connection::Start(IOWorker* io_worker) {
+uv_stream_t* HttpConnection::InitUVHandle(uv_loop_t* uv_loop) {
+    UV_CHECK_OK(uv_tcp_init(uv_loop, &uv_tcp_handle_));
+    return reinterpret_cast<uv_stream_t*>(&uv_tcp_handle_);
+}
+
+void HttpConnection::Start(IOWorker* io_worker) {
     CHECK(state_ == kCreated);
     CHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
     io_worker_ = io_worker;
@@ -40,21 +46,21 @@ void Connection::Start(IOWorker* io_worker) {
     response_write_req_.data = this;
     UV_CHECK_OK(uv_async_init(uv_tcp_handle_.loop,
                               &async_request_finished_event_,
-                              &Connection::AsyncRequestFinishCallback));
+                              &HttpConnection::AsyncRequestFinishCallback));
     async_request_finished_event_.data = this;
     state_ = kRunning;
     StartRecvData();
 }
 
-void Connection::Reset(int connection_id) {
+void HttpConnection::Reset(int connection_id) {
     CHECK(state_ == kClosed);
     connection_id_ = connection_id;
-    log_header_ = absl::StrFormat("Connection[%d]: ", connection_id);
+    log_header_ = absl::StrFormat("HttpConnection[%d]: ", connection_id);
     ResetHttpParser();
     state_ = kCreated;
 }
 
-void Connection::ScheduleClose() {
+void HttpConnection::ScheduleClose() {
     CHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
     if (state_ == kClosing) {
         HLOG(INFO) << "Already scheduled for closing";
@@ -69,33 +75,33 @@ void Connection::ScheduleClose() {
     closed_uv_handles_ = 0;
     uv_handles_is_closing_ = 2;
     uv_close(reinterpret_cast<uv_handle_t*>(&uv_tcp_handle_),
-             &Connection::CloseCallback);
+             &HttpConnection::CloseCallback);
     uv_close(reinterpret_cast<uv_handle_t*>(&async_request_finished_event_),
-             &Connection::CloseCallback);
+             &HttpConnection::CloseCallback);
     state_ = kClosing;
 }
 
-void Connection::StartRecvData() {
+void HttpConnection::StartRecvData() {
     CHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
     if (state_ != kRunning) {
-        HLOG(WARNING) << "Connection is closing or has closed, will not enable read event";
+        HLOG(WARNING) << "HttpConnection is closing or has closed, will not enable read event";
         return;
     }
     UV_CHECK_OK(uv_read_start(reinterpret_cast<uv_stream_t*>(&uv_tcp_handle_),
-                              &Connection::BufferAllocCallback,
-                              &Connection::RecvDataCallback));
+                              &HttpConnection::BufferAllocCallback,
+                              &HttpConnection::RecvDataCallback));
 }
 
-void Connection::StopRecvData() {
+void HttpConnection::StopRecvData() {
     CHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
     if (state_ != kRunning) {
-        HLOG(WARNING) << "Connection is closing or has closed, will not enable read event";
+        HLOG(WARNING) << "HttpConnection is closing or has closed, will not enable read event";
         return;
     }
     UV_CHECK_OK(uv_read_stop(reinterpret_cast<uv_stream_t*>(&uv_tcp_handle_)));
 }
 
-UV_READ_CB_FOR_CLASS(Connection, RecvData) {
+UV_READ_CB_FOR_CLASS(HttpConnection, RecvData) {
     if (nread > 0) {
         const char* data = buf->base;
         size_t length = static_cast<size_t>(nread);
@@ -109,7 +115,7 @@ UV_READ_CB_FOR_CLASS(Connection, RecvData) {
 
     } else if (nread < 0) {
         if (nread == UV_EOF || nread == UV_ECONNRESET) {
-            HLOG(INFO) << "Connection closed by client";
+            HLOG(INFO) << "HttpConnection closed by client";
         } else {
             HLOG(WARNING) << "Read error, will close the connection: "
                           << uv_strerror(nread);
@@ -121,7 +127,7 @@ UV_READ_CB_FOR_CLASS(Connection, RecvData) {
     }
 }
 
-UV_WRITE_CB_FOR_CLASS(Connection, DataWritten) {
+UV_WRITE_CB_FOR_CLASS(HttpConnection, DataWritten) {
     HVLOG(1) << "Successfully write response, will resume receiving new data";
     if (status == 0) {
         StartRecvData();
@@ -131,15 +137,15 @@ UV_WRITE_CB_FOR_CLASS(Connection, DataWritten) {
     }
 }
 
-UV_ALLOC_CB_FOR_CLASS(Connection, BufferAlloc) {
+UV_ALLOC_CB_FOR_CLASS(HttpConnection, BufferAlloc) {
     io_worker_->NewReadBuffer(suggested_size, buf);
 }
 
-UV_ASYNC_CB_FOR_CLASS(Connection, AsyncRequestFinish) {
-    AsyncRequestContext* context = async_request_context_.get();
+UV_ASYNC_CB_FOR_CLASS(HttpConnection, AsyncRequestFinish) {
+    HttpAsyncRequestContext* context = async_request_context_.get();
     CHECK(context != nullptr);
     if (!within_async_request_) {
-        HLOG(WARNING) << "Connection is closing or has closed, will not handle the finish of async request";
+        HLOG(WARNING) << "HttpConnection is closing or has closed, will not handle the finish of async request";
         return;
     }
     context->body_buffer_.Swap(body_buffer_);
@@ -148,13 +154,13 @@ UV_ASYNC_CB_FOR_CLASS(Connection, AsyncRequestFinish) {
     context->response_body_buffer_.Swap(response_body_buffer_);
     within_async_request_ = false;
     if (state_ != kRunning) {
-        HLOG(WARNING) << "Connection is closing or has closed, will not send response";
+        HLOG(WARNING) << "HttpConnection is closing or has closed, will not send response";
         return;
     }
     SendHttpResponse();
 }
 
-UV_CLOSE_CB_FOR_CLASS(Connection, Close) {
+UV_CLOSE_CB_FOR_CLASS(HttpConnection, Close) {
     CHECK(state_ == kClosing);
     closed_uv_handles_++;
     if (closed_uv_handles_ == uv_handles_is_closing_) {
@@ -165,7 +171,7 @@ UV_CLOSE_CB_FOR_CLASS(Connection, Close) {
     }
 }
 
-void Connection::HttpParserOnMessageBegin() {
+void HttpConnection::HttpParserOnMessageBegin() {
     header_field_value_flag_ = -1;
     header_field_buffer_.Reset();
     header_value_buffer_.Reset();
@@ -175,11 +181,11 @@ void Connection::HttpParserOnMessageBegin() {
     headers_.clear();
 }
 
-void Connection::HttpParserOnUrl(const char* data, size_t length) {
+void HttpConnection::HttpParserOnUrl(const char* data, size_t length) {
     url_buffer_.AppendData(data, length);
 }
 
-void Connection::HttpParserOnHeaderField(const char* data, size_t length) {
+void HttpConnection::HttpParserOnHeaderField(const char* data, size_t length) {
     if (header_field_value_flag_ == 1) {
         HttpParserOnNewHeader();
     }
@@ -187,19 +193,19 @@ void Connection::HttpParserOnHeaderField(const char* data, size_t length) {
     header_field_value_flag_ = 0;
 }
 
-void Connection::HttpParserOnHeaderValue(const char* data, size_t length) {
+void HttpConnection::HttpParserOnHeaderValue(const char* data, size_t length) {
     header_value_buffer_.AppendData(data, length);
     header_field_value_flag_ = 1;
 }
 
-void Connection::HttpParserOnHeadersComplete() {
+void HttpConnection::HttpParserOnHeadersComplete() {
     if (header_field_value_flag_ == 1) {
         HttpParserOnNewHeader();
     }
     body_buffer_.Reset();
 }
 
-void Connection::HttpParserOnBody(const char* data, size_t length) {
+void HttpConnection::HttpParserOnBody(const char* data, size_t length) {
     body_buffer_.AppendData(data, length);
 }
 
@@ -216,7 +222,7 @@ static bool ReadParsedUrlField(const http_parser_url* parsed_url, http_parser_ur
 }
 }
 
-void Connection::HttpParserOnMessageComplete() {
+void HttpConnection::HttpParserOnMessageComplete() {
     StopRecvData();
     HVLOG(1) << "Start parsing URL: " << std::string(url_buffer_.data(), url_buffer_.length());
     http_parser_url parsed_url;
@@ -235,7 +241,7 @@ void Connection::HttpParserOnMessageComplete() {
     ResetHttpParser();   
 }
 
-void Connection::HttpParserOnNewHeader() {
+void HttpConnection::HttpParserOnNewHeader() {
     absl::string_view field(header_field_buffer_.data() + header_field_buffer_pos_,
                             header_field_buffer_.length() - header_field_buffer_pos_);
     header_field_buffer_pos_ = header_field_buffer_.length();
@@ -246,11 +252,11 @@ void Connection::HttpParserOnNewHeader() {
     headers_[field] = value;
 }
 
-void Connection::ResetHttpParser() {
+void HttpConnection::ResetHttpParser() {
     http_parser_init(&http_parser_, HTTP_REQUEST);
 }
 
-void Connection::OnNewHttpRequest(absl::string_view method, absl::string_view path) {
+void HttpConnection::OnNewHttpRequest(absl::string_view method, absl::string_view path) {
     CHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
     HVLOG(1) << "New HTTP request: " << method << " " << path;
     response_status_ = 200;
@@ -264,9 +270,9 @@ void Connection::OnNewHttpRequest(absl::string_view method, absl::string_view pa
     }
     if (request_handler->async()) {
         if (async_request_context_ == nullptr) {
-            async_request_context_.reset(new AsyncRequestContext());
+            async_request_context_.reset(new HttpAsyncRequestContext());
         }
-        AsyncRequestContext* context = async_request_context_.get();
+        HttpAsyncRequestContext* context = async_request_context_.get();
         context->method_ = std::string(method);
         context->path_ = std::string(path);
         for (const auto& item : headers_) {
@@ -280,7 +286,7 @@ void Connection::OnNewHttpRequest(absl::string_view method, absl::string_view pa
         within_async_request_ = true;
         request_handler->CallAsync(async_request_context_);
     } else {
-        SyncRequestContext context;
+        HttpSyncRequestContext context;
         context.method_ = method;
         context.path_ = path;
         context.headers_ = &headers_;
@@ -294,11 +300,11 @@ void Connection::OnNewHttpRequest(absl::string_view method, absl::string_view pa
     }
 }
 
-void Connection::AsyncRequestFinish(AsyncRequestContext* context) {
+void HttpConnection::AsyncRequestFinish(HttpAsyncRequestContext* context) {
     UV_CHECK_OK(uv_async_send(&async_request_finished_event_));
 }
 
-void Connection::SendHttpResponse() {
+void HttpConnection::SendHttpResponse() {
     CHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
     HVLOG(1) << "Send HTTP response with status " << response_status_;
     static const char* CRLF = "\r\n";
@@ -325,7 +331,7 @@ void Connection::SendHttpResponse() {
     header << "Server: FaaS/0.1" << CRLF;
     header << "Content-Type: " << response_content_type_ << CRLF;
     header << "Content-Length: " << response_body_buffer_.length() << CRLF;
-    header << "Connection: Keep-Alive" << CRLF;
+    header << "HttpConnection: Keep-Alive" << CRLF;
     header << CRLF;
     response_header_buffer_.Reset();
     response_header_buffer_.AppendStr(header.str());
@@ -334,47 +340,47 @@ void Connection::SendHttpResponse() {
         { .base = response_body_buffer_.data(), .len = response_body_buffer_.length() }
     };
     UV_CHECK_OK(uv_write(&response_write_req_, reinterpret_cast<uv_stream_t*>(&uv_tcp_handle_),
-                            bufs, 2, &Connection::DataWrittenCallback));
+                            bufs, 2, &HttpConnection::DataWrittenCallback));
 }
 
-int Connection::HttpParserOnMessageBeginCallback(http_parser* http_parser) {
-    Connection* self = reinterpret_cast<Connection*>(http_parser->data);
+int HttpConnection::HttpParserOnMessageBeginCallback(http_parser* http_parser) {
+    HttpConnection* self = reinterpret_cast<HttpConnection*>(http_parser->data);
     self->HttpParserOnMessageBegin();
     return 0;
 }
 
-int Connection::HttpParserOnUrlCallback(http_parser* http_parser, const char* data, size_t length) {
-    Connection* self = reinterpret_cast<Connection*>(http_parser->data);
+int HttpConnection::HttpParserOnUrlCallback(http_parser* http_parser, const char* data, size_t length) {
+    HttpConnection* self = reinterpret_cast<HttpConnection*>(http_parser->data);
     self->HttpParserOnUrl(data, length);
     return 0;
 }
 
-int Connection::HttpParserOnHeaderFieldCallback(http_parser* http_parser, const char* data, size_t length) {
-    Connection* self = reinterpret_cast<Connection*>(http_parser->data);
+int HttpConnection::HttpParserOnHeaderFieldCallback(http_parser* http_parser, const char* data, size_t length) {
+    HttpConnection* self = reinterpret_cast<HttpConnection*>(http_parser->data);
     self->HttpParserOnHeaderField(data, length);
     return 0;
 }
 
-int Connection::HttpParserOnHeaderValueCallback(http_parser* http_parser, const char* data, size_t length) {
-    Connection* self = reinterpret_cast<Connection*>(http_parser->data);
+int HttpConnection::HttpParserOnHeaderValueCallback(http_parser* http_parser, const char* data, size_t length) {
+    HttpConnection* self = reinterpret_cast<HttpConnection*>(http_parser->data);
     self->HttpParserOnHeaderValue(data, length);
     return 0;
 }
 
-int Connection::HttpParserOnHeadersCompleteCallback(http_parser* http_parser) {
-    Connection* self = reinterpret_cast<Connection*>(http_parser->data);
+int HttpConnection::HttpParserOnHeadersCompleteCallback(http_parser* http_parser) {
+    HttpConnection* self = reinterpret_cast<HttpConnection*>(http_parser->data);
     self->HttpParserOnHeadersComplete();
     return 0;
 }
 
-int Connection::HttpParserOnBodyCallback(http_parser* http_parser, const char* data, size_t length) {
-    Connection* self = reinterpret_cast<Connection*>(http_parser->data);
+int HttpConnection::HttpParserOnBodyCallback(http_parser* http_parser, const char* data, size_t length) {
+    HttpConnection* self = reinterpret_cast<HttpConnection*>(http_parser->data);
     self->HttpParserOnBody(data, length);
     return 0;
 }
 
-int Connection::HttpParserOnMessageCompleteCallback(http_parser* http_parser) {
-    Connection* self = reinterpret_cast<Connection*>(http_parser->data);
+int HttpConnection::HttpParserOnMessageCompleteCallback(http_parser* http_parser) {
+    HttpConnection* self = reinterpret_cast<HttpConnection*>(http_parser->data);
     self->HttpParserOnMessageComplete();
     return 0;
 }

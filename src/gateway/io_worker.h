@@ -12,22 +12,30 @@ class Server;
 
 class IOWorker {
 public:
-    static constexpr size_t kReadBufferSize = 4096;
+    static constexpr size_t kDefaultReadBufferSize = 4096;
 
-    IOWorker(Server* server, int worker_id);
+    IOWorker(Server* server, absl::string_view worker_name,
+             size_t read_buffer_size = kDefaultReadBufferSize);
     ~IOWorker();
 
-    int id() const { return worker_id_; }
+    absl::string_view worker_name() const { return worker_name_; }
 
     void Start(int pipe_to_server_fd);
     void ScheduleStop();
     void WaitForFinish();
 
+    // Called by Connection for ONLY once
+    void OnConnectionClose(Connection* connection);
+
+    // Can only be called from uv_loop_
+    void NewReadBuffer(size_t suggested_size, uv_buf_t* buf);
+    void ReturnReadBuffer(const uv_buf_t* buf);
+
 private:
     enum State { kCreated, kRunning, kStopping, kStopped };
 
     Server* server_;
-    int worker_id_;
+    std::string worker_name_;
     std::atomic<State> state_;
 
     std::string log_header_;
@@ -42,18 +50,9 @@ private:
 
     void EventLoopThreadMain();
 
-    // Called by Connection for ONLY once
-    void OnConnectionClose(Connection* connection);
-
-    // Can only be called from uv_loop_
-    void NewReadBuffer(size_t suggested_size, uv_buf_t* buf);
-    void ReturnReadBuffer(const uv_buf_t* buf);
-
     DECLARE_UV_ASYNC_CB_FOR_CLASS(Stop);
     DECLARE_UV_READ_CB_FOR_CLASS(NewConnection);
     DECLARE_UV_WRITE_CB_FOR_CLASS(PipeWrite);
-
-    friend class Connection;
 
     DISALLOW_COPY_AND_ASSIGN(IOWorker);
 };

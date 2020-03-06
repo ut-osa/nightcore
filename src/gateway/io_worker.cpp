@@ -6,12 +6,12 @@
 namespace faas {
 namespace gateway {
 
-IOWorker::IOWorker(Server* server, int worker_id)
-    : server_(server), worker_id_(worker_id), state_(kCreated),
-      log_header_(absl::StrFormat("IOWorker[%d]: ", worker_id)),
-      event_loop_thread_(absl::StrFormat("IOWorker[%d]_EventLoop", worker_id),
+IOWorker::IOWorker(Server* server, absl::string_view worker_name, size_t read_buffer_size)
+    : server_(server), worker_name_(worker_name), state_(kCreated),
+      log_header_(absl::StrFormat("%s: ", worker_name)),
+      event_loop_thread_(absl::StrFormat("%s_EventLoop", worker_name),
                          std::bind(&IOWorker::EventLoopThreadMain, this)),
-      read_buffer_pool_(absl::StrFormat("IOWorker-%d", worker_id), kReadBufferSize) {
+      read_buffer_pool_(absl::StrFormat("%s_Read", worker_name), read_buffer_size) {
     UV_CHECK_OK(uv_loop_init(&uv_loop_));
     uv_loop_.data = &event_loop_thread_;
     UV_CHECK_OK(uv_async_init(&uv_loop_, &stop_event_, &IOWorker::StopCallback));
@@ -69,8 +69,6 @@ void IOWorker::OnConnectionClose(Connection* connection) {
     CHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
     CHECK(connections_.contains(connection));
     connections_.erase(connection);
-    HVLOG(1) << "Connection with ID " << connection->id() << " closed, "
-             << "current active connections is " << connections_.size();
     uv_write_t* write_req = connection->uv_write_req_for_back_transfer();
     size_t buf_len = sizeof(void*);
     char* buf = connection->pipe_write_buf_for_transfer();
@@ -118,18 +116,13 @@ UV_READ_CB_FOR_CLASS(IOWorker, NewConnection) {
     Connection* connection;
     memcpy(&connection, buf->base, sizeof(void*));
     free(buf->base);
-    uv_tcp_t* client = connection->uv_tcp_handle();
-    UV_CHECK_OK(uv_tcp_init(&uv_loop_, client));
-    UV_CHECK_OK(uv_accept(reinterpret_cast<uv_stream_t*>(&pipe_to_server_),
-                          reinterpret_cast<uv_stream_t*>(client)));
+    uv_stream_t* client = connection->InitUVHandle(&uv_loop_);
+    UV_CHECK_OK(uv_accept(reinterpret_cast<uv_stream_t*>(&pipe_to_server_), client));
     connection->Start(this);
     connections_.insert(connection);
     if (state_.load(std::memory_order_consume) == kStopping) {
         LOG(WARNING) << "Receive new connection in stopping state, will close it directly";
         connection->ScheduleClose();
-    } else {
-        HVLOG(1) << "Accept new connection with ID " << connection->id() << ", "
-                 << "current active connections = " << connections_.size();
     }
 }
 
