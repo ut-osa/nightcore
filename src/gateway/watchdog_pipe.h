@@ -19,7 +19,7 @@ public:
     ~WatchdogPipe();
 
     uv_pipe_t* uv_pipe_handle() { return &uv_pipe_handle_; }
-    absl::string_view function_name() const { return function_name_; }
+    absl::string_view func_name() const { return func_name_; }
 
     void Start(utils::BufferPool* buffer_pool);
     void ScheduleClose();
@@ -30,7 +30,7 @@ private:
     Server* server_;
     State state_;
     uv_pipe_t uv_pipe_handle_;
-    std::string function_name_;
+    std::string func_name_;
 
     std::string log_header_;
 

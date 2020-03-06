@@ -1,6 +1,7 @@
 #pragma once
 
 #include "base/common.h"
+#include "base/protocol.h"
 #include "utils/uv_utils.h"
 #include "utils/buffer_pool.h"
 #include "watchdog/gateway_pipe.h"
@@ -18,8 +19,11 @@ public:
     void set_gateway_ipc_path(absl::string_view path) {
         gateway_ipc_path_ = std::string(path);
     }
-    void set_function_name(absl::string_view function_name) {
-        function_name_ = std::string(function_name);
+    void set_func_name(absl::string_view func_name) {
+        func_name_ = std::string(func_name);
+    }
+    void set_func_id(int func_id) {
+        func_id_ = func_id;
     }
     void set_fprocess(absl::string_view fprocess) {
         fprocess_ = std::string(fprocess);
@@ -31,12 +35,16 @@ public:
 
     void OnGatewayPipeClose();
 
+    // void RecvWatchdogMessage(const protocol::WatchdogMessage& message);
+    // void WriteWatchdogMessage(const protocol::WatchdogMessage& message);
+
 private:
     enum State { kCreated, kRunning, kStopping, kStopped };
     std::atomic<State> state_;
 
     std::string gateway_ipc_path_;
-    std::string function_name_;
+    std::string func_name_;
+    int func_id_;
     std::string fprocess_;
 
     uv_loop_t uv_loop_;

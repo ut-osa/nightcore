@@ -30,12 +30,13 @@ void Watchdog::ScheduleStop() {
 
 void Watchdog::Start() {
     CHECK(state_.load() == kCreated);
-    CHECK(!function_name_.empty());
+    CHECK(!func_name_.empty());
+    CHECK(func_id_ != -1);
     CHECK(!fprocess_.empty());
     // Connect to gateway via IPC path
     uv_pipe_t* pipe_handle = gateway_pipe_.uv_pipe_handle();
     UV_CHECK_OK(uv_pipe_init(&uv_loop_, pipe_handle, 0));
-    gateway_pipe_.Start(gateway_ipc_path_, function_name_, &buffer_pool_for_pipes_);
+    gateway_pipe_.Start(gateway_ipc_path_, func_name_, func_id_, &buffer_pool_for_pipes_);
     // Start thread for running event loop
     event_loop_thread_.Start();
     state_.store(kRunning);

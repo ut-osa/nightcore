@@ -70,7 +70,7 @@ public:
 
     bool MatchRequest(absl::string_view method, absl::string_view path,
                       const RequestHandler** request_handler) const;
-    
+
     void OnWatchdogPipeClose(WatchdogPipe* watchdog_pipe);
 
 private:

@@ -9,8 +9,8 @@
 namespace faas {
 namespace gateway {
 
-using protocol::OK_STATUS;
-using protocol::kMaxFunctionNameLength;
+using protocol::Status;
+using protocol::kMaxFuncNameLength;
 using protocol::WatchdogHandshakeMessage;
 using protocol::WatchdogHandshakeResponse;
 
@@ -52,12 +52,12 @@ void WatchdogPipe::RecvHandshakeMessage() {
     UV_CHECK_OK(uv_read_stop(reinterpret_cast<uv_stream_t*>(&uv_pipe_handle_)));
     WatchdogHandshakeMessage* message = reinterpret_cast<WatchdogHandshakeMessage*>(
         message_buffer_.data());
-    size_t function_name_length = strnlen(
-        message->function_name, kMaxFunctionNameLength + 1);
-    CHECK_LE(function_name_length, kMaxFunctionNameLength);
-    function_name_.assign(message->function_name, function_name_length);
-    log_header_ = absl::StrFormat("WatchdogPipe[%s]: ", function_name_);
-    handshake_response_.status = OK_STATUS;
+    size_t func_name_length = strnlen(
+        message->func_name, kMaxFuncNameLength + 1);
+    CHECK_LE(func_name_length, kMaxFuncNameLength);
+    func_name_.assign(message->func_name, func_name_length);
+    log_header_ = absl::StrFormat("WatchdogPipe[%s]: ", func_name_);
+    handshake_response_.status = static_cast<uint16_t>(Status::OK);
     uv_buf_t buf = {
         .base = reinterpret_cast<char*>(&handshake_response_),
         .len = sizeof(WatchdogHandshakeResponse)

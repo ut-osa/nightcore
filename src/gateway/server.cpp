@@ -163,10 +163,10 @@ void Server::ReturnConnection(Connection* connection) {
 }
 
 void Server::OnWatchdogPipeClose(WatchdogPipe* watchdog_pipe) {
-    if (watchdog_pipe->function_name().empty()) {
+    if (watchdog_pipe->func_name().empty()) {
         HLOG(INFO) << "Watchdog pipe closed";
     } else {
-        HLOG(INFO) << "Watchdog pipe closed for function " << watchdog_pipe->function_name();
+        HLOG(INFO) << "Watchdog pipe closed for function " << watchdog_pipe->func_name();
     }
     watchdog_pipes_.erase(watchdog_pipe);
 }

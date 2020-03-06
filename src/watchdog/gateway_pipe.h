@@ -18,8 +18,8 @@ public:
 
     uv_pipe_t* uv_pipe_handle() { return &uv_pipe_handle_; }
 
-    void Start(absl::string_view ipc_path, absl::string_view function_name,
-               utils::BufferPool* buffer_pool);
+    void Start(absl::string_view ipc_path, absl::string_view func_name,
+               int func_id, utils::BufferPool* buffer_pool);
     void ScheduleClose();
 
 private:
@@ -43,7 +43,7 @@ private:
     DECLARE_UV_READ_CB_FOR_CLASS(ReadHandshakeResponse);
     DECLARE_UV_WRITE_CB_FOR_CLASS(WriteHandshake);
     DECLARE_UV_READ_CB_FOR_CLASS(ReadMessage);
-    DECLARE_UV_WRITE_CB_FOR_CLASS(WriteResponse);
+    DECLARE_UV_WRITE_CB_FOR_CLASS(WriteMessage);
     DECLARE_UV_CLOSE_CB_FOR_CLASS(Close);
 
     DISALLOW_COPY_AND_ASSIGN(GatewayPipe);

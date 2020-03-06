@@ -8,8 +8,8 @@
 namespace faas {
 namespace watchdog {
 
-using protocol::OK_STATUS;
-using protocol::kMaxFunctionNameLength;
+using protocol::Status;
+using protocol::kMaxFuncNameLength;
 using protocol::WatchdogHandshakeMessage;
 using protocol::WatchdogHandshakeResponse;
 
@@ -20,14 +20,15 @@ GatewayPipe::~GatewayPipe() {
     CHECK(state_ == kCreated || state_ == kClosed);
 }
 
-void GatewayPipe::Start(absl::string_view ipc_path, absl::string_view function_name,
-                        utils::BufferPool* buffer_pool) {
+void GatewayPipe::Start(absl::string_view ipc_path, absl::string_view func_name,
+                        int func_id, utils::BufferPool* buffer_pool) {
     CHECK(state_ == kCreated);
     buffer_pool_ = buffer_pool;
     memset(&handshake_message_, 0, sizeof(WatchdogHandshakeMessage));
-    CHECK_LE(function_name.length(), kMaxFunctionNameLength);
-    memcpy(handshake_message_.function_name,
-           function_name.data(), function_name.length());
+    CHECK_LE(func_name.length(), kMaxFuncNameLength);
+    memcpy(handshake_message_.func_name,
+           func_name.data(), func_name.length());
+    handshake_message_.func_id = func_id;
     uv_pipe_handle_.data = this;
     connect_req_.data = this;
     write_req_.data = this;
@@ -54,7 +55,7 @@ void GatewayPipe::RecvHandshakeResponse() {
     UV_CHECK_OK(uv_read_stop(reinterpret_cast<uv_stream_t*>(&uv_pipe_handle_)));
     WatchdogHandshakeResponse* message = reinterpret_cast<WatchdogHandshakeResponse*>(
         message_buffer_.data());
-    if (message->status != OK_STATUS) {
+    if (static_cast<Status>(message->status) != Status::OK) {
         HLOG(WARNING) << "Handshake failed, will close the pipe";
         ScheduleClose();
         return;
@@ -128,7 +129,7 @@ UV_READ_CB_FOR_CLASS(GatewayPipe, ReadMessage) {
     }
 }
 
-UV_WRITE_CB_FOR_CLASS(GatewayPipe, WriteResponse) {
+UV_WRITE_CB_FOR_CLASS(GatewayPipe, WriteMessage) {
     if (status != 0) {
         HLOG(WARNING) << "Failed to write response, will close the pipe: "
                       << uv_strerror(status);
