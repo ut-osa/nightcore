@@ -18,6 +18,13 @@ done
 rm -rf ${DEPS_INSTALL_PATH}
 mkdir -p ${DEPS_INSTALL_PATH}
 
+# Build yaml-cpp
+cd $BASE_DIR/deps/yaml-cpp && rm -rf build && mkdir -p build && cd build && \
+  cmake -DYAML_CPP_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} \
+        -DCMAKE_INSTALL_PREFIX=${DEPS_INSTALL_PATH} .. && \
+  make -j$(nproc) install && \
+  rm -rf $BASE_DIR/deps/yaml-cpp/build
+
 # Build abseil-cpp
 cd $BASE_DIR/deps/abseil-cpp && rm -rf build && mkdir -p build && cd build && \
   cmake -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DCMAKE_CXX_STANDARD=11 \

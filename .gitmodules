@@ -10,3 +10,6 @@
 [submodule "deps/abseil-cpp"]
 	path = deps/abseil-cpp
 	url = https://github.com/abseil/abseil-cpp.git
+[submodule "deps/yaml-cpp"]
+	path = deps/yaml-cpp
+	url = https://github.com/jbeder/yaml-cpp.git
