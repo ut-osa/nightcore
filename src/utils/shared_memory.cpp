@@ -28,7 +28,7 @@ bool SharedMemory::Exists(absl::string_view path) {
 
 SharedMemory::Region* SharedMemory::Create(absl::string_view path, size_t size) {
     std::string full_path(absl::StrFormat("%s/%s", base_path_, path));
-    int fd = open(full_path.c_str(), O_CREAT|O_TRUNC|O_RDWR, 0644);
+    int fd = open(full_path.c_str(), O_CREAT|O_EXCL|O_RDWR, 0644);
     PCHECK(fd != -1) << "open failed";
     PCHECK(ftruncate(fd, size) == 0) << "ftruncate failed";
     void* ptr = mmap(0, size, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
