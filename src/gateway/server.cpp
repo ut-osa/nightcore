@@ -229,7 +229,7 @@ void Server::ReturnConnection(Connection* connection) {
     } else if (connection->type() == Connection::Type::Message) {
         MessageConnection* message_connection = static_cast<MessageConnection*>(connection);
         {
-            absl::MutexLock lk(&message_connection_mu_);
+            // absl::MutexLock lk(&message_connection_mu_);
             CHECK(message_connections_by_client_id_.contains(message_connection->client_id()));
             message_connections_by_client_id_.erase(message_connection->client_id());
             if (message_connection->role() == Role::WATCHDOG) {
@@ -303,11 +303,10 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
 }
 
 void Server::OnExternalFuncCall(uint16_t func_id, std::shared_ptr<HttpAsyncRequestContext> request_context) {
-    FuncCall call = {
-        .func_id = func_id,
-        .client_id = 0,
-        .call_id = next_call_id_.fetch_add(1)
-    };
+    FuncCall call;
+    call.func_id = func_id;
+    call.client_id = 0;
+    call.call_id = next_call_id_.fetch_add(1);
     {
         absl::MutexLock lk(&message_connection_mu_);
         if (watchdog_connections_by_func_id_.contains(func_id)) {

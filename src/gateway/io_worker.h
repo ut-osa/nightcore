@@ -37,7 +37,7 @@ public:
 private:
     enum State { kCreated, kRunning, kStopping, kStopped };
 
-    ABSL_ATTRIBUTE_UNUSED Server* server_;
+    Server* server_;
     std::string worker_name_;
     std::atomic<State> state_;
 

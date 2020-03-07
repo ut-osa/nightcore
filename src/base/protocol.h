@@ -28,10 +28,10 @@ struct HandshakeResponse {
 
 union FuncCall {
     struct {
-        uint16_t func_id   : 2;
-        uint16_t client_id : 2;
-        uint32_t call_id   : 4;
-    };
+        uint16_t func_id;
+        uint16_t client_id;
+        uint32_t call_id;
+    } __attribute__((packed));
     uint64_t full_call_id;
 };
 static_assert(sizeof(FuncCall) == 8, "Unexpected FuncCall size");
