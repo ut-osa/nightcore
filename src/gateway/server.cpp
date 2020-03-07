@@ -1,6 +1,9 @@
 #include "gateway/server.h"
 
 #include "utils/uv_utils.h"
+#include <absl/strings/match.h>
+#include <absl/strings/strip.h>
+#include <absl/strings/numbers.h>
 
 #define HLOG(l) LOG(l) << "Server: "
 #define HVLOG(l) VLOG(l) << "Server: "
@@ -9,14 +12,19 @@ namespace faas {
 namespace gateway {
 
 using protocol::Status;
+using protocol::Role;
 using protocol::HandshakeMessage;
 using protocol::HandshakeResponse;
+using protocol::FuncCall;
+using protocol::MessageType;
+using protocol::Message;
 
 Server::Server()
     : state_(kCreated), port_(-1), listen_backlog_(kDefaultListenBackLog),
       num_http_workers_(kDefaultNumHttpWorkers), num_ipc_workers_(kDefaultNumIpcWorkers),
       event_loop_thread_("Server_EventLoop", std::bind(&Server::EventLoopThreadMain, this)),
-      next_http_connection_id_(0), next_http_worker_id_(0), next_ipc_worker_id_(0) {
+      next_http_connection_id_(0), next_http_worker_id_(0), next_ipc_worker_id_(0),
+      next_client_id_(1), next_call_id_(0) {
     UV_CHECK_OK(uv_loop_init(&uv_loop_));
     uv_loop_.data = &event_loop_thread_;
     UV_CHECK_OK(uv_tcp_init(&uv_loop_, &uv_tcp_handle_));
@@ -31,24 +39,54 @@ Server::~Server() {
     UV_CHECK_OK(uv_loop_close(&uv_loop_));
 }
 
-namespace {
-void PipeReadBufferAllocCallback(uv_handle_t* handle, size_t suggested_size, uv_buf_t* buf) {
-    size_t buf_size = 256;
-    buf->base = reinterpret_cast<char*>(malloc(buf_size));
-    buf->len = buf_size;
-}
+void Server::RegisterInternalRequestHandlers() {
+    // POST /shutdown
+    RegisterSyncRequestHandler([] (absl::string_view method, absl::string_view path) -> bool {
+        return method == "POST" && path == "/shutdown";
+    }, [this] (HttpSyncRequestContext* context) {
+        context->AppendStrToResponseBody("Server is shutting down\n");
+        ScheduleStop();
+    });
+    // GET /hello
+    RegisterSyncRequestHandler([] (absl::string_view method, absl::string_view path) -> bool {
+        return method == "GET" && path == "/hello";
+    }, [] (HttpSyncRequestContext* context) {
+        context->AppendStrToResponseBody("Hello world\n");
+    });
+    // POST /function/[func_id]
+    RegisterAsyncRequestHandler([] (absl::string_view method, absl::string_view path) -> bool {
+        if (method != "POST" || !absl::StartsWith(path, "/function/")) {
+            return false;
+        }
+        int func_id;
+        if (!SimpleAtoi(absl::StripPrefix(path, "/function/"), &func_id)) {
+            return false;
+        }
+        return func_id > 0;
+    }, [this] (std::shared_ptr<HttpAsyncRequestContext> context) {
+        int func_id;
+        CHECK(SimpleAtoi(absl::StripPrefix(context->path(), "/function/"), &func_id));
+        CHECK(func_id > 0);
+        OnExternalFuncCall(static_cast<uint16_t>(func_id), std::move(context));
+    });
 }
 
 void Server::Start() {
     CHECK(state_.load() == kCreated);
+    RegisterInternalRequestHandlers();
     // Start IO workers
     for (int i = 0; i < num_http_workers_; i++) {
-        auto io_worker = CreateAndStartIOWorker(absl::StrFormat("HttpWorker-%d", i));
+        auto io_worker = absl::make_unique<IOWorker>(this, absl::StrFormat("HttpWorker-%d", i),
+                                                     kHttpConnectionBufferSize);
+        InitAndStartIOWorker(io_worker.get());
         http_workers_.push_back(io_worker.get());
         io_workers_.push_back(std::move(io_worker));
     }
     for (int i = 0; i < num_ipc_workers_; i++) {
-        auto io_worker = CreateAndStartIOWorker(absl::StrFormat("IpcWorker-%d", i));
+        auto io_worker = absl::make_unique<IOWorker>(this, absl::StrFormat("IpcWorker-%d", i),
+                                                     kMessageConnectionBufferSize,
+                                                     kMessageConnectionBufferSize);
+        InitAndStartIOWorker(io_worker.get());
         ipc_workers_.push_back(io_worker.get());
         io_workers_.push_back(std::move(io_worker));
     }
@@ -134,16 +172,22 @@ IOWorker* Server::PickIpcWorker() {
     return io_worker;
 }
 
-std::unique_ptr<IOWorker> Server::CreateAndStartIOWorker(absl::string_view worker_name) {
-    std::unique_ptr<IOWorker> io_worker = absl::make_unique<IOWorker>(this, worker_name);
+namespace {
+void PipeReadBufferAllocCallback(uv_handle_t* handle, size_t suggested_size, uv_buf_t* buf) {
+    size_t buf_size = 256;
+    buf->base = reinterpret_cast<char*>(malloc(buf_size));
+    buf->len = buf_size;
+}
+}
+
+void Server::InitAndStartIOWorker(IOWorker* io_worker) {
     int pipe_fd_for_worker;
-    pipes_to_io_worker_[io_worker.get()] = CreatePipeToWorker(&pipe_fd_for_worker);
-    uv_pipe_t* pipe_to_worker = pipes_to_io_worker_[io_worker.get()].get();
+    pipes_to_io_worker_[io_worker] = CreatePipeToWorker(&pipe_fd_for_worker);
+    uv_pipe_t* pipe_to_worker = pipes_to_io_worker_[io_worker].get();
     UV_CHECK_OK(uv_read_start(reinterpret_cast<uv_stream_t*>(pipe_to_worker),
-                                &PipeReadBufferAllocCallback,
-                                &Server::ReturnConnectionCallback));
+                              &PipeReadBufferAllocCallback,
+                              &Server::ReturnConnectionCallback));
     io_worker->Start(pipe_fd_for_worker);
-    return io_worker;
 }
 
 std::unique_ptr<uv_pipe_t> Server::CreatePipeToWorker(int* pipe_fd_for_worker) {
@@ -184,7 +228,16 @@ void Server::ReturnConnection(Connection* connection) {
                    << "active connection is " << active_http_connections_.size();
     } else if (connection->type() == Connection::Type::Message) {
         MessageConnection* message_connection = static_cast<MessageConnection*>(connection);
-        message_connections_.erase(message_connection);
+        {
+            absl::MutexLock lk(&message_connection_mu_);
+            CHECK(message_connections_by_client_id_.contains(message_connection->client_id()));
+            message_connections_by_client_id_.erase(message_connection->client_id());
+            if (message_connection->role() == Role::WATCHDOG) {
+                CHECK(watchdog_connections_by_func_id_.contains(message_connection->func_id()));
+                watchdog_connections_by_func_id_.erase(message_connection->func_id());
+            }
+            message_connections_.erase(message_connection);
+        }
     } else {
         LOG(FATAL) << "Unknown connection type!";
     }
@@ -192,7 +245,89 @@ void Server::ReturnConnection(Connection* connection) {
 
 void Server::OnNewHandshake(MessageConnection* connection,
                             const HandshakeMessage& message, HandshakeResponse* response) {
+    uint16_t client_id = next_client_id_.fetch_add(1);
     response->status = static_cast<uint16_t>(Status::OK);
+    response->client_id = client_id;
+    {
+        absl::MutexLock lk(&message_connection_mu_);
+        message_connections_by_client_id_[client_id] = connection;
+        if (static_cast<Role>(message.role) == Role::WATCHDOG) {
+            watchdog_connections_by_func_id_[message.func_id] = connection;
+        }
+    }
+}
+
+void Server::OnRecvMessage(MessageConnection* connection, const Message& message) {
+    MessageType type = static_cast<MessageType>(message.message_type);
+    if (type == MessageType::INVOKE_FUNC) {
+        uint16_t func_id = message.func_call.func_id;
+        absl::MutexLock lk(&message_connection_mu_);
+        if (watchdog_connections_by_func_id_.contains(func_id)) {
+            MessageConnection* connection = watchdog_connections_by_func_id_[func_id];
+            connection->WriteMessage({
+                .message_type = static_cast<uint16_t>(MessageType::INVOKE_FUNC),
+                .func_call = message.func_call
+            });
+        } else {
+            HLOG(WARNING) << "Cannot find message connection of watchdog with func_id " << func_id;
+        }
+    } else if (type == MessageType::FUNC_CALL_COMPLETE) {
+        uint16_t client_id = message.func_call.client_id;
+        if (client_id > 0) {
+            absl::MutexLock lk(&message_connection_mu_);
+            if (message_connections_by_client_id_.contains(client_id)) {
+                MessageConnection* connection = message_connections_by_client_id_[client_id];
+                connection->WriteMessage({
+                    .message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_COMPLETE),
+                    .func_call = message.func_call
+                });
+            } else {
+                HLOG(WARNING) << "Cannot find message connection with client_id " << client_id;
+            }
+        } else {
+            absl::MutexLock lk(&external_func_calls_mu_);
+            uint64_t full_call_id = message.func_call.full_call_id;
+            if (external_func_calls_.contains(full_call_id)) {
+                auto request_context = external_func_calls_[full_call_id];
+                external_func_calls_.erase(full_call_id);
+                request_context->AppendStrToResponseBody("Finish function call\n");
+                request_context->Finish();
+            } else {
+                HLOG(WARNING) << "Cannot find external call with func_id=" << message.func_call.call_id << ", "
+                              << "call_id=" << message.func_call.call_id;
+            }
+        }
+    } else {
+        LOG(ERROR) << "Unknown message type!";
+    }
+}
+
+void Server::OnExternalFuncCall(uint16_t func_id, std::shared_ptr<HttpAsyncRequestContext> request_context) {
+    FuncCall call = {
+        .func_id = func_id,
+        .client_id = 0,
+        .call_id = next_client_id_.fetch_add(1)
+    };
+    {
+        absl::MutexLock lk(&message_connection_mu_);
+        if (watchdog_connections_by_func_id_.contains(func_id)) {
+            MessageConnection* connection = watchdog_connections_by_func_id_[func_id];
+            connection->WriteMessage({
+                .message_type = static_cast<uint16_t>(MessageType::INVOKE_FUNC),
+                .func_call = call
+            });
+        } else {
+            request_context->AppendStrToResponseBody(
+                absl::StrFormat("Cannot find function with func_id %d\n", static_cast<int>(func_id)));
+            request_context->SetStatus(404);
+            request_context->Finish();
+            return;
+        }
+    }
+    {
+        absl::MutexLock lk(&external_func_calls_mu_);
+        external_func_calls_[call.full_call_id] = std::move(request_context);
+    }
 }
 
 UV_CONNECTION_CB_FOR_CLASS(Server, HttpConnection) {
@@ -243,23 +378,11 @@ UV_READ_CB_FOR_CLASS(Server, ReturnConnection) {
         }
     }
     if (nread <= 0) return;
-    size_t remaing_length = nread;
-    char* new_data = buf->base;
-    size_t ptr_size = sizeof(void*);
-    while (remaing_length + return_connection_read_buffer_.length() >= ptr_size) {
-        size_t copy_size = ptr_size - return_connection_read_buffer_.length();
-        return_connection_read_buffer_.AppendData(new_data, copy_size);
-        CHECK_EQ(return_connection_read_buffer_.length(), ptr_size);
-        Connection* connection;
-        memcpy(&connection, return_connection_read_buffer_.data(), ptr_size);
-        ReturnConnection(connection);
-        return_connection_read_buffer_.Reset();
-        remaing_length -= copy_size;
-        new_data += copy_size;
-    }
-    if (remaing_length > 0) {
-        return_connection_read_buffer_.AppendData(new_data, remaing_length);
-    }
+    utils::ReadMessages<Connection*>(
+        &return_connection_read_buffer_, buf->base, nread,
+        [this] (Connection** connection) {
+            ReturnConnection(*connection);
+        });
     free(buf->base);
 }
 
@@ -275,9 +398,6 @@ UV_ASYNC_CB_FOR_CLASS(Server, Stop) {
         UV_CHECK_OK(uv_read_stop(reinterpret_cast<uv_stream_t*>(pipe)));
         uv_close(reinterpret_cast<uv_handle_t*>(pipe), nullptr);
     }
-    for (const auto& message_connection : message_connections_) {
-        message_connection->ScheduleClose();
-    }
     uv_close(reinterpret_cast<uv_handle_t*>(&uv_tcp_handle_), nullptr);
     uv_close(reinterpret_cast<uv_handle_t*>(&uv_ipc_handle_), nullptr);
     uv_close(reinterpret_cast<uv_handle_t*>(&stop_event_), nullptr);
@@ -285,9 +405,7 @@ UV_ASYNC_CB_FOR_CLASS(Server, Stop) {
 }
 
 UV_WRITE_CB_FOR_CLASS(Server, PipeWrite2) {
-    if (status != 0) {
-        HLOG(ERROR) << "Failed to write to pipe: " << uv_strerror(status);
-    }
+    CHECK(status == 0) << "Failed to write to pipe: " << uv_strerror(status);
 }
 
 }  // namespace gateway

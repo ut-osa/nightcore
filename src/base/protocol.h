@@ -5,27 +5,31 @@
 namespace faas {
 namespace protocol {
 
-constexpr size_t kMaxFuncNameLength = 31;
-
 enum class Status {
     INVALID = 0,
     OK = 1
 };
 
+enum class Role {
+    INVALID = 0,
+    WATCHDOG = 1,
+    FUNC_WORKER = 2
+};
+
 struct HandshakeMessage {
-    char func_name[kMaxFuncNameLength+1];
+    uint16_t role;
     uint16_t func_id;
 } __attribute__((packed));
 
 struct HandshakeResponse {
     uint16_t status;
-    uint16_t caller_id;
+    uint16_t client_id;
 } __attribute__((packed));
 
 union FuncCall {
     struct {
         uint16_t func_id   : 2;
-        uint16_t caller_id : 2;
+        uint16_t client_id : 2;
         uint32_t call_id   : 4;
     };
     uint64_t full_call_id;

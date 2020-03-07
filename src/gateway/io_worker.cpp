@@ -6,12 +6,14 @@
 namespace faas {
 namespace gateway {
 
-IOWorker::IOWorker(Server* server, absl::string_view worker_name, size_t read_buffer_size)
+IOWorker::IOWorker(Server* server, absl::string_view worker_name,
+                   size_t read_buffer_size, size_t write_buffer_size)
     : server_(server), worker_name_(worker_name), state_(kCreated),
       log_header_(absl::StrFormat("%s: ", worker_name)),
       event_loop_thread_(absl::StrFormat("%s_EventLoop", worker_name),
                          std::bind(&IOWorker::EventLoopThreadMain, this)),
-      read_buffer_pool_(absl::StrFormat("%s_Read", worker_name), read_buffer_size) {
+      read_buffer_pool_(absl::StrFormat("%s_Read", worker_name), read_buffer_size),
+      write_buffer_pool_(absl::StrFormat("%s_Write", worker_name), write_buffer_size) {
     UV_CHECK_OK(uv_loop_init(&uv_loop_));
     uv_loop_.data = &event_loop_thread_;
     UV_CHECK_OK(uv_async_init(&uv_loop_, &stop_event_, &IOWorker::StopCallback));
@@ -63,6 +65,16 @@ void IOWorker::NewReadBuffer(size_t suggested_size, uv_buf_t* buf) {
 void IOWorker::ReturnReadBuffer(const uv_buf_t* buf) {
     CHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
     read_buffer_pool_.Return(buf);
+}
+
+void IOWorker::NewWriteBuffer(uv_buf_t* buf) {
+    CHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
+    write_buffer_pool_.Get(buf);
+}
+
+void IOWorker::ReturnWriteBuffer(char* buf) {
+    CHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
+    write_buffer_pool_.Return(buf);
 }
 
 void IOWorker::OnConnectionClose(Connection* connection) {
@@ -127,9 +139,7 @@ UV_READ_CB_FOR_CLASS(IOWorker, NewConnection) {
 }
 
 UV_WRITE_CB_FOR_CLASS(IOWorker, PipeWrite) {
-    if (status != 0) {
-        HLOG(ERROR) << "Failed to write to pipe: " << uv_strerror(status);
-    }
+    CHECK(status == 0) << "Failed to write to pipe: " << uv_strerror(status);
 }
 
 }  // namespace gateway

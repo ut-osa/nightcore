@@ -12,10 +12,11 @@ class Server;
 
 class IOWorker {
 public:
-    static constexpr size_t kDefaultReadBufferSize = 4096;
+    static constexpr size_t kDefaultBufferSize = 4096;
 
     IOWorker(Server* server, absl::string_view worker_name,
-             size_t read_buffer_size = kDefaultReadBufferSize);
+             size_t read_buffer_size = kDefaultBufferSize,
+             size_t write_buffer_size = kDefaultBufferSize);
     ~IOWorker();
 
     absl::string_view worker_name() const { return worker_name_; }
@@ -30,11 +31,13 @@ public:
     // Can only be called from uv_loop_
     void NewReadBuffer(size_t suggested_size, uv_buf_t* buf);
     void ReturnReadBuffer(const uv_buf_t* buf);
+    void NewWriteBuffer(uv_buf_t* buf);
+    void ReturnWriteBuffer(char* buf);
 
 private:
     enum State { kCreated, kRunning, kStopping, kStopped };
 
-    Server* server_;
+    ABSL_ATTRIBUTE_UNUSED Server* server_;
     std::string worker_name_;
     std::atomic<State> state_;
 
@@ -47,6 +50,7 @@ private:
     base::Thread event_loop_thread_;
     absl::flat_hash_set<Connection*> connections_;
     utils::BufferPool read_buffer_pool_;
+    utils::BufferPool write_buffer_pool_;
 
     void EventLoopThreadMain();
 

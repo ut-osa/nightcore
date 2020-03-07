@@ -5,6 +5,7 @@
 #include "utils/uv_utils.h"
 #include "utils/appendable_buffer.h"
 #include "utils/buffer_pool.h"
+#include "utils/object_pool.h"
 
 namespace faas {
 namespace watchdog {
@@ -18,9 +19,11 @@ public:
 
     uv_pipe_t* uv_pipe_handle() { return &uv_pipe_handle_; }
 
-    void Start(absl::string_view ipc_path, absl::string_view func_name,
-               int func_id, utils::BufferPool* buffer_pool);
+    void Start(absl::string_view ipc_path, utils::BufferPool* buffer_pool,
+               const protocol::HandshakeMessage& handshake_message);
     void ScheduleClose();
+
+    void WriteWMessage(const protocol::Message& message);
 
 private:
     enum State { kCreated, kHandshake, kRunning, kClosing, kClosed };
@@ -34,7 +37,7 @@ private:
     utils::BufferPool* buffer_pool_;
     utils::AppendableBuffer message_buffer_;
     protocol::HandshakeMessage handshake_message_;
-    uv_write_t write_req_;
+    utils::SimpleObjectPool<uv_write_t> write_req_pool_;
 
     void RecvHandshakeResponse();
 

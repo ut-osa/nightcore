@@ -33,16 +33,16 @@
     void ClassName::On##FnName(ssize_t nread, const uv_buf_t* buf)
 
 #define DECLARE_UV_WRITE_CB_FOR_CLASS(FnName)                   \
-    void On##FnName(int status);                                \
+    void On##FnName(uv_write_t* req, int status);               \
     static void FnName##Callback(uv_write_t* req, int status);
 
-#define UV_WRITE_CB_FOR_CLASS(ClassName, FnName)                      \
-    void ClassName::FnName##Callback(uv_write_t* req, int status) {   \
-        CHECK_IN_EVENT_LOOP_THREAD(req->handle->loop);                \
-        ClassName* self = reinterpret_cast<ClassName*>(req->data);    \
-        self->On##FnName(status);                                     \
-    }                                                                 \
-    void ClassName::On##FnName(int status)
+#define UV_WRITE_CB_FOR_CLASS(ClassName, FnName)                            \
+    void ClassName::FnName##Callback(uv_write_t* req, int status) {         \
+        CHECK_IN_EVENT_LOOP_THREAD(req->handle->loop);                      \
+        ClassName* self = reinterpret_cast<ClassName*>(req->handle->data);  \
+        self->On##FnName(req, status);                                      \
+    }                                                                       \
+    void ClassName::On##FnName(uv_write_t* req, int status)
 
 #define DECLARE_UV_ALLOC_CB_FOR_CLASS(FnName)                           \
     void On##FnName(size_t suggested_size, uv_buf_t* buf);              \
@@ -98,10 +98,10 @@
     void On##FnName(int status);                                 \
     static void FnName##Callback(uv_connect_t* req, int status);
 
-#define UV_CONNECT_CB_FOR_CLASS(ClassName, FnName)                     \
-    void ClassName::FnName##Callback(uv_connect_t* req, int status) {  \
-        CHECK_IN_EVENT_LOOP_THREAD(req->handle->loop);                 \
-        ClassName* self = reinterpret_cast<ClassName*>(req->data);     \
-        self->On##FnName(status);                                      \
-    }                                                                  \
+#define UV_CONNECT_CB_FOR_CLASS(ClassName, FnName)                         \
+    void ClassName::FnName##Callback(uv_connect_t* req, int status) {      \
+        CHECK_IN_EVENT_LOOP_THREAD(req->handle->loop);                     \
+        ClassName* self = reinterpret_cast<ClassName*>(req->handle->data); \
+        self->On##FnName(status);                                          \
+    }                                                                      \
     void ClassName::On##FnName(int status)

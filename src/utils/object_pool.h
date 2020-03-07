@@ -10,52 +10,37 @@ T* DefaultObjectConstructor() {
     return new T();
 }
 
+// SimpleObjectPool is NOT thread-safe
 template<class T>
-class ObjectPool {
+class SimpleObjectPool {
 public:
-    ObjectPool(size_t initial_size, size_t max_size,
-               std::function<T*()> object_constructor = DefaultObjectConstructor<T>)
-        : max_size_(max_size), tail_(initial_size), pool_(new std::shared_ptr<T>[max_size]),
-          object_constructor_(object_constructor) {
-        CHECK_LE(initial_size, max_size);
-        for (size_t i = 0; i < initial_size; i++) {
-            pool_[i] = std::shared_ptr<T>(object_constructor());
-        }
-    }
+    explicit SimpleObjectPool(std::function<T*()> object_constructor = DefaultObjectConstructor<T>)
+        : object_constructor_(object_constructor) {}
 
-    ~ObjectPool() {
-        delete[] pool_;
-    }
+    ~SimpleObjectPool() {}
 
-    std::shared_ptr<T> Get() {
-        std::shared_ptr<T> obj = nullptr;
-        {
-            absl::MutexLock lk(&mu_);
-            if (tail_ > 0) {
-                obj = std::move(pool_[--tail_]);
-            }
+    T* Get() {
+        if (free_objs_.empty()) {
+            T* new_obj = object_constructor_();
+            free_objs_.push_back(new_obj);
+            objs_.emplace_back(new_obj);
         }
-        if (obj == nullptr) {
-            obj = std::shared_ptr<T>(object_constructor_());
-        }
+        CHECK(!free_objs_.empty());
+        T* obj = free_objs_.back();
+        free_objs_.pop_back();
         return obj;
     }
 
-    void Return(std::shared_ptr<T> obj) {
-        absl::MutexLock lk(&mu_);
-        if (tail_ < max_size_) {
-            pool_[tail_++] = std::move(obj);
-        }
+    void Return(T* obj) {
+        free_objs_.push_back(obj);
     }
 
 private:
-    size_t max_size_;
-    size_t tail_;
-    std::shared_ptr<T>* pool_;
     std::function<T*()> object_constructor_;
-    absl::Mutex mu_;
+    std::vector<std::unique_ptr<T>> objs_;
+    std::vector<T*> free_objs_;
 
-    DISALLOW_COPY_AND_ASSIGN(ObjectPool);
+    DISALLOW_COPY_AND_ASSIGN(SimpleObjectPool);
 };
 
 }  // namespace utils

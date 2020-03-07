@@ -103,5 +103,24 @@ private:
     DISALLOW_COPY_AND_ASSIGN(AppendableBuffer);
 };
 
+template<class T>
+void ReadMessages(AppendableBuffer* buffer,
+                  const char* new_data, size_t new_data_length,
+                  std::function<void(T*)> callback) {
+    while (new_data_length + buffer->length() >= sizeof(T)) {
+        size_t copy_size = sizeof(T) - buffer->length();
+        buffer->AppendData(new_data, copy_size);
+        CHECK_EQ(buffer->length(), sizeof(T));
+        T* message = reinterpret_cast<T*>(buffer->data());
+        callback(message);
+        buffer->Reset();
+        new_data += copy_size;
+        new_data_length -= copy_size;
+    }
+    if (new_data_length > 0) {
+        buffer->AppendData(new_data, new_data_length);
+    }
+}
+
 }  // namespace utils
 }  // namespace faas

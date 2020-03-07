@@ -80,6 +80,7 @@ public:
     void OnNewHandshake(MessageConnection* connection,
                         const protocol::HandshakeMessage& message,
                         protocol::HandshakeResponse* response);
+    void OnRecvMessage(MessageConnection* connection, const protocol::Message& message);
 
 private:
     enum State { kCreated, kRunning, kStopping, kStopped };
@@ -114,13 +115,28 @@ private:
 
     std::vector<std::unique_ptr<RequestHandler>> request_handlers_;
 
+    absl::Mutex message_connection_mu_;
+    std::atomic<uint16_t> next_client_id_;
+    absl::flat_hash_map<uint16_t, MessageConnection*>
+        message_connections_by_client_id_ ABSL_GUARDED_BY(message_connection_mu_);
+    absl::flat_hash_map<uint16_t, MessageConnection*>
+        watchdog_connections_by_func_id_ ABSL_GUARDED_BY(message_connection_mu_);
     absl::flat_hash_set<std::unique_ptr<MessageConnection>> message_connections_;
 
-    std::unique_ptr<IOWorker> CreateAndStartIOWorker(absl::string_view worker_name);
+    std::atomic<uint32_t> next_call_id_;
+    absl::Mutex external_func_calls_mu_;
+    absl::flat_hash_map<uint64_t, std::shared_ptr<HttpAsyncRequestContext>>
+        external_func_calls_ ABSL_GUARDED_BY(external_func_calls_mu_);
+
+    void InitAndStartIOWorker(IOWorker* io_worker);
     std::unique_ptr<uv_pipe_t> CreatePipeToWorker(int* pipe_fd_for_worker);
     void TransferConnectionToWorker(IOWorker* io_worker, Connection* connection,
                                     uv_stream_t* send_handle);
     void ReturnConnection(Connection* connection);
+
+    void RegisterInternalRequestHandlers();
+    void OnExternalFuncCall(uint16_t func_id,
+                            std::shared_ptr<HttpAsyncRequestContext> request_context);
 
     void EventLoopThreadMain();
     IOWorker* PickHttpWorker();

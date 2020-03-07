@@ -8,8 +8,7 @@
 namespace faas {
 namespace watchdog {
 
-using protocol::Status;
-using protocol::kMaxFuncNameLength;
+using protocol::Message;
 using protocol::HandshakeMessage;
 using protocol::HandshakeResponse;
 
@@ -20,18 +19,12 @@ GatewayPipe::~GatewayPipe() {
     CHECK(state_ == kCreated || state_ == kClosed);
 }
 
-void GatewayPipe::Start(absl::string_view ipc_path, absl::string_view func_name,
-                        int func_id, utils::BufferPool* buffer_pool) {
+void GatewayPipe::Start(absl::string_view ipc_path, utils::BufferPool* buffer_pool,
+                        const HandshakeMessage& handshake_message) {
     CHECK(state_ == kCreated);
     buffer_pool_ = buffer_pool;
-    memset(&handshake_message_, 0, sizeof(HandshakeMessage));
-    CHECK_LE(func_name.length(), kMaxFuncNameLength);
-    memcpy(handshake_message_.func_name,
-           func_name.data(), func_name.length());
-    handshake_message_.func_id = func_id;
+    handshake_message_ = handshake_message;
     uv_pipe_handle_.data = this;
-    connect_req_.data = this;
-    write_req_.data = this;
     uv_pipe_connect(&connect_req_, &uv_pipe_handle_,
                     std::string(ipc_path).c_str(),
                     &GatewayPipe::ConnectCallback);
@@ -51,20 +44,30 @@ void GatewayPipe::ScheduleClose() {
 }
 
 void GatewayPipe::RecvHandshakeResponse() {
-    CHECK_IN_EVENT_LOOP_THREAD(uv_pipe_handle_.loop);
     UV_CHECK_OK(uv_read_stop(reinterpret_cast<uv_stream_t*>(&uv_pipe_handle_)));
-    HandshakeResponse* message = reinterpret_cast<HandshakeResponse*>(
+    HandshakeResponse* response = reinterpret_cast<HandshakeResponse*>(
         message_buffer_.data());
-    if (static_cast<Status>(message->status) != Status::OK) {
-        HLOG(WARNING) << "Handshake failed, will close the pipe";
-        ScheduleClose();
-        return;
+    if (watchdog_->OnRecvHandshakeResponse(*response)) {
+        HLOG(INFO) << "Handshake done";
+        message_buffer_.Reset();
+        UV_CHECK_OK(uv_read_start(reinterpret_cast<uv_stream_t*>(&uv_pipe_handle_),
+                                &GatewayPipe::BufferAllocCallback,
+                                &GatewayPipe::ReadMessageCallback));
+        state_ = kRunning;
     }
-    HLOG(INFO) << "Handshake done";
-    UV_CHECK_OK(uv_read_start(reinterpret_cast<uv_stream_t*>(&uv_pipe_handle_),
-                              &GatewayPipe::BufferAllocCallback,
-                              &GatewayPipe::ReadMessageCallback));
-    state_ = kRunning;
+}
+
+void GatewayPipe::WriteWMessage(const Message& message) {
+    CHECK_IN_EVENT_LOOP_THREAD(uv_pipe_handle_.loop);
+    uv_buf_t buf;
+    buffer_pool_->Get(&buf);
+    CHECK_LE(sizeof(Message), buf.len);
+    memcpy(buf.base, &message, sizeof(Message));
+    buf.len = sizeof(Message);
+    uv_write_t* write_req = write_req_pool_.Get();
+    write_req->data = buf.base;
+    UV_CHECK_OK(uv_write(write_req, reinterpret_cast<uv_stream_t*>(&uv_pipe_handle_),
+                         &buf, 1, &GatewayPipe::WriteMessageCallback));
 }
 
 UV_CONNECT_CB_FOR_CLASS(GatewayPipe, Connect) {
@@ -79,7 +82,7 @@ UV_CONNECT_CB_FOR_CLASS(GatewayPipe, Connect) {
         .base = reinterpret_cast<char*>(&handshake_message_),
         .len = sizeof(HandshakeMessage)
     };
-    UV_CHECK_OK(uv_write(&write_req_, reinterpret_cast<uv_stream_t*>(&uv_pipe_handle_),
+    UV_CHECK_OK(uv_write(write_req_pool_.Get(), reinterpret_cast<uv_stream_t*>(&uv_pipe_handle_),
                          &buf, 1, &GatewayPipe::WriteHandshakeCallback));
 }
 
@@ -105,6 +108,7 @@ UV_READ_CB_FOR_CLASS(GatewayPipe, ReadHandshakeResponse) {
 }
 
 UV_WRITE_CB_FOR_CLASS(GatewayPipe, WriteHandshake) {
+    write_req_pool_.Return(req);
     if (status != 0) {
         HLOG(WARNING) << "Failed to write handshake message, will close the pipe: "
                       << uv_strerror(status);
@@ -122,7 +126,12 @@ UV_READ_CB_FOR_CLASS(GatewayPipe, ReadMessage) {
                       << uv_strerror(nread);
         ScheduleClose();
     } else if (nread > 0) {
-        // TODO
+        LOG(INFO) << "Receive " << nread << " bytes";
+        utils::ReadMessages<Message>(
+            &message_buffer_, buf->base, nread,
+            [this] (Message* message) {
+                watchdog_->OnRecvMessage(*message);
+            });
     }
     if (buf->base != 0) {
         buffer_pool_->Return(buf);
@@ -136,7 +145,8 @@ UV_WRITE_CB_FOR_CLASS(GatewayPipe, WriteMessage) {
         ScheduleClose();
         return;
     }
-    //TODO
+    buffer_pool_->Return(reinterpret_cast<char*>(req->data));
+    write_req_pool_.Return(req);
 }
 
 UV_CLOSE_CB_FOR_CLASS(GatewayPipe, Close) {
