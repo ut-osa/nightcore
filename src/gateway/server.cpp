@@ -306,7 +306,7 @@ void Server::OnExternalFuncCall(uint16_t func_id, std::shared_ptr<HttpAsyncReque
     FuncCall call = {
         .func_id = func_id,
         .client_id = 0,
-        .call_id = next_client_id_.fetch_add(1)
+        .call_id = next_call_id_.fetch_add(1)
     };
     {
         absl::MutexLock lk(&message_connection_mu_);
