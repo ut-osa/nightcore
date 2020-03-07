@@ -3,6 +3,8 @@
 #include "base/common.h"
 #include "base/protocol.h"
 #include "utils/buffer_pool.h"
+#include "utils/uv_utils.h"
+#include "utils/shared_memory.h"
 #include "gateway/connection.h"
 #include "gateway/io_worker.h"
 #include "gateway/http_request_context.h"
@@ -29,6 +31,9 @@ public:
     void set_listen_backlog(int value) { listen_backlog_ = value; }
     void set_num_http_workers(int value) { num_http_workers_ = value; }
     void set_num_ipc_workers(int value) { num_ipc_workers_ = value; }
+    void set_shared_mem_path(absl::string_view shared_mem_path) {
+        shared_mem_path_ = std::string(shared_mem_path);
+    }
 
     void Start();
     void ScheduleStop();
@@ -83,6 +88,7 @@ public:
     void OnRecvMessage(MessageConnection* connection, const protocol::Message& message);
 
 private:
+    class ExternalFuncCallContext;
     enum State { kCreated, kRunning, kStopping, kStopped };
     std::atomic<State> state_;
 
@@ -92,6 +98,7 @@ private:
     int listen_backlog_;
     int num_http_workers_;
     int num_ipc_workers_;
+    std::string shared_mem_path_;
 
     uv_loop_t uv_loop_;
     uv_tcp_t uv_tcp_handle_;
@@ -124,8 +131,9 @@ private:
     absl::flat_hash_set<std::unique_ptr<MessageConnection>> message_connections_;
 
     std::atomic<uint32_t> next_call_id_;
+    std::unique_ptr<utils::SharedMemory> shared_memory_;
     absl::Mutex external_func_calls_mu_;
-    absl::flat_hash_map<uint64_t, std::shared_ptr<HttpAsyncRequestContext>>
+    absl::flat_hash_map<uint64_t, std::unique_ptr<ExternalFuncCallContext>>
         external_func_calls_ ABSL_GUARDED_BY(external_func_calls_mu_);
 
     void InitAndStartIOWorker(IOWorker* io_worker);
@@ -136,7 +144,7 @@ private:
 
     void RegisterInternalRequestHandlers();
     void OnExternalFuncCall(uint16_t func_id,
-                            std::shared_ptr<HttpAsyncRequestContext> request_context);
+                            std::shared_ptr<HttpAsyncRequestContext> http_context);
 
     void EventLoopThreadMain();
     IOWorker* PickHttpWorker();

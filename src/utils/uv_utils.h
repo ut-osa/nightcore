@@ -4,13 +4,11 @@
 
 // libuv-related helper macros
 
-#define UV_CHECK_OK(UV_CALL)                  \
-    do {                                         \
-        int ret = UV_CALL;                       \
-        if (ret != 0) {                          \
-            LOG(FATAL) << "libuv call fails: "   \
-                       << uv_strerror(ret);      \
-        }                                        \
+#define UV_CHECK_OK(UV_CALL)                             \
+    do {                                                 \
+        int ret = UV_CALL;                               \
+        LOG_IF(FATAL, ret != 0) << "libuv call failed: " \
+                                << uv_strerror(ret);     \
     } while (0)
 
 // Assume loop->data is the event loop thread

@@ -3,6 +3,7 @@
 #include "base/common.h"
 #include "base/protocol.h"
 #include "utils/uv_utils.h"
+#include "utils/shared_memory.h"
 #include "utils/buffer_pool.h"
 #include "watchdog/gateway_pipe.h"
 
@@ -25,6 +26,12 @@ public:
     void set_fprocess(absl::string_view fprocess) {
         fprocess_ = std::string(fprocess);
     }
+    void set_shared_mem_path(absl::string_view shared_mem_path) {
+        shared_mem_path_ = std::string(shared_mem_path);
+    }
+    void set_run_mode(int run_mode) {
+        run_mode_ = run_mode;
+    }
 
     void Start();
     void ScheduleStop();
@@ -42,11 +49,15 @@ private:
     std::string gateway_ipc_path_;
     int func_id_;
     std::string fprocess_;
+    std::string shared_mem_path_;
+    int run_mode_;
     uint16_t client_id_;
 
     uv_loop_t uv_loop_;
     uv_async_t stop_event_;
     base::Thread event_loop_thread_;
+
+    std::unique_ptr<utils::SharedMemory> shared_memory_;
 
     GatewayPipe gateway_pipe_;
     utils::BufferPool buffer_pool_for_pipes_;

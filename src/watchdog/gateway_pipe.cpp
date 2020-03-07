@@ -126,7 +126,6 @@ UV_READ_CB_FOR_CLASS(GatewayPipe, ReadMessage) {
                       << uv_strerror(nread);
         ScheduleClose();
     } else if (nread > 0) {
-        LOG(INFO) << "Receive " << nread << " bytes";
         utils::ReadMessages<Message>(
             &message_buffer_, buf->base, nread,
             [this] (Message* message) {

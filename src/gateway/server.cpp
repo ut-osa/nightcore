@@ -1,6 +1,5 @@
 #include "gateway/server.h"
 
-#include "utils/uv_utils.h"
 #include <absl/strings/match.h>
 #include <absl/strings/strip.h>
 #include <absl/strings/numbers.h>
@@ -74,6 +73,9 @@ void Server::RegisterInternalRequestHandlers() {
 void Server::Start() {
     CHECK(state_.load() == kCreated);
     RegisterInternalRequestHandlers();
+    // Create shared memory pool
+    CHECK(!shared_mem_path_.empty());
+    shared_memory_ = absl::make_unique<utils::SharedMemory>(shared_mem_path_);
     // Start IO workers
     for (int i = 0; i < num_http_workers_; i++) {
         auto io_worker = absl::make_unique<IOWorker>(this, absl::StrFormat("HttpWorker-%d", i),
@@ -229,7 +231,7 @@ void Server::ReturnConnection(Connection* connection) {
     } else if (connection->type() == Connection::Type::Message) {
         MessageConnection* message_connection = static_cast<MessageConnection*>(connection);
         {
-            // absl::MutexLock lk(&message_connection_mu_);
+            absl::MutexLock lk(&message_connection_mu_);
             CHECK(message_connections_by_client_id_.contains(message_connection->client_id()));
             message_connections_by_client_id_.erase(message_connection->client_id());
             if (message_connection->role() == Role::WATCHDOG) {
@@ -256,6 +258,46 @@ void Server::OnNewHandshake(MessageConnection* connection,
         }
     }
 }
+
+class Server::ExternalFuncCallContext {
+public:
+    ExternalFuncCallContext(FuncCall call, std::shared_ptr<HttpAsyncRequestContext> http_context)
+        : call_(call), http_context_(http_context),
+          input_region_(nullptr), output_region_(nullptr) {}
+    
+    ~ExternalFuncCallContext() {
+        if (input_region_ != nullptr) {
+            input_region_->Close(true);
+        }
+        if (output_region_ != nullptr) {
+            output_region_->Close(true);
+        }
+    }
+
+    HttpAsyncRequestContext* http_context() { return http_context_.get(); }
+
+    void CreateInputRegion(utils::SharedMemory* shared_memory) {
+        input_region_ = shared_memory->Create(
+            absl::StrCat(call_.full_call_id, ".i"), http_context_->body_length());
+        memcpy(input_region_->base(), http_context_->body(),
+               http_context_->body_length());
+    }
+
+    void WriteOutput(utils::SharedMemory* shared_memory) {
+        output_region_ = shared_memory->OpenReadOnly(
+            absl::StrCat(call_.full_call_id, ".o"));
+        http_context_->AppendDataToResponseBody(
+            output_region_->base(), output_region_->size());
+    }
+
+private:
+    FuncCall call_;
+    std::shared_ptr<HttpAsyncRequestContext> http_context_;
+    utils::SharedMemory::Region* input_region_;
+    utils::SharedMemory::Region* output_region_;
+
+    DISALLOW_COPY_AND_ASSIGN(ExternalFuncCallContext);
+};
 
 void Server::OnRecvMessage(MessageConnection* connection, const Message& message) {
     MessageType type = static_cast<MessageType>(message.message_type);
@@ -288,10 +330,10 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
             absl::MutexLock lk(&external_func_calls_mu_);
             uint64_t full_call_id = message.func_call.full_call_id;
             if (external_func_calls_.contains(full_call_id)) {
-                auto request_context = external_func_calls_[full_call_id];
+                ExternalFuncCallContext* func_call_context = external_func_calls_[full_call_id].get();
+                func_call_context->WriteOutput(shared_memory_.get());
+                func_call_context->http_context()->Finish();
                 external_func_calls_.erase(full_call_id);
-                request_context->AppendStrToResponseBody("Finish function call\n");
-                request_context->Finish();
             } else {
                 HLOG(WARNING) << "Cannot find external call with func_id=" << message.func_call.call_id << ", "
                               << "call_id=" << message.func_call.call_id;
@@ -302,11 +344,20 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
     }
 }
 
-void Server::OnExternalFuncCall(uint16_t func_id, std::shared_ptr<HttpAsyncRequestContext> request_context) {
+void Server::OnExternalFuncCall(uint16_t func_id, std::shared_ptr<HttpAsyncRequestContext> http_context) {
+    if (http_context->body_length() == 0) {
+        http_context->AppendStrToResponseBody("Request body cannot be empty!\n");
+        http_context->SetStatus(400);
+        http_context->Finish();
+        return;
+    }
     FuncCall call;
     call.func_id = func_id;
     call.client_id = 0;
     call.call_id = next_call_id_.fetch_add(1);
+    std::unique_ptr<ExternalFuncCallContext> func_call_context(
+        new ExternalFuncCallContext(call, http_context));
+    func_call_context->CreateInputRegion(shared_memory_.get());
     {
         absl::MutexLock lk(&message_connection_mu_);
         if (watchdog_connections_by_func_id_.contains(func_id)) {
@@ -316,16 +367,16 @@ void Server::OnExternalFuncCall(uint16_t func_id, std::shared_ptr<HttpAsyncReque
                 .func_call = call
             });
         } else {
-            request_context->AppendStrToResponseBody(
+            http_context->AppendStrToResponseBody(
                 absl::StrFormat("Cannot find function with func_id %d\n", static_cast<int>(func_id)));
-            request_context->SetStatus(404);
-            request_context->Finish();
+            http_context->SetStatus(404);
+            http_context->Finish();
             return;
         }
     }
     {
         absl::MutexLock lk(&external_func_calls_mu_);
-        external_func_calls_[call.full_call_id] = std::move(request_context);
+        external_func_calls_[call.full_call_id] = std::move(func_call_context);
     }
 }
 

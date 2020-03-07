@@ -40,6 +40,9 @@ void Watchdog::Start() {
     CHECK(state_.load() == kCreated);
     CHECK(func_id_ != -1);
     CHECK(!fprocess_.empty());
+    // Create shared memory pool
+    CHECK(!shared_mem_path_.empty());
+    shared_memory_ = absl::make_unique<utils::SharedMemory>(shared_mem_path_);
     // Connect to gateway via IPC path
     uv_pipe_t* pipe_handle = gateway_pipe_.uv_pipe_handle();
     UV_CHECK_OK(uv_pipe_init(&uv_loop_, pipe_handle, 0));
@@ -93,6 +96,11 @@ void Watchdog::OnRecvMessage(const protocol::Message& message) {
             LOG(ERROR) << "I am not running func_id " << func_call.func_id;
             return;
         }
+        std::string resp(absl::StrFormat("I am here serving function of func_id %d\n", func_call.func_id));
+        utils::SharedMemory::Region* region = shared_memory_->Create(
+            absl::StrCat(func_call.full_call_id, ".o"), resp.size());
+        memcpy(region->base(), resp.data(), resp.size());
+        region->Close();
         gateway_pipe_.WriteWMessage({
             .message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_COMPLETE),
             .func_call = func_call
