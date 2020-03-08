@@ -30,10 +30,6 @@ public:
     uv_pipe_t* StdinPipe();
     void CloseStdin();
 
-    void WriteToStdin(const char* data, size_t length,
-                      std::function<void(int)> callback);
-    void StdinEof();
-
 private:
     enum State { kCreated, kRunning, kExited, kClosed };
 
