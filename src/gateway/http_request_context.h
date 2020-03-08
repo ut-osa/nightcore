@@ -17,26 +17,21 @@ public:
     absl::string_view header(absl::string_view field) const {
         return headers_->contains(field) ? headers_->at(field) : "";
     }
-    const char* body() const { return body_; }
-    size_t body_length() const { return body_length_; }
+    absl::Span<const char> body() const { return body_; }
 
     void SetStatus(int status) { *status_ = status; }
     void SetContentType(absl::string_view content_type) {
         *content_type_ = std::string(content_type);
     }
-    void AppendDataToResponseBody(const char* data, size_t length) {
-        response_body_buffer_->AppendData(data, length);
-    }
-    void AppendStrToResponseBody(absl::string_view str) {
-        response_body_buffer_->AppendStr(str);
+    void AppendToResponseBody(absl::Span<const char> data) {
+        response_body_buffer_->AppendData(data);
     }
 
 private:
     absl::string_view method_;
     absl::string_view path_;
     const absl::flat_hash_map<absl::string_view, absl::string_view>* headers_;
-    const char* body_;
-    size_t body_length_;
+    absl::Span<const char> body_;
 
     int* status_;
     std::string* content_type_;
@@ -57,18 +52,14 @@ public:
     absl::string_view header(absl::string_view field) const {
         return headers_.contains(field) ? headers_.at(field) : "";
     }
-    const char* body() const { return body_buffer_.data(); }
-    size_t body_length() const { return body_buffer_.length(); }
+    absl::Span<const char> body() const { return body_buffer_.to_span(); }
 
     void SetStatus(int status) { status_ = status; }
     void SetContentType(absl::string_view content_type) {
         content_type_ = std::string(content_type);
     }
-    void AppendDataToResponseBody(const char* data, size_t length) {
-        response_body_buffer_.AppendData(data, length);
-    }
-    void AppendStrToResponseBody(absl::string_view str) {
-        response_body_buffer_.AppendStr(str);
+    void AppendToResponseBody(absl::Span<const char> data) {
+        response_body_buffer_.AppendData(data);
     }
     // Handler should not use HttpAsyncRequestContext any longer after calling Finish()
     bool Finish();

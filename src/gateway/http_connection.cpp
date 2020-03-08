@@ -291,8 +291,7 @@ void HttpConnection::OnNewHttpRequest(absl::string_view method, absl::string_vie
         context.method_ = method;
         context.path_ = path;
         context.headers_ = &headers_;
-        context.body_ = body_buffer_.data();
-        context.body_length_ = body_buffer_.length();
+        context.body_ = body_buffer_.to_span();
         context.status_ = &response_status_;
         context.content_type_ = &response_content_type_;
         context.response_body_buffer_ = &response_body_buffer_;
@@ -335,7 +334,7 @@ void HttpConnection::SendHttpResponse() {
     header << "HttpConnection: Keep-Alive" << CRLF;
     header << CRLF;
     response_header_buffer_.Reset();
-    response_header_buffer_.AppendStr(header.str());
+    response_header_buffer_.AppendData(header.str());
     uv_buf_t bufs[] = {
         { .base = response_header_buffer_.data(), .len = response_header_buffer_.length() },
         { .base = response_body_buffer_.data(), .len = response_body_buffer_.length() }

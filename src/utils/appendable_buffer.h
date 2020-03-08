@@ -45,12 +45,8 @@ public:
         pos_ += length;
     }
 
-    void AppendStr(const char* str) {
-        AppendData(str, strlen(str));
-    }
-
-    void AppendStr(absl::string_view str) {
-        AppendData(str.data(), str.length());
+    void AppendData(absl::Span<const char> data) {
+        AppendData(data.data(), data.length());
     }
 
     void Reset() { pos_ = 0; }

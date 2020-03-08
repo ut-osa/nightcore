@@ -14,8 +14,14 @@ public:
     class Region {
     public:
         absl::string_view path() const { return path_; }
-        char* base() const { return base_; }
+        char* base() { return base_; }
+        const char* base() const { return base_; }
         size_t size() const { return size_; }
+
+        absl::Span<const char> to_span() const {
+            return absl::Span<const char>(base_, size_);
+        }
+    
         void Close(bool remove = false) {
             parent_->Close(this, remove);
         }

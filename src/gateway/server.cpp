@@ -43,14 +43,14 @@ void Server::RegisterInternalRequestHandlers() {
     RegisterSyncRequestHandler([] (absl::string_view method, absl::string_view path) -> bool {
         return method == "POST" && path == "/shutdown";
     }, [this] (HttpSyncRequestContext* context) {
-        context->AppendStrToResponseBody("Server is shutting down\n");
+        context->AppendToResponseBody("Server is shutting down\n");
         ScheduleStop();
     });
     // GET /hello
     RegisterSyncRequestHandler([] (absl::string_view method, absl::string_view path) -> bool {
         return method == "GET" && path == "/hello";
     }, [] (HttpSyncRequestContext* context) {
-        context->AppendStrToResponseBody("Hello world\n");
+        context->AppendToResponseBody("Hello world\n");
     });
     // POST /function/[func_id]
     RegisterAsyncRequestHandler([] (absl::string_view method, absl::string_view path) -> bool {
@@ -277,17 +277,16 @@ public:
     HttpAsyncRequestContext* http_context() { return http_context_.get(); }
 
     void CreateInputRegion(utils::SharedMemory* shared_memory) {
+        absl::Span<const char> body = http_context_->body();
         input_region_ = shared_memory->Create(
-            absl::StrCat(call_.full_call_id, ".i"), http_context_->body_length());
-        memcpy(input_region_->base(), http_context_->body(),
-               http_context_->body_length());
+            absl::StrCat(call_.full_call_id, ".i"), body.length());
+        memcpy(input_region_->base(), body.data(), body.length());
     }
 
     void WriteOutput(utils::SharedMemory* shared_memory) {
         output_region_ = shared_memory->OpenReadOnly(
             absl::StrCat(call_.full_call_id, ".o"));
-        http_context_->AppendDataToResponseBody(
-            output_region_->base(), output_region_->size());
+        http_context_->AppendToResponseBody(output_region_->to_span());
     }
 
 private:
@@ -334,7 +333,7 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
                 if (type == MessageType::FUNC_CALL_COMPLETE) {
                     func_call_context->WriteOutput(shared_memory_.get());
                 } else {
-                    func_call_context->http_context()->AppendStrToResponseBody("Function call failed\n");
+                    func_call_context->http_context()->AppendToResponseBody("Function call failed\n");
                     func_call_context->http_context()->SetStatus(500);
                 }
                 func_call_context->http_context()->Finish();
@@ -350,8 +349,8 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
 }
 
 void Server::OnExternalFuncCall(uint16_t func_id, std::shared_ptr<HttpAsyncRequestContext> http_context) {
-    if (http_context->body_length() == 0) {
-        http_context->AppendStrToResponseBody("Request body cannot be empty!\n");
+    if (http_context->body().length() == 0) {
+        http_context->AppendToResponseBody("Request body cannot be empty!\n");
         http_context->SetStatus(400);
         http_context->Finish();
         return;
@@ -372,7 +371,7 @@ void Server::OnExternalFuncCall(uint16_t func_id, std::shared_ptr<HttpAsyncReque
                 .func_call = call
             });
         } else {
-            http_context->AppendStrToResponseBody(
+            http_context->AppendToResponseBody(
                 absl::StrFormat("Cannot find function with func_id %d\n", static_cast<int>(func_id)));
             http_context->SetStatus(404);
             http_context->Finish();
