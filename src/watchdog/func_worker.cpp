@@ -70,8 +70,10 @@ void FuncWorker::ScheduleExit() {
 void FuncWorker::CopyRecvData(ssize_t nread, const uv_buf_t* inbuf,
                               utils::AppendableBuffer* outbuf) {
     if (nread < 0) {
-        HLOG(WARNING) << "Read error, will exit the process: " << uv_strerror(nread);
-        ScheduleExit();
+        if (nread != UV_EOF) {
+            HLOG(WARNING) << "Read error, will exit the process: " << uv_strerror(nread);
+            ScheduleExit();
+        }
     } else if (nread > 0) {
         outbuf->AppendData(inbuf->base, nread);
     }
