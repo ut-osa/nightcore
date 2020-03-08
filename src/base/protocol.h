@@ -39,7 +39,8 @@ static_assert(sizeof(FuncCall) == 8, "Unexpected FuncCall size");
 enum class MessageType {
     INVALID = 0,
     INVOKE_FUNC = 1,
-    FUNC_CALL_COMPLETE = 2
+    FUNC_CALL_COMPLETE = 2,
+    FUNC_CALL_FAILED = 3
 };
 
 struct Message {

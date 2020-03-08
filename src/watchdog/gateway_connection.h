@@ -12,14 +12,16 @@ namespace watchdog {
 
 class Watchdog;
 
-class GatewayPipe {
+class GatewayConnection {
 public:
-    explicit GatewayPipe(Watchdog* watchdog);
-    ~GatewayPipe();
+    static constexpr size_t kBufferSize = 256;
+
+    explicit GatewayConnection(Watchdog* watchdog);
+    ~GatewayConnection();
 
     uv_pipe_t* uv_pipe_handle() { return &uv_pipe_handle_; }
 
-    void Start(absl::string_view ipc_path, utils::BufferPool* buffer_pool,
+    void Start(absl::string_view ipc_path,
                const protocol::HandshakeMessage& handshake_message);
     void ScheduleClose();
 
@@ -34,7 +36,7 @@ private:
     uv_connect_t connect_req_;
     uv_pipe_t uv_pipe_handle_;
 
-    utils::BufferPool* buffer_pool_;
+    utils::BufferPool buffer_pool_;
     utils::AppendableBuffer message_buffer_;
     protocol::HandshakeMessage handshake_message_;
     utils::SimpleObjectPool<uv_write_t> write_req_pool_;
@@ -49,7 +51,7 @@ private:
     DECLARE_UV_WRITE_CB_FOR_CLASS(WriteMessage);
     DECLARE_UV_CLOSE_CB_FOR_CLASS(Close);
 
-    DISALLOW_COPY_AND_ASSIGN(GatewayPipe);
+    DISALLOW_COPY_AND_ASSIGN(GatewayConnection);
 };
 
 }  // namespace watchdog

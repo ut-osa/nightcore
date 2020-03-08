@@ -5,14 +5,16 @@
 #include "utils/uv_utils.h"
 #include "utils/shared_memory.h"
 #include "utils/buffer_pool.h"
-#include "watchdog/gateway_pipe.h"
+#include "watchdog/run_mode.h"
+#include "watchdog/gateway_connection.h"
+#include "watchdog/func_worker.h"
 
 namespace faas {
 namespace watchdog {
 
 class Watchdog {
 public:
-    static constexpr size_t kPipeBufferSize = 256;
+    static constexpr size_t kDataPipeBufferSize = 65536;
 
     Watchdog();
     ~Watchdog();
@@ -30,14 +32,15 @@ public:
         shared_mem_path_ = std::string(shared_mem_path);
     }
     void set_run_mode(int run_mode) {
-        run_mode_ = run_mode;
+        run_mode_ = static_cast<RunMode>(run_mode);
     }
 
     void Start();
     void ScheduleStop();
     void WaitForFinish();
 
-    void OnGatewayPipeClose();
+    void OnGatewayConnectionClose();
+    void OnFuncWorkerExit(FuncWorker* func_worker);
 
     bool OnRecvHandshakeResponse(const protocol::HandshakeResponse& response);
     void OnRecvMessage(const protocol::Message& message);
@@ -50,7 +53,7 @@ private:
     int func_id_;
     std::string fprocess_;
     std::string shared_mem_path_;
-    int run_mode_;
+    RunMode run_mode_;
     uint16_t client_id_;
 
     uv_loop_t uv_loop_;
@@ -59,8 +62,10 @@ private:
 
     std::unique_ptr<utils::SharedMemory> shared_memory_;
 
-    GatewayPipe gateway_pipe_;
-    utils::BufferPool buffer_pool_for_pipes_;
+    GatewayConnection gateway_connection_;
+    int next_func_worker_id_;
+    absl::flat_hash_set<std::unique_ptr<FuncWorker>> func_workers_;
+    utils::BufferPool buffer_pool_for_data_pipes_;
 
     void EventLoopThreadMain();
 

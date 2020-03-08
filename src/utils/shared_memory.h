@@ -5,6 +5,7 @@
 namespace faas {
 namespace utils {
 
+// SharedMemory is thread-safe
 class SharedMemory {
 public:
     explicit SharedMemory(absl::string_view base_path);
@@ -40,7 +41,8 @@ public:
 
 private:
     std::string base_path_;
-    absl::flat_hash_set<std::unique_ptr<Region>> regions_;
+    absl::Mutex regions_mu_;
+    absl::flat_hash_set<std::unique_ptr<Region>> regions_ ABSL_GUARDED_BY(regions_mu_);
 
     DISALLOW_COPY_AND_ASSIGN(SharedMemory);
 };

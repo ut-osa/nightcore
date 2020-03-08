@@ -15,6 +15,7 @@ SharedMemory::SharedMemory(absl::string_view base_path)
 }
 
 SharedMemory::~SharedMemory() {
+    absl::MutexLock lk(&regions_mu_);
     for (const auto& region : regions_) {
         LOG(WARNING) << "Unclosed shared memory region: " << region->path();
         PCHECK(munmap(region->base(), region->size()) == 0);
@@ -36,7 +37,10 @@ SharedMemory::Region* SharedMemory::Create(absl::string_view path, size_t size) 
     PCHECK(close(fd) == 0) << "close failed";
     memset(ptr, 0, size);
     Region* region = new Region(this, path, reinterpret_cast<char*>(ptr), size);
-    regions_.insert(std::unique_ptr<Region>(region));
+    {
+        absl::MutexLock lk(&regions_mu_);
+        regions_.insert(std::unique_ptr<Region>(region));
+    }
     return region;
 }
 
@@ -51,11 +55,15 @@ SharedMemory::Region* SharedMemory::OpenReadOnly(absl::string_view path) {
     PCHECK(ptr != MAP_FAILED) << "mmap failed";
     PCHECK(close(fd) == 0) << "close failed";
     Region* region = new Region(this, path, reinterpret_cast<char*>(ptr), size);
-    regions_.insert(std::unique_ptr<Region>(region));
+    {
+        absl::MutexLock lk(&regions_mu_);
+        regions_.insert(std::unique_ptr<Region>(region));
+    }
     return region;
 }
 
 void SharedMemory::Close(SharedMemory::Region* region, bool remove) {
+    absl::MutexLock lk(&regions_mu_);
     CHECK(regions_.contains(region));
     PCHECK(munmap(region->base(), region->size()) == 0);
     if (remove) {

@@ -5,6 +5,7 @@
 namespace faas {
 namespace utils {
 
+// AppendableBuffer is NOT thread-safe
 class AppendableBuffer {
 public:
     static constexpr int kInlineBufferSize = 48;

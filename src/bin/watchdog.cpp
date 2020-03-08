@@ -12,7 +12,7 @@ ABSL_FLAG(std::string, shared_mem_path, "/dev/shm/faas",
 ABSL_FLAG(std::string, func_config_file, "", "Path to function config file");
 ABSL_FLAG(int, func_id, -1, "Function ID");
 ABSL_FLAG(std::string, fprocess, "", "Function process");
-ABSL_FLAG(int, run_mode, 0, "Function run mode");
+ABSL_FLAG(int, run_mode, 1, "Function run mode");
 
 int main(int argc, char* argv[]) {
     faas::base::InitMain(argc, argv);

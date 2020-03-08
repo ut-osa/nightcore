@@ -103,3 +103,17 @@
         self->On##FnName(status);                                          \
     }                                                                      \
     void ClassName::On##FnName(int status)
+
+#define DECLARE_UV_EXIT_CB_FOR_CLASS(FnName)                             \
+    void On##FnName(int64_t exit_status, int term_signal);               \
+    static void FnName##Callback(uv_process_t* process,                  \
+                                 int64_t exit_status, int term_signal);
+
+#define UV_EXIT_CB_FOR_CLASS(ClassName, FnName)                               \
+    void ClassName::FnName##Callback(uv_process_t* process,                   \
+                                     int64_t exit_status, int term_signal) {  \
+        CHECK_IN_EVENT_LOOP_THREAD(process->loop);                            \
+        ClassName* self = reinterpret_cast<ClassName*>(process->data);        \
+        self->On##FnName(exit_status, term_signal);                           \
+    }                                                                         \
+    void ClassName::On##FnName(int64_t exit_status, int term_signal)
