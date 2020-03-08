@@ -313,14 +313,14 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
         } else {
             HLOG(WARNING) << "Cannot find message connection of watchdog with func_id " << func_id;
         }
-    } else if (type == MessageType::FUNC_CALL_COMPLETE) {
+    } else if (type == MessageType::FUNC_CALL_COMPLETE || type == MessageType::FUNC_CALL_FAILED) {
         uint16_t client_id = message.func_call.client_id;
         if (client_id > 0) {
             absl::MutexLock lk(&message_connection_mu_);
             if (message_connections_by_client_id_.contains(client_id)) {
                 MessageConnection* connection = message_connections_by_client_id_[client_id];
                 connection->WriteMessage({
-                    .message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_COMPLETE),
+                    .message_type = static_cast<uint16_t>(type),
                     .func_call = message.func_call
                 });
             } else {
@@ -331,7 +331,12 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
             uint64_t full_call_id = message.func_call.full_call_id;
             if (external_func_calls_.contains(full_call_id)) {
                 ExternalFuncCallContext* func_call_context = external_func_calls_[full_call_id].get();
-                func_call_context->WriteOutput(shared_memory_.get());
+                if (type == MessageType::FUNC_CALL_COMPLETE) {
+                    func_call_context->WriteOutput(shared_memory_.get());
+                } else {
+                    func_call_context->http_context()->AppendStrToResponseBody("Function call failed\n");
+                    func_call_context->http_context()->SetStatus(500);
+                }
                 func_call_context->http_context()->Finish();
                 external_func_calls_.erase(full_call_id);
             } else {
