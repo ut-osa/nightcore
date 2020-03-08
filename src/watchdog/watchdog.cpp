@@ -65,7 +65,8 @@ void Watchdog::WaitForFinish() {
 }
 
 void Watchdog::OnGatewayConnectionClose() {
-    HLOG(FATAL) << "Connection to gateway disconnected";
+    HLOG(ERROR) << "Connection to gateway disconnected";
+    ScheduleStop();
 }
 
 void Watchdog::EventLoopThreadMain() {

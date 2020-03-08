@@ -33,14 +33,11 @@ void GatewayConnection::Start(absl::string_view ipc_path,
 
 void GatewayConnection::ScheduleClose() {
     CHECK_IN_EVENT_LOOP_THREAD(uv_pipe_handle_.loop);
-    if (state_ == kClosing) {
-        HLOG(INFO) << "Already scheduled for closing";
-        return;
+    if (state_ == kHandshake || state_ == kRunning) {
+        uv_close(reinterpret_cast<uv_handle_t*>(&uv_pipe_handle_),
+                &GatewayConnection::CloseCallback);
+        state_ = kClosing;
     }
-    CHECK(state_ == kHandshake || state_ == kRunning);
-    uv_close(reinterpret_cast<uv_handle_t*>(&uv_pipe_handle_),
-             &GatewayConnection::CloseCallback);
-    state_ = kClosing;
 }
 
 void GatewayConnection::RecvHandshakeResponse() {
