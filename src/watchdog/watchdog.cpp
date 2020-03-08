@@ -18,8 +18,8 @@ Watchdog::Watchdog()
     : state_(kCreated), func_id_(-1), client_id_(0),
       event_loop_thread_("Watchdog_EventLoop",
                          std::bind(&Watchdog::EventLoopThreadMain, this)),
-      gateway_connection_(this), next_func_worker_id_(0),
-      buffer_pool_for_data_pipes_("DataPipe", kDataPipeBufferSize) {
+      gateway_connection_(this),
+      buffer_pool_for_subprocess_pipes_("SubprocessPipe", kSubprocessPipeBufferSize) {
     UV_CHECK_OK(uv_loop_init(&uv_loop_));
     uv_loop_.data = &event_loop_thread_;
     UV_CHECK_OK(uv_async_init(&uv_loop_, &stop_event_, &Watchdog::StopCallback));
@@ -99,57 +99,40 @@ void Watchdog::OnRecvMessage(const protocol::Message& message) {
             HLOG(ERROR) << "I am not running func_id " << func_call.func_id;
             return;
         }
-        auto func_worker = absl::make_unique<FuncWorker>(
-            this, next_func_worker_id_++, run_mode_, fprocess_);
-        func_worker->set_full_call_id(func_call.full_call_id);
-        func_worker->Start(&uv_loop_, &buffer_pool_for_data_pipes_);
-        utils::SharedMemory::Region* region = shared_memory_->OpenReadOnly(
-            absl::StrCat(func_call.full_call_id, ".i"));
-        FuncWorker* func_worker_ptr = func_worker.get();
-        func_worker->WriteToStdin(
-            region->base(), region->size(), [this, region, func_worker_ptr] (int status) {
-                if (status != 0) {
-                    HLOG(WARNING) << "Failed to write input data to FuncWorker";
-                } else {
-                    func_worker_ptr->StdinEof();
-                }
-                region->Close();
-            });
-        func_workers_.insert(std::move(func_worker));
+        FuncRunner* func_runner;
+        switch (run_mode_) {
+            case RunMode::SERIALIZING:
+                func_runner = new SerializingFuncRunner(
+                    this, func_call.full_call_id,
+                    &buffer_pool_for_subprocess_pipes_, shared_memory_.get());
+                break;
+            default:
+                LOG(FATAL) << "Unknown run mode";
+        }
+        func_runners_[func_call.full_call_id] = std::unique_ptr<FuncRunner>(func_runner);
+        func_runner->Start(&uv_loop_);
     } else {
         HLOG(ERROR) << "Unknown message type!";
     }
 }
 
-void Watchdog::OnFuncWorkerExit(FuncWorker* func_worker) {
+void Watchdog::OnFuncRunnerComplete(FuncRunner* func_runner, FuncRunner::Status status) {
     CHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
-    CHECK(func_workers_.contains(func_worker));
+    CHECK(func_runners_.contains(func_runner->call_id()));
     FuncCall func_call;
-    func_call.full_call_id = func_worker->full_call_id();
-    if (func_worker->exit_status() != 0) {
-        HLOG(WARNING) << "FuncWorker[" << func_worker->id() << "] exits abnormally with code "
-                      << func_worker->exit_status();
-    }
-    utils::AppendableBuffer* stdout_buffer = func_worker->StdoutBuffer();
-    if (stdout_buffer->length() == 0) {
-        HLOG(WARNING) << "FuncWorker[" << func_worker->id() << "] gives empty output";
-    }
-    if (func_worker->exit_status() != 0 || stdout_buffer->length() == 0) {
-        gateway_connection_.WriteWMessage({
-            .message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_FAILED),
-            .func_call = func_call
-        });
-    } else {
-        utils::SharedMemory::Region* region = shared_memory_->Create(
-            absl::StrCat(func_call.full_call_id, ".o"), stdout_buffer->length());
-        memcpy(region->base(), stdout_buffer->data(), stdout_buffer->length());
-        region->Close();
+    func_call.full_call_id = func_runner->call_id();
+    func_runners_.erase(func_runner->call_id());
+    if (status == FuncRunner::kSuccess) {
         gateway_connection_.WriteWMessage({
             .message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_COMPLETE),
             .func_call = func_call
         });
+    } else {
+        gateway_connection_.WriteWMessage({
+            .message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_FAILED),
+            .func_call = func_call
+        });
     }
-    func_workers_.erase(func_worker);
 }
 
 UV_ASYNC_CB_FOR_CLASS(Watchdog, Stop) {
@@ -158,7 +141,7 @@ UV_ASYNC_CB_FOR_CLASS(Watchdog, Stop) {
         return;
     }
     gateway_connection_.ScheduleClose();
-    uv_close(reinterpret_cast<uv_handle_t*>(&stop_event_), nullptr);
+    uv_close(UV_AS_HANDLE(&stop_event_), nullptr);
     state_.store(kStopping);
 }
 

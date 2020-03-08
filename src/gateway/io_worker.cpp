@@ -40,7 +40,7 @@ void IOWorker::Start(int pipe_to_server_fd) {
     UV_CHECK_OK(uv_pipe_init(&uv_loop_, &pipe_to_server_, 1));
     pipe_to_server_.data = this;
     UV_CHECK_OK(uv_pipe_open(&pipe_to_server_, pipe_to_server_fd));
-    UV_CHECK_OK(uv_read_start(reinterpret_cast<uv_stream_t*>(&pipe_to_server_),
+    UV_CHECK_OK(uv_read_start(UV_AS_STREAM(&pipe_to_server_),
                               &PipeReadBufferAllocCallback,
                               &IOWorker::NewConnectionCallback));
     event_loop_thread_.Start();
@@ -87,11 +87,11 @@ void IOWorker::OnConnectionClose(Connection* connection) {
     memcpy(buf, &connection, buf_len);
     uv_buf_t uv_buf = uv_buf_init(buf, buf_len);
     write_req->data = this;
-    UV_CHECK_OK(uv_write(write_req, reinterpret_cast<uv_stream_t*>(&pipe_to_server_),
+    UV_CHECK_OK(uv_write(write_req, UV_AS_STREAM(&pipe_to_server_),
                          &uv_buf, 1, &IOWorker::PipeWriteCallback));
     if (state_.load(std::memory_order_consume) == kStopping && connections_.empty()) {
         // We have returned all Connection objects to Server
-        uv_close(reinterpret_cast<uv_handle_t*>(&pipe_to_server_), nullptr);
+        uv_close(UV_AS_HANDLE(&pipe_to_server_), nullptr);
     }
 }
 
@@ -111,15 +111,15 @@ UV_ASYNC_CB_FOR_CLASS(IOWorker, Stop) {
         return;
     }
     HLOG(INFO) << "Start stopping process";
-    UV_CHECK_OK(uv_read_stop(reinterpret_cast<uv_stream_t*>(&pipe_to_server_)));
+    UV_CHECK_OK(uv_read_stop(UV_AS_STREAM(&pipe_to_server_)));
     if (connections_.empty()) {
-        uv_close(reinterpret_cast<uv_handle_t*>(&pipe_to_server_), nullptr);
+        uv_close(UV_AS_HANDLE(&pipe_to_server_), nullptr);
     } else {
         for (Connection* connection : connections_) {
             connection->ScheduleClose();
         }
     }
-    uv_close(reinterpret_cast<uv_handle_t*>(&stop_event_), nullptr);
+    uv_close(UV_AS_HANDLE(&stop_event_), nullptr);
     state_.store(kStopping);
 }
 
@@ -129,7 +129,7 @@ UV_READ_CB_FOR_CLASS(IOWorker, NewConnection) {
     memcpy(&connection, buf->base, sizeof(void*));
     free(buf->base);
     uv_stream_t* client = connection->InitUVHandle(&uv_loop_);
-    UV_CHECK_OK(uv_accept(reinterpret_cast<uv_stream_t*>(&pipe_to_server_), client));
+    UV_CHECK_OK(uv_accept(UV_AS_STREAM(&pipe_to_server_), client));
     connection->Start(this);
     connections_.insert(connection);
     if (state_.load(std::memory_order_consume) == kStopping) {

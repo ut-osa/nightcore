@@ -17,6 +17,7 @@
 
 #include <glog/logging.h>
 #include <absl/memory/memory.h>
+#include <absl/types/span.h>
 #include <absl/strings/string_view.h>
 #include <absl/strings/str_format.h>
 #include <absl/strings/str_cat.h>

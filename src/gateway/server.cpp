@@ -100,7 +100,7 @@ void Server::Start() {
     UV_CHECK_OK(uv_tcp_bind(&uv_tcp_handle_, (const struct sockaddr *)&bind_addr, 0));
     HLOG(INFO) << "Listen on " << address_ << ":" << port_;
     UV_CHECK_OK(uv_listen(
-        reinterpret_cast<uv_stream_t*>(&uv_tcp_handle_), listen_backlog_,
+        UV_AS_STREAM(&uv_tcp_handle_), listen_backlog_,
         &Server::HttpConnectionCallback));
     // Listen on ipc_path
     UV_CHECK_OK(uv_pipe_init(&uv_loop_, &uv_ipc_handle_, 0));
@@ -109,7 +109,7 @@ void Server::Start() {
     UV_CHECK_OK(uv_pipe_bind(&uv_ipc_handle_, ipc_path_.c_str()));
     HLOG(INFO) << "Listen on " << ipc_path_ << " for IPC with watchdog processes";
     UV_CHECK_OK(uv_listen(
-        reinterpret_cast<uv_stream_t*>(&uv_ipc_handle_), listen_backlog_,
+        UV_AS_STREAM(&uv_ipc_handle_), listen_backlog_,
         &Server::MessageConnectionCallback));
     // Start thread for running event loop
     event_loop_thread_.Start();
@@ -186,7 +186,7 @@ void Server::InitAndStartIOWorker(IOWorker* io_worker) {
     int pipe_fd_for_worker;
     pipes_to_io_worker_[io_worker] = CreatePipeToWorker(&pipe_fd_for_worker);
     uv_pipe_t* pipe_to_worker = pipes_to_io_worker_[io_worker].get();
-    UV_CHECK_OK(uv_read_start(reinterpret_cast<uv_stream_t*>(pipe_to_worker),
+    UV_CHECK_OK(uv_read_start(UV_AS_STREAM(pipe_to_worker),
                               &PipeReadBufferAllocCallback,
                               &Server::ReturnConnectionCallback));
     io_worker->Start(pipe_fd_for_worker);
@@ -213,10 +213,10 @@ void Server::TransferConnectionToWorker(IOWorker* io_worker, Connection* connect
     memcpy(buf, &connection, buf_len);
     uv_buf_t uv_buf = uv_buf_init(buf, buf_len);
     uv_pipe_t* pipe_to_worker = pipes_to_io_worker_[io_worker].get();
-    UV_CHECK_OK(uv_write2(write_req, reinterpret_cast<uv_stream_t*>(pipe_to_worker),
-                          &uv_buf, 1, reinterpret_cast<uv_stream_t*>(send_handle),
+    UV_CHECK_OK(uv_write2(write_req, UV_AS_STREAM(pipe_to_worker),
+                          &uv_buf, 1, UV_AS_STREAM(send_handle),
                           &PipeWrite2Callback));
-    uv_close(reinterpret_cast<uv_handle_t*>(send_handle), nullptr);
+    uv_close(UV_AS_HANDLE(send_handle), nullptr);
 }
 
 void Server::ReturnConnection(Connection* connection) {
@@ -402,9 +402,9 @@ UV_CONNECTION_CB_FOR_CLASS(Server, HttpConnection) {
     }
     uv_tcp_t client;
     UV_CHECK_OK(uv_tcp_init(&uv_loop_, &client));
-    UV_CHECK_OK(uv_accept(reinterpret_cast<uv_stream_t*>(&uv_tcp_handle_),
-                          reinterpret_cast<uv_stream_t*>(&client)));
-    TransferConnectionToWorker(PickHttpWorker(), connection, reinterpret_cast<uv_stream_t*>(&client));
+    UV_CHECK_OK(uv_accept(UV_AS_STREAM(&uv_tcp_handle_),
+                          UV_AS_STREAM(&client)));
+    TransferConnectionToWorker(PickHttpWorker(), connection, UV_AS_STREAM(&client));
     active_http_connections_.insert(connection);
 }
 
@@ -417,10 +417,10 @@ UV_CONNECTION_CB_FOR_CLASS(Server, MessageConnection) {
     std::unique_ptr<MessageConnection> connection = absl::make_unique<MessageConnection>(this);
     uv_pipe_t client;
     UV_CHECK_OK(uv_pipe_init(&uv_loop_, &client, 0));
-    UV_CHECK_OK(uv_accept(reinterpret_cast<uv_stream_t*>(&uv_ipc_handle_),
-                          reinterpret_cast<uv_stream_t*>(&client)));
+    UV_CHECK_OK(uv_accept(UV_AS_STREAM(&uv_ipc_handle_),
+                          UV_AS_STREAM(&client)));
     TransferConnectionToWorker(PickIpcWorker(), connection.get(),
-                               reinterpret_cast<uv_stream_t*>(&client));
+                               UV_AS_STREAM(&client));
     message_connections_.insert(std::move(connection));
 }
 
@@ -450,12 +450,12 @@ UV_ASYNC_CB_FOR_CLASS(Server, Stop) {
     for (const auto& io_worker : io_workers_) {
         io_worker->ScheduleStop();
         uv_pipe_t* pipe = pipes_to_io_worker_[io_worker.get()].get();
-        UV_CHECK_OK(uv_read_stop(reinterpret_cast<uv_stream_t*>(pipe)));
-        uv_close(reinterpret_cast<uv_handle_t*>(pipe), nullptr);
+        UV_CHECK_OK(uv_read_stop(UV_AS_STREAM(pipe)));
+        uv_close(UV_AS_HANDLE(pipe), nullptr);
     }
-    uv_close(reinterpret_cast<uv_handle_t*>(&uv_tcp_handle_), nullptr);
-    uv_close(reinterpret_cast<uv_handle_t*>(&uv_ipc_handle_), nullptr);
-    uv_close(reinterpret_cast<uv_handle_t*>(&stop_event_), nullptr);
+    uv_close(UV_AS_HANDLE(&uv_tcp_handle_), nullptr);
+    uv_close(UV_AS_HANDLE(&uv_ipc_handle_), nullptr);
+    uv_close(UV_AS_HANDLE(&stop_event_), nullptr);
     state_.store(kStopping);
 }
 

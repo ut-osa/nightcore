@@ -30,7 +30,7 @@ uv_stream_t* MessageConnection::InitUVHandle(uv_loop_t* uv_loop) {
     UV_CHECK_OK(uv_async_init(uv_loop, &write_message_event_,
                               &MessageConnection::NewMessageForWriteCallback));
     UV_CHECK_OK(uv_pipe_init(uv_loop, &uv_pipe_handle_, 0));
-    return reinterpret_cast<uv_stream_t*>(&uv_pipe_handle_);
+    return UV_AS_STREAM(&uv_pipe_handle_);
 }
 
 void MessageConnection::Start(IOWorker* io_worker) {
@@ -38,7 +38,7 @@ void MessageConnection::Start(IOWorker* io_worker) {
     CHECK_IN_EVENT_LOOP_THREAD(uv_pipe_handle_.loop);
     io_worker_ = io_worker;
     uv_pipe_handle_.data = this;
-    UV_CHECK_OK(uv_read_start(reinterpret_cast<uv_stream_t*>(&uv_pipe_handle_),
+    UV_CHECK_OK(uv_read_start(UV_AS_STREAM(&uv_pipe_handle_),
                               &MessageConnection::BufferAllocCallback,
                               &MessageConnection::ReadHandshakeCallback));
     state_.store(kHandshake);
@@ -53,18 +53,18 @@ void MessageConnection::ScheduleClose() {
     }
     CHECK(state == kHandshake || state == kRunning);
     closed_uv_handles_ = 0;
-    uv_handles_is_closing_ = 2;
-    uv_close(reinterpret_cast<uv_handle_t*>(&uv_pipe_handle_),
+    total_uv_handles_ = 2;
+    uv_close(UV_AS_HANDLE(&uv_pipe_handle_),
              &MessageConnection::CloseCallback);
     absl::MutexLock lk(&write_message_mu_);
-    uv_close(reinterpret_cast<uv_handle_t*>(&write_message_event_),
+    uv_close(UV_AS_HANDLE(&write_message_event_),
              &MessageConnection::CloseCallback);
     state_.store(kClosing);
 }
 
 void MessageConnection::RecvHandshakeMessage() {
     CHECK_IN_EVENT_LOOP_THREAD(uv_pipe_handle_.loop);
-    UV_CHECK_OK(uv_read_stop(reinterpret_cast<uv_stream_t*>(&uv_pipe_handle_)));
+    UV_CHECK_OK(uv_read_stop(UV_AS_STREAM(&uv_pipe_handle_)));
     HandshakeMessage* message = reinterpret_cast<HandshakeMessage*>(
         message_buffer_.data());
     server_->OnNewHandshake(this, *message, &handshake_response_);
@@ -81,7 +81,7 @@ void MessageConnection::RecvHandshakeMessage() {
         .base = reinterpret_cast<char*>(&handshake_response_),
         .len = sizeof(HandshakeResponse)
     };
-    UV_CHECK_OK(uv_write(write_req_pool_.Get(), reinterpret_cast<uv_stream_t*>(&uv_pipe_handle_),
+    UV_CHECK_OK(uv_write(write_req_pool_.Get(), UV_AS_STREAM(&uv_pipe_handle_),
                          &buf, 1, &MessageConnection::WriteHandshakeResponseCallback));
     state_.store(kRunning);
 }
@@ -126,7 +126,7 @@ UV_WRITE_CB_FOR_CLASS(MessageConnection, WriteHandshakeResponse) {
     }
     HLOG(INFO) << "Handshake done";
     message_buffer_.Reset();
-    UV_CHECK_OK(uv_read_start(reinterpret_cast<uv_stream_t*>(&uv_pipe_handle_),
+    UV_CHECK_OK(uv_read_start(UV_AS_STREAM(&uv_pipe_handle_),
                               &MessageConnection::BufferAllocCallback,
                               &MessageConnection::ReadMessageCallback));
 }
@@ -187,7 +187,7 @@ UV_ASYNC_CB_FOR_CLASS(MessageConnection, NewMessageForWrite) {
         buf.len = write_size;
         uv_write_t* write_req = write_req_pool_.Get();
         write_req->data = buf.base;
-        UV_CHECK_OK(uv_write(write_req, reinterpret_cast<uv_stream_t*>(&uv_pipe_handle_),
+        UV_CHECK_OK(uv_write(write_req, UV_AS_STREAM(&uv_pipe_handle_),
                              &buf, 1, &MessageConnection::WriteMessageCallback));
         write_size -= copy_size;
         ptr += copy_size;
@@ -196,8 +196,9 @@ UV_ASYNC_CB_FOR_CLASS(MessageConnection, NewMessageForWrite) {
 }
 
 UV_CLOSE_CB_FOR_CLASS(MessageConnection, Close) {
+    CHECK_LT(closed_uv_handles_, total_uv_handles_);
     closed_uv_handles_++;
-    if (closed_uv_handles_ == uv_handles_is_closing_) {
+    if (closed_uv_handles_ == total_uv_handles_) {
         state_.store(kClosed);
         io_worker_->OnConnectionClose(this);
     }

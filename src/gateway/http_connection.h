@@ -14,7 +14,7 @@ class Server;
 class IOWorker;
 class HttpAsyncRequestContext;
 
-class HttpConnection : public Connection {
+class HttpConnection final : public Connection {
 public:
     static constexpr const char* kDefaultContentType = "text/plain";
 
@@ -37,7 +37,7 @@ private:
     uv_tcp_t uv_tcp_handle_;
     State state_;
     int closed_uv_handles_;
-    int uv_handles_is_closing_;
+    int total_uv_handles_;
 
     std::string log_header_;
 

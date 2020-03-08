@@ -35,7 +35,7 @@ HttpConnection::~HttpConnection() {
 
 uv_stream_t* HttpConnection::InitUVHandle(uv_loop_t* uv_loop) {
     UV_CHECK_OK(uv_tcp_init(uv_loop, &uv_tcp_handle_));
-    return reinterpret_cast<uv_stream_t*>(&uv_tcp_handle_);
+    return UV_AS_STREAM(&uv_tcp_handle_);
 }
 
 void HttpConnection::Start(IOWorker* io_worker) {
@@ -73,10 +73,10 @@ void HttpConnection::ScheduleClose() {
         within_async_request_ = false;
     }
     closed_uv_handles_ = 0;
-    uv_handles_is_closing_ = 2;
-    uv_close(reinterpret_cast<uv_handle_t*>(&uv_tcp_handle_),
+    total_uv_handles_ = 2;
+    uv_close(UV_AS_HANDLE(&uv_tcp_handle_),
              &HttpConnection::CloseCallback);
-    uv_close(reinterpret_cast<uv_handle_t*>(&async_request_finished_event_),
+    uv_close(UV_AS_HANDLE(&async_request_finished_event_),
              &HttpConnection::CloseCallback);
     state_ = kClosing;
 }
@@ -87,7 +87,7 @@ void HttpConnection::StartRecvData() {
         HLOG(WARNING) << "HttpConnection is closing or has closed, will not enable read event";
         return;
     }
-    UV_CHECK_OK(uv_read_start(reinterpret_cast<uv_stream_t*>(&uv_tcp_handle_),
+    UV_CHECK_OK(uv_read_start(UV_AS_STREAM(&uv_tcp_handle_),
                               &HttpConnection::BufferAllocCallback,
                               &HttpConnection::RecvDataCallback));
 }
@@ -98,7 +98,7 @@ void HttpConnection::StopRecvData() {
         HLOG(WARNING) << "HttpConnection is closing or has closed, will not enable read event";
         return;
     }
-    UV_CHECK_OK(uv_read_stop(reinterpret_cast<uv_stream_t*>(&uv_tcp_handle_)));
+    UV_CHECK_OK(uv_read_stop(UV_AS_STREAM(&uv_tcp_handle_)));
 }
 
 UV_READ_CB_FOR_CLASS(HttpConnection, RecvData) {
@@ -162,8 +162,9 @@ UV_ASYNC_CB_FOR_CLASS(HttpConnection, AsyncRequestFinish) {
 
 UV_CLOSE_CB_FOR_CLASS(HttpConnection, Close) {
     CHECK(state_ == kClosing);
+    CHECK_LT(closed_uv_handles_, total_uv_handles_);
     closed_uv_handles_++;
-    if (closed_uv_handles_ == uv_handles_is_closing_) {
+    if (closed_uv_handles_ == total_uv_handles_) {
         state_ = kClosed;
         IOWorker* io_worker = io_worker_;
         io_worker_ = nullptr;
@@ -339,7 +340,7 @@ void HttpConnection::SendHttpResponse() {
         { .base = response_header_buffer_.data(), .len = response_header_buffer_.length() },
         { .base = response_body_buffer_.data(), .len = response_body_buffer_.length() }
     };
-    UV_CHECK_OK(uv_write(&response_write_req_, reinterpret_cast<uv_stream_t*>(&uv_tcp_handle_),
+    UV_CHECK_OK(uv_write(&response_write_req_, UV_AS_STREAM(&uv_tcp_handle_),
                             bufs, 2, &HttpConnection::DataWrittenCallback));
 }
 

@@ -55,6 +55,10 @@ public:
 
     void Reset() { pos_ = 0; }
 
+    absl::Span<const char> to_span() const {
+        return absl::Span<const char>(buf_, pos_);
+    }
+
     const char* data() const { return buf_; }
     char* data() { return buf_; }
     size_t length() const { return pos_; }

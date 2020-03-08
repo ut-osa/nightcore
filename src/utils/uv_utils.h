@@ -11,6 +11,9 @@
                                 << uv_strerror(ret);     \
     } while (0)
 
+#define UV_AS_HANDLE(uv_ptr) reinterpret_cast<uv_handle_t*>(uv_ptr)
+#define UV_AS_STREAM(uv_ptr) reinterpret_cast<uv_stream_t*>(uv_ptr)
+
 // Assume loop->data is the event loop thread
 #define CHECK_IN_EVENT_LOOP_THREAD(loop)                    \
     CHECK_EQ(base::Thread::current(),                       \

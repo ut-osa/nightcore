@@ -13,7 +13,7 @@ namespace gateway {
 
 class Server;
 
-class MessageConnection : public Connection {
+class MessageConnection final : public Connection {
 public:
     explicit MessageConnection(Server* server);
     ~MessageConnection();
@@ -40,7 +40,7 @@ private:
     uv_pipe_t uv_pipe_handle_;
     uv_async_t write_message_event_;
     int closed_uv_handles_;
-    int uv_handles_is_closing_;
+    int total_uv_handles_;
 
     std::string log_header_;
 

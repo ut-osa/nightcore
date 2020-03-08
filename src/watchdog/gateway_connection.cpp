@@ -34,20 +34,20 @@ void GatewayConnection::Start(absl::string_view ipc_path,
 void GatewayConnection::ScheduleClose() {
     CHECK_IN_EVENT_LOOP_THREAD(uv_pipe_handle_.loop);
     if (state_ == kHandshake || state_ == kRunning) {
-        uv_close(reinterpret_cast<uv_handle_t*>(&uv_pipe_handle_),
+        uv_close(UV_AS_HANDLE(&uv_pipe_handle_),
                 &GatewayConnection::CloseCallback);
         state_ = kClosing;
     }
 }
 
 void GatewayConnection::RecvHandshakeResponse() {
-    UV_CHECK_OK(uv_read_stop(reinterpret_cast<uv_stream_t*>(&uv_pipe_handle_)));
+    UV_CHECK_OK(uv_read_stop(UV_AS_STREAM(&uv_pipe_handle_)));
     HandshakeResponse* response = reinterpret_cast<HandshakeResponse*>(
         message_buffer_.data());
     if (watchdog_->OnRecvHandshakeResponse(*response)) {
         HLOG(INFO) << "Handshake done";
         message_buffer_.Reset();
-        UV_CHECK_OK(uv_read_start(reinterpret_cast<uv_stream_t*>(&uv_pipe_handle_),
+        UV_CHECK_OK(uv_read_start(UV_AS_STREAM(&uv_pipe_handle_),
                                  &GatewayConnection::BufferAllocCallback,
                                  &GatewayConnection::ReadMessageCallback));
         state_ = kRunning;
@@ -63,7 +63,7 @@ void GatewayConnection::WriteWMessage(const Message& message) {
     buf.len = sizeof(Message);
     uv_write_t* write_req = write_req_pool_.Get();
     write_req->data = buf.base;
-    UV_CHECK_OK(uv_write(write_req, reinterpret_cast<uv_stream_t*>(&uv_pipe_handle_),
+    UV_CHECK_OK(uv_write(write_req, UV_AS_STREAM(&uv_pipe_handle_),
                          &buf, 1, &GatewayConnection::WriteMessageCallback));
 }
 
@@ -79,7 +79,7 @@ UV_CONNECT_CB_FOR_CLASS(GatewayConnection, Connect) {
         .base = reinterpret_cast<char*>(&handshake_message_),
         .len = sizeof(HandshakeMessage)
     };
-    UV_CHECK_OK(uv_write(write_req_pool_.Get(), reinterpret_cast<uv_stream_t*>(&uv_pipe_handle_),
+    UV_CHECK_OK(uv_write(write_req_pool_.Get(), UV_AS_STREAM(&uv_pipe_handle_),
                          &buf, 1, &GatewayConnection::WriteHandshakeCallback));
 }
 
@@ -112,7 +112,7 @@ UV_WRITE_CB_FOR_CLASS(GatewayConnection, WriteHandshake) {
         ScheduleClose();
         return;
     }
-    UV_CHECK_OK(uv_read_start(reinterpret_cast<uv_stream_t*>(&uv_pipe_handle_),
+    UV_CHECK_OK(uv_read_start(UV_AS_STREAM(&uv_pipe_handle_),
                               &GatewayConnection::BufferAllocCallback,
                               &GatewayConnection::ReadHandshakeResponseCallback));
 }
