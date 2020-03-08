@@ -26,6 +26,12 @@ public:
     void AppendToResponseBody(absl::Span<const char> data) {
         response_body_buffer_->AppendData(data);
     }
+    // Append a null-terminated C string. Implicit conversion from
+    // `const char*` to `absl::Span<const char>` will include the last
+    // '\0' character, which we usually do not want.
+    void AppendToResponseBody(const char* str) {
+        response_body_buffer_->AppendData(str, strlen(str));
+    }
 
 private:
     absl::string_view method_;
@@ -59,7 +65,14 @@ public:
         content_type_ = std::string(content_type);
     }
     void AppendToResponseBody(absl::Span<const char> data) {
+        LOG(INFO) << data.length();
         response_body_buffer_.AppendData(data);
+    }
+    // Append a null-terminated C string. Implicit conversion from
+    // `const char*` to `absl::Span<const char>` will include the last
+    // '\0' character, which we usually do not want.
+    void AppendToResponseBody(const char* str) {
+        response_body_buffer_.AppendData(str, strlen(str));
     }
     // Handler should not use HttpAsyncRequestContext any longer after calling Finish()
     bool Finish();

@@ -51,10 +51,13 @@ void SerializingFuncRunner::OnSubprocessExit(int exit_status,
                                              absl::Span<const char> stdout,
                                              absl::Span<const char> stderr) {
     if (exit_status != 0) {
+        HLOG(WARNING) << "Subprocess exits with code " << exit_status;
+        HVLOG(1) << "Subprocess's stderr: " << absl::string_view(stderr.data(), stderr.length());
         Complete(kProcessExitAbnormally);
         return;
     }
     if (stdout.length() == 0) {
+        HLOG(WARNING) << "Subprocess produces empyt output";
         Complete(kEmptyOutput);
         return;
     }
