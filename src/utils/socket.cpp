@@ -1,0 +1,30 @@
+#include "utils/socket.h"
+
+#include <sys/socket.h>
+#include <sys/un.h>
+
+namespace faas {
+namespace utils {
+
+namespace {
+
+void FillAddressPath(struct sockaddr_un* addr, absl::string_view path) {
+    CHECK_LT(sizeof(addr->sun_path), path.length());
+    memcpy(addr->sun_path, path.data(), path.length());
+    addr->sun_path[path.length()] = '\0';
+}
+
+}
+
+int UnixDomainSocketConnect(absl::string_view path) {
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    PCHECK(fd != -1);
+    struct sockaddr_un addr;
+    addr.sun_family = AF_UNIX;
+    FillAddressPath(&addr, path);
+    PCHECK(connect(fd, (struct sockaddr*)&addr, sizeof(addr)) == 0);
+    return fd;
+}
+
+}  // namespace utils
+}  // namespace faas

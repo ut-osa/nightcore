@@ -2,8 +2,8 @@
 
 #include "base/common.h"
 #include "base/protocol.h"
-#include "utils/buffer_pool.h"
 #include "utils/uv_utils.h"
+#include "utils/buffer_pool.h"
 #include "utils/shared_memory.h"
 #include "gateway/connection.h"
 #include "gateway/io_worker.h"

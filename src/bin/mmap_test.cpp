@@ -2,7 +2,10 @@
 #include "base/common.h"
 
 #include <iostream>
+#include <sys/types.h>
+#include <sys/stat.h>
 #include <sys/mman.h>
+#include <fcntl.h>
 #include <absl/flags/flag.h>
 
 ABSL_FLAG(std::string, base_path, "/dev/shm/test", "");
