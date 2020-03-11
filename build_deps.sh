@@ -8,7 +8,7 @@ DEPS_INSTALL_PATH=$BASE_DIR/deps/out
 while [ ! $# -eq 0 ]
 do
 	case "$1" in
-		--debug | -n)
+		--debug)
       CMAKE_BUILD_TYPE="Debug"
 			;;
 	esac
@@ -20,7 +20,7 @@ mkdir -p ${DEPS_INSTALL_PATH}
 
 # Build yaml-cpp
 cd $BASE_DIR/deps/yaml-cpp && rm -rf build && mkdir -p build && cd build && \
-  cmake -DYAML_CPP_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} \
+  cmake -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DYAML_CPP_BUILD_TESTS=OFF -DCMAKE_CXX_STANDARD=11 \
         -DCMAKE_INSTALL_PREFIX=${DEPS_INSTALL_PATH} .. && \
   make -j$(nproc) install && \
   rm -rf $BASE_DIR/deps/yaml-cpp/build
