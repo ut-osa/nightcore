@@ -58,13 +58,30 @@ private:
 
     utils::AppendableBuffer func_output_buffer_;
 
+    struct FuncInvokeContext {
+        absl::Notification finished;
+        bool success;
+        utils::SharedMemory::Region* output_region;
+    };
+
+    absl::Mutex invoke_func_mu_;
+    uint32_t next_call_id_ ABSL_GUARDED_BY(invoke_func_mu_);
+    absl::flat_hash_map<uint64_t, std::unique_ptr<FuncInvokeContext>>
+        func_invoke_contexts_ ABSL_GUARDED_BY(invoke_func_mu_);
+
     void MainServingLoop();
     void GatewayIpcHandshake();
     void GatewayIpcThreadMain();
 
-    bool InvokeFunc(void* worker_handle, uint64_t call_id);
+    bool RunFuncHandler(void* worker_handle, uint64_t call_id);
+    bool InvokeFunc(int func_id, const char* input_data, size_t input_length,
+                    const char** output_data, size_t* output_length);
+
     // Assume caller_context is an instance of FuncWorker
     static void AppendOutputWrapper(void* caller_context, const char* data, size_t length);
+    static int InvokeFuncWrapper(void* caller_context, int func_id,
+                                 const char* input_data, size_t input_length,
+                                 const char** output_data, size_t* output_length);
 
     DISALLOW_COPY_AND_ASSIGN(FuncWorker);
 };

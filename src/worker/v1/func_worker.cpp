@@ -7,6 +7,7 @@
 namespace faas {
 namespace worker_v1 {
 
+using protocol::FuncCall;
 using protocol::MessageType;
 using protocol::Message;
 using protocol::Role;
@@ -17,7 +18,8 @@ using protocol::HandshakeResponse;
 FuncWorker::FuncWorker()
     : func_id_(-1), input_pipe_fd_(-1), output_pipe_fd_(-1),
       gateway_sock_fd_(-1), gateway_disconnected_(false),
-      gateway_ipc_thread_("GatewayIpc", std::bind(&FuncWorker::GatewayIpcThreadMain, this)) {}
+      gateway_ipc_thread_("GatewayIpc", std::bind(&FuncWorker::GatewayIpcThreadMain, this)),
+      next_call_id_(0) {}
 
 FuncWorker::~FuncWorker() {
     close(gateway_sock_fd_);
@@ -54,7 +56,7 @@ void FuncWorker::Serve() {
 
 void FuncWorker::MainServingLoop() {
     void* func_worker;
-    CHECK(create_func_worker_fn_(&func_worker) == 0)
+    CHECK(create_func_worker_fn_(this, &func_worker) == 0)
         << "Failed to create function worker";
 
     while (true) {
@@ -72,7 +74,7 @@ void FuncWorker::MainServingLoop() {
         if (type == MessageType::INVOKE_FUNC) {
              Message response;
              response.func_call = message.func_call;
-             bool success = InvokeFunc(func_worker, message.func_call.full_call_id);
+             bool success = RunFuncHandler(func_worker, message.func_call.full_call_id);
              if (success) {
                  response.message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_COMPLETE);
              } else {
@@ -126,16 +128,36 @@ void FuncWorker::GatewayIpcThreadMain() {
                 PLOG(FATAL) << "Failed to read from gateway socket";
             }
         }
+        MessageType type = static_cast<MessageType>(message.message_type);
+        if (type == MessageType::FUNC_CALL_COMPLETE || type == MessageType::FUNC_CALL_FAILED) {
+            uint64_t call_id = message.func_call.full_call_id;
+            {
+                absl::MutexLock lk(&invoke_func_mu_);
+                if (func_invoke_contexts_.contains(call_id)) {
+                    FuncInvokeContext* context = func_invoke_contexts_[call_id].get();
+                    if (type == MessageType::FUNC_CALL_COMPLETE) {
+                        context->success = true;
+                    } else {
+                        context->success = false;
+                    }
+                    context->finished.Notify();
+                } else {
+                    LOG(ERROR) << "Cannot find InvokeContext for call_id " << call_id;
+                }
+            }
+        } else {
+            LOG(FATAL) << "Unknown message type";
+        }
     }
 }
 
-bool FuncWorker::InvokeFunc(void* worker_handle, uint64_t call_id) {
+bool FuncWorker::RunFuncHandler(void* worker_handle, uint64_t call_id) {
     utils::SharedMemory::Region* input_region = shared_memory_->OpenReadOnly(
         absl::StrCat(call_id, ".i"));
     func_output_buffer_.Reset();
     int ret = func_call_fn_(
         worker_handle, input_region->base(), input_region->size(),
-        this, nullptr, &FuncWorker::AppendOutputWrapper);
+        &FuncWorker::InvokeFuncWrapper, &FuncWorker::AppendOutputWrapper);
     input_region->Close();
     if (ret != 0) {
         return false;
@@ -148,9 +170,51 @@ bool FuncWorker::InvokeFunc(void* worker_handle, uint64_t call_id) {
     return true;
 }
 
+bool FuncWorker::InvokeFunc(int func_id, const char* input_data, size_t input_length,
+                            const char** output_data, size_t* output_length) {
+    FuncInvokeContext* context = new FuncInvokeContext;
+    context->success = false;
+    context->output_region = nullptr;
+    FuncCall func_call;
+    func_call.func_id = static_cast<uint16_t>(func_id);
+    func_call.client_id = client_id_;
+    {
+        absl::MutexLock lk(&invoke_func_mu_);
+        func_call.call_id = next_call_id_++;
+        utils::SharedMemory::Region* input_region = shared_memory_->Create(
+            absl::StrCat(func_call.full_call_id, ".i"), input_length);
+        memcpy(input_region->base(), input_data, input_length);
+        input_region->Close();
+        Message message = {
+            .message_type = static_cast<uint16_t>(MessageType::INVOKE_FUNC),
+            .func_call = func_call
+        };
+        func_invoke_contexts_[func_call.full_call_id] = absl::WrapUnique(context);
+        PCHECK(utils::SendMessage(gateway_sock_fd_, message));
+    }
+    context->finished.WaitForNotification();
+    if (context->success) {
+        context->output_region = shared_memory_->OpenReadOnly(
+            absl::StrCat(func_call.full_call_id, ".o"));
+        *output_data = context->output_region->base();
+        *output_length = context->output_region->size();
+        return true;
+    } else {
+        return false;
+    }
+}
+
 void FuncWorker::AppendOutputWrapper(void* caller_context, const char* data, size_t length) {
     FuncWorker* self = reinterpret_cast<FuncWorker*>(caller_context);
     self->func_output_buffer_.AppendData(data, length);
+}
+
+int FuncWorker::InvokeFuncWrapper(void* caller_context, int func_id,
+                                  const char* input_data, size_t input_length,
+                                  const char** output_data, size_t* output_length) {
+    FuncWorker* self = reinterpret_cast<FuncWorker*>(caller_context);
+    bool success = self->InvokeFunc(func_id, input_data, input_length, output_data, output_length);
+    return success ? 0 : -1;
 }
 
 }  // namespace worker_v1
