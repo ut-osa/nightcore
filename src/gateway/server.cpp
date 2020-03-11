@@ -32,18 +32,18 @@ Server::Server()
       event_loop_thread_("Server_EventLoop", std::bind(&Server::EventLoopThreadMain, this)),
       next_http_connection_id_(0), next_http_worker_id_(0), next_ipc_worker_id_(0),
       next_client_id_(1), next_call_id_(0) {
-    UV_CHECK_OK(uv_loop_init(&uv_loop_));
+    UV_DCHECK_OK(uv_loop_init(&uv_loop_));
     uv_loop_.data = &event_loop_thread_;
-    UV_CHECK_OK(uv_tcp_init(&uv_loop_, &uv_tcp_handle_));
+    UV_DCHECK_OK(uv_tcp_init(&uv_loop_, &uv_tcp_handle_));
     uv_tcp_handle_.data = this;
-    UV_CHECK_OK(uv_async_init(&uv_loop_, &stop_event_, &Server::StopCallback));
+    UV_DCHECK_OK(uv_async_init(&uv_loop_, &stop_event_, &Server::StopCallback));
     stop_event_.data = this;
 }
 
 Server::~Server() {
     State state = state_.load();
-    CHECK(state == kCreated || state == kStopped);
-    UV_CHECK_OK(uv_loop_close(&uv_loop_));
+    DCHECK(state == kCreated || state == kStopped);
+    UV_DCHECK_OK(uv_loop_close(&uv_loop_));
 }
 
 void Server::RegisterInternalRequestHandlers() {
@@ -72,14 +72,14 @@ void Server::RegisterInternalRequestHandlers() {
         return func_id > 0;
     }, [this] (std::shared_ptr<HttpAsyncRequestContext> context) {
         int func_id;
-        CHECK(SimpleAtoi(absl::StripPrefix(context->path(), "/function/"), &func_id));
-        CHECK(func_id > 0);
+        DCHECK(SimpleAtoi(absl::StripPrefix(context->path(), "/function/"), &func_id));
+        DCHECK(func_id > 0);
         OnExternalFuncCall(static_cast<uint16_t>(func_id), std::move(context));
     });
 }
 
 void Server::Start() {
-    CHECK(state_.load() == kCreated);
+    DCHECK(state_.load() == kCreated);
     RegisterInternalRequestHandlers();
     // Create shared memory pool
     CHECK(!shared_mem_path_.empty());
@@ -117,10 +117,10 @@ void Server::Start() {
         UV_AS_STREAM(&uv_tcp_handle_), listen_backlog_,
         &Server::HttpConnectionCallback));
     // Listen on ipc_path
-    UV_CHECK_OK(uv_pipe_init(&uv_loop_, &uv_ipc_handle_, 0));
+    UV_DCHECK_OK(uv_pipe_init(&uv_loop_, &uv_ipc_handle_, 0));
     uv_ipc_handle_.data = this;
     if (fs_utils::Exists(ipc_path_)) {
-        fs_utils::Remove(ipc_path_);
+        PCHECK(fs_utils::Remove(ipc_path_));
     }
     UV_CHECK_OK(uv_pipe_bind(&uv_ipc_handle_, ipc_path_.c_str()));
     HLOG(INFO) << "Listen on " << ipc_path_ << " for IPC with watchdog processes";
@@ -134,26 +134,26 @@ void Server::Start() {
 
 void Server::ScheduleStop() {
     HLOG(INFO) << "Scheduled to stop";
-    UV_CHECK_OK(uv_async_send(&stop_event_));
+    UV_DCHECK_OK(uv_async_send(&stop_event_));
 }
 
 void Server::WaitForFinish() {
-    CHECK(state_.load() != kCreated);
+    DCHECK(state_.load() != kCreated);
     for (const auto& io_worker : io_workers_) {
         io_worker->WaitForFinish();
     }
     event_loop_thread_.Join();
-    CHECK(state_.load() == kStopped);
+    DCHECK(state_.load() == kStopped);
     HLOG(INFO) << "Stopped";
 }
 
 void Server::RegisterSyncRequestHandler(RequestMatcher matcher, SyncRequestHandler handler) {
-    CHECK(state_.load() == kCreated);
+    DCHECK(state_.load() == kCreated);
     request_handlers_.emplace_back(new RequestHandler(std::move(matcher), std::move(handler)));
 }
 
 void Server::RegisterAsyncRequestHandler(RequestMatcher matcher, AsyncRequestHandler handler) {
-    CHECK(state_.load() == kCreated);
+    DCHECK(state_.load() == kCreated);
     request_handlers_.emplace_back(new RequestHandler(std::move(matcher), std::move(handler)));
 }
 
@@ -238,6 +238,7 @@ void Server::ReturnConnection(Connection* connection) {
     DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
     if (connection->type() == Connection::Type::Http) {
         HttpConnection* http_connection = static_cast<HttpConnection*>(connection);
+        DCHECK(http_connections_.contains(http_connection));
         free_http_connections_.push_back(http_connection);
         active_http_connections_.erase(http_connection);
         HLOG(INFO) << "HttpConnection with ID " << http_connection->id() << " is returned, "
@@ -247,7 +248,7 @@ void Server::ReturnConnection(Connection* connection) {
         MessageConnection* message_connection = static_cast<MessageConnection*>(connection);
         {
             absl::MutexLock lk(&message_connection_mu_);
-            CHECK(message_connections_by_client_id_.contains(message_connection->client_id()));
+            DCHECK(message_connections_by_client_id_.contains(message_connection->client_id()));
             message_connections_by_client_id_.erase(message_connection->client_id());
             if (message_connection->role() == Role::WATCHDOG) {
                 uint16_t func_id = message_connection->func_id();
@@ -277,7 +278,7 @@ void Server::OnNewHandshake(MessageConnection* connection,
         message_connections_by_client_id_[client_id] = connection;
         if (static_cast<Role>(message.role) == Role::WATCHDOG) {
             if (watchdog_connections_by_func_id_.contains(message.func_id)) {
-                HLOG(WARNING) << "Watchdog for func_id " << message.func_id << " already exists";
+                HLOG(ERROR) << "Watchdog for func_id " << message.func_id << " already exists";
                 response->status = static_cast<uint16_t>(Status::WATCHDOG_EXISTS);
             } else {
                 watchdog_connections_by_func_id_[message.func_id] = connection;
@@ -337,7 +338,7 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
                 .func_call = message.func_call
             });
         } else {
-            HLOG(WARNING) << "Cannot find message connection of watchdog with func_id " << func_id;
+            HLOG(ERROR) << "Cannot find message connection of watchdog with func_id " << func_id;
         }
     } else if (type == MessageType::FUNC_CALL_COMPLETE || type == MessageType::FUNC_CALL_FAILED) {
         uint16_t client_id = message.func_call.client_id;
@@ -350,7 +351,7 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
                     .func_call = message.func_call
                 });
             } else {
-                HLOG(WARNING) << "Cannot find message connection with client_id " << client_id;
+                HLOG(ERROR) << "Cannot find message connection with client_id " << client_id;
             }
         } else {
             absl::MutexLock lk(&external_func_calls_mu_);
@@ -366,8 +367,8 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
                 func_call_context->http_context()->Finish();
                 external_func_calls_.erase(full_call_id);
             } else {
-                HLOG(WARNING) << "Cannot find external call with func_id=" << message.func_call.call_id << ", "
-                              << "call_id=" << message.func_call.call_id;
+                HLOG(ERROR) << "Cannot find external call with func_id=" << message.func_call.call_id << ", "
+                            << "call_id=" << message.func_call.call_id;
             }
         }
     } else {
@@ -422,16 +423,21 @@ UV_CONNECTION_CB_FOR_CLASS(Server, HttpConnection) {
         free_http_connections_.pop_back();
         connection->Reset(next_http_connection_id_++);
     } else {
-        http_connections_.push_back(absl::make_unique<HttpConnection>(this, next_http_connection_id_++));
-        connection = http_connections_.back().get();
+        auto new_connection = absl::make_unique<HttpConnection>(this, next_http_connection_id_++);
+        connection = new_connection.get();
+        http_connections_.insert(std::move(new_connection));
         HLOG(INFO) << "Allocate new HttpConnection object, current count is " << http_connections_.size();
     }
     uv_tcp_t* client = new uv_tcp_t;
-    UV_CHECK_OK(uv_tcp_init(&uv_loop_, client));
-    UV_CHECK_OK(uv_accept(UV_AS_STREAM(&uv_tcp_handle_),
-                          UV_AS_STREAM(client)));
-    TransferConnectionToWorker(PickHttpWorker(), connection, UV_AS_STREAM(client));
-    active_http_connections_.insert(connection);
+    UV_DCHECK_OK(uv_tcp_init(&uv_loop_, client));
+    if (uv_accept(UV_AS_STREAM(&uv_tcp_handle_), UV_AS_STREAM(client)) == 0) {
+        TransferConnectionToWorker(PickHttpWorker(), connection, UV_AS_STREAM(client));
+        active_http_connections_.insert(connection);
+    } else {
+        LOG(ERROR) << "Failed to accept new HTTP connection";
+        delete client;
+        free_http_connections_.push_back(connection);
+    }
 }
 
 UV_CONNECTION_CB_FOR_CLASS(Server, MessageConnection) {
@@ -443,10 +449,14 @@ UV_CONNECTION_CB_FOR_CLASS(Server, MessageConnection) {
     std::unique_ptr<MessageConnection> connection = absl::make_unique<MessageConnection>(this);
     uv_pipe_t* client = new uv_pipe_t;
     UV_CHECK_OK(uv_pipe_init(&uv_loop_, client, 0));
-    UV_CHECK_OK(uv_accept(UV_AS_STREAM(&uv_ipc_handle_), UV_AS_STREAM(client)));
-    TransferConnectionToWorker(PickIpcWorker(), connection.get(),
-                               UV_AS_STREAM(client));
-    message_connections_.insert(std::move(connection));
+    if (uv_accept(UV_AS_STREAM(&uv_ipc_handle_), UV_AS_STREAM(client)) == 0) {
+        TransferConnectionToWorker(PickIpcWorker(), connection.get(),
+                                   UV_AS_STREAM(client));
+        message_connections_.insert(std::move(connection));
+    } else {
+        LOG(ERROR) << "Failed to accept new message connection";
+        delete client;
+    }
 }
 
 UV_READ_CB_FOR_CLASS(Server, ReturnConnection) {
