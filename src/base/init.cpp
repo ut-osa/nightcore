@@ -1,12 +1,9 @@
 #include "base/init.h"
 
 #include <absl/flags/parse.h>
-#include <absl/flags/flag.h>
 #include <absl/debugging/symbolize.h>
 #include <absl/debugging/failure_signal_handler.h>
 #include <glog/logging.h>
-
-ABSL_FLAG(int, glog_v, 0, "--v for glog library");
 
 namespace faas {
 namespace base {
@@ -18,10 +15,7 @@ void InitMain(int argc, char* argv[],
     absl::InstallFailureSignalHandler(options);
 
     std::vector<char*> unparsed_args = absl::ParseCommandLine(argc, argv);
-
-    FLAGS_logtostderr = true;
-    FLAGS_v = absl::GetFlag(FLAGS_glog_v);
-    google::InitGoogleLogging(argv[0]);
+    InitGoogleLogging(argv[0]);
 
     if (positional_args == nullptr && unparsed_args.size() > 1) {
         LOG(FATAL) << "This program does not accept positional arguments";
