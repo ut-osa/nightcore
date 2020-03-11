@@ -4,7 +4,7 @@
 #include "utils/shared_memory.h"
 #include "utils/dynamic_library.h"
 #include "utils/appendable_buffer.h"
-#include "faas/sync_interface.h"
+#include "faas/worker_v1_interface.h"
 
 namespace faas {
 namespace worker_v1 {

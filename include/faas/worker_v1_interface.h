@@ -1,5 +1,5 @@
-#ifndef _FAAS_SYNC_INTERFACE_H_
-#define _FAAS_SYNC_INTERFACE_H_
+#ifndef _FAAS_WORKER_V1_INTERFACE_H_
+#define _FAAS_WORKER_V1_INTERFACE_H_
 
 #include <stddef.h>
 
@@ -67,4 +67,4 @@ typedef decltype(faas_func_call)*            faas_func_call_fn_t;
 
 #undef API_EXPORT
 
-#endif  // _FAAS_SYNC_INTERFACE_H_
+#endif  // _FAAS_WORKER_V1_INTERFACE_H_
