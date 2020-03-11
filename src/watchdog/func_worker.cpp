@@ -47,7 +47,7 @@ void FuncWorker::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool) 
 
 void FuncWorker::ScheduleClose() {
     CHECK(state_ != kCreated);
-    CHECK_IN_EVENT_LOOP_THREAD(uv_loop_);
+    DCHECK_IN_EVENT_LOOP_THREAD(uv_loop_);
     if (state_ == kClosed || state_ == kClosing) {
         HLOG(WARNING) << "Already scheduled to close or has closed";
         return;
@@ -58,7 +58,7 @@ void FuncWorker::ScheduleClose() {
 
 bool FuncWorker::ScheduleFuncCall(WorkerFuncRunner* func_runner, uint64_t call_id) {
     CHECK(state_ != kCreated);
-    CHECK_IN_EVENT_LOOP_THREAD(uv_loop_);
+    DCHECK_IN_EVENT_LOOP_THREAD(uv_loop_);
     if (state_ == kClosed || state_ == kClosing) {
         HLOG(WARNING) << "This FuncWorker is scheduled to close or already closed, "
                       << "cannot schedule function call further";
@@ -76,7 +76,7 @@ bool FuncWorker::ScheduleFuncCall(WorkerFuncRunner* func_runner, uint64_t call_i
 void FuncWorker::OnSubprocessExit(int exit_status, absl::Span<const char> stdout,
                                   absl::Span<const char> stderr) {
     CHECK(state_ != kCreated);
-    CHECK_IN_EVENT_LOOP_THREAD(uv_loop_);
+    DCHECK_IN_EVENT_LOOP_THREAD(uv_loop_);
     if (exit_status != 0) {
         HLOG(WARNING) << "Subprocess exits abnormally with code: " << exit_status;
     }
@@ -93,7 +93,7 @@ void FuncWorker::OnSubprocessExit(int exit_status, absl::Span<const char> stdout
 }
 
 void FuncWorker::OnRecvMessage(const Message& message) {
-    CHECK_IN_EVENT_LOOP_THREAD(uv_loop_);
+    DCHECK_IN_EVENT_LOOP_THREAD(uv_loop_);
     MessageType type = static_cast<MessageType>(message.message_type);
     uint64_t call_id = message.func_call.full_call_id;
     if (type == MessageType::FUNC_CALL_COMPLETE || type == MessageType::FUNC_CALL_FAILED) {
@@ -123,7 +123,7 @@ void FuncWorker::OnRecvMessage(const Message& message) {
 }
 
 void FuncWorker::DispatchFuncCall(uint64_t call_id) {
-    CHECK_IN_EVENT_LOOP_THREAD(uv_loop_);
+    DCHECK_IN_EVENT_LOOP_THREAD(uv_loop_);
     if (state_ == kClosed || state_ == kClosing) {
         HLOG(WARNING) << "This FuncWorker is scheduled to close or already closed, "
                       << "cannot dispatch function call further";

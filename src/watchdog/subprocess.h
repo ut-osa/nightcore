@@ -8,7 +8,7 @@
 namespace faas {
 namespace watchdog {
 
-class Subprocess {
+class Subprocess : public uv::Base {
 public:
     static constexpr size_t kDefaultMaxStdoutSize = 16 * 1024 * 1024;  // 16MB‬
     static constexpr size_t kDefaultMaxStderrSize = 1 * 1024 * 1024;   // 1MB

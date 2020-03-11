@@ -93,7 +93,7 @@ bool Subprocess::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool,
 
 void Subprocess::Kill(int signum) {
     CHECK(state_ != kCreated);
-    CHECK_IN_EVENT_LOOP_THREAD(uv_process_handle_.loop);
+    DCHECK_IN_EVENT_LOOP_THREAD(uv_process_handle_.loop);
     if (state_ == kRunning) {
         UV_CHECK_OK(uv_process_kill(&uv_process_handle_, signum));
     } else {
@@ -110,7 +110,7 @@ uv_pipe_t* Subprocess::GetPipe(int fd) {
 
 void Subprocess::ClosePipe(int fd) {
     CHECK(state_ != kCreated);
-    CHECK_IN_EVENT_LOOP_THREAD(uv_process_handle_.loop);
+    DCHECK_IN_EVENT_LOOP_THREAD(uv_process_handle_.loop);
     if (pipe_closed_[fd]) {
         return;
     }

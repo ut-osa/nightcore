@@ -35,7 +35,7 @@ uv_stream_t* MessageConnection::InitUVHandle(uv_loop_t* uv_loop) {
 
 void MessageConnection::Start(IOWorker* io_worker) {
     CHECK(state_.load() == kCreated);
-    CHECK_IN_EVENT_LOOP_THREAD(uv_pipe_handle_.loop);
+    DCHECK_IN_EVENT_LOOP_THREAD(uv_pipe_handle_.loop);
     io_worker_ = io_worker;
     uv_pipe_handle_.data = this;
     UV_CHECK_OK(uv_read_start(UV_AS_STREAM(&uv_pipe_handle_),
@@ -45,7 +45,7 @@ void MessageConnection::Start(IOWorker* io_worker) {
 }
 
 void MessageConnection::ScheduleClose() {
-    CHECK_IN_EVENT_LOOP_THREAD(uv_pipe_handle_.loop);
+    DCHECK_IN_EVENT_LOOP_THREAD(uv_pipe_handle_.loop);
     State state = state_.load();
     if (state == kClosing) {
         HLOG(INFO) << "Already scheduled for closing";
@@ -63,7 +63,7 @@ void MessageConnection::ScheduleClose() {
 }
 
 void MessageConnection::RecvHandshakeMessage() {
-    CHECK_IN_EVENT_LOOP_THREAD(uv_pipe_handle_.loop);
+    DCHECK_IN_EVENT_LOOP_THREAD(uv_pipe_handle_.loop);
     UV_CHECK_OK(uv_read_stop(UV_AS_STREAM(&uv_pipe_handle_)));
     HandshakeMessage* message = reinterpret_cast<HandshakeMessage*>(
         message_buffer_.data());

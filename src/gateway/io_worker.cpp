@@ -60,27 +60,27 @@ void IOWorker::WaitForFinish() {
 }
 
 void IOWorker::NewReadBuffer(size_t suggested_size, uv_buf_t* buf) {
-    CHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
+    DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
     read_buffer_pool_.Get(buf);
 }
 
 void IOWorker::ReturnReadBuffer(const uv_buf_t* buf) {
-    CHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
+    DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
     read_buffer_pool_.Return(buf);
 }
 
 void IOWorker::NewWriteBuffer(uv_buf_t* buf) {
-    CHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
+    DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
     write_buffer_pool_.Get(buf);
 }
 
 void IOWorker::ReturnWriteBuffer(char* buf) {
-    CHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
+    DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
     write_buffer_pool_.Return(buf);
 }
 
 void IOWorker::OnConnectionClose(Connection* connection) {
-    CHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
+    DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
     CHECK(pipe_to_server_.loop == &uv_loop_);
     CHECK(connections_.contains(connection));
     HLOG(INFO) << "An associated connection closed";

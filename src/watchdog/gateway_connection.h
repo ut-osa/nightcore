@@ -12,7 +12,7 @@ namespace watchdog {
 
 class Watchdog;
 
-class GatewayConnection {
+class GatewayConnection : public uv::Base {
 public:
     static constexpr size_t kBufferSize = 256;
 

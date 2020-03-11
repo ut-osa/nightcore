@@ -13,7 +13,7 @@
 namespace faas {
 namespace watchdog {
 
-class Watchdog {
+class Watchdog : public uv::Base {
 public:
     static constexpr size_t kSubprocessPipeBufferSizeForSerializingMode = 65536;
     static constexpr size_t kSubprocessPipeBufferSizeForFuncWorkerMode = 256;

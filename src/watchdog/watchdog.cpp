@@ -99,7 +99,7 @@ void Watchdog::EventLoopThreadMain() {
 }
 
 bool Watchdog::OnRecvHandshakeResponse(const HandshakeResponse& response) {
-    CHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
+    DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
     if (static_cast<Status>(response.status) != Status::OK) {
         HLOG(WARNING) << "Handshake failed, will close the connection";
         gateway_connection_.ScheduleClose();
@@ -110,7 +110,7 @@ bool Watchdog::OnRecvHandshakeResponse(const HandshakeResponse& response) {
 }
 
 void Watchdog::OnRecvMessage(const protocol::Message& message) {
-    CHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
+    DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
     MessageType type = static_cast<MessageType>(message.message_type);
     if (type == MessageType::INVOKE_FUNC) {
         FuncCall func_call = message.func_call;
@@ -140,7 +140,7 @@ void Watchdog::OnRecvMessage(const protocol::Message& message) {
 }
 
 void Watchdog::OnFuncRunnerComplete(FuncRunner* func_runner, FuncRunner::Status status) {
-    CHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
+    DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
     CHECK(func_runners_.contains(func_runner->call_id()));
     FuncCall func_call;
     func_call.full_call_id = func_runner->call_id();

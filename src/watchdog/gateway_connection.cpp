@@ -32,7 +32,7 @@ void GatewayConnection::Start(absl::string_view ipc_path,
 }
 
 void GatewayConnection::ScheduleClose() {
-    CHECK_IN_EVENT_LOOP_THREAD(uv_pipe_handle_.loop);
+    DCHECK_IN_EVENT_LOOP_THREAD(uv_pipe_handle_.loop);
     if (state_ == kHandshake || state_ == kRunning) {
         uv_close(UV_AS_HANDLE(&uv_pipe_handle_),
                 &GatewayConnection::CloseCallback);
@@ -55,7 +55,7 @@ void GatewayConnection::RecvHandshakeResponse() {
 }
 
 void GatewayConnection::WriteWMessage(const Message& message) {
-    CHECK_IN_EVENT_LOOP_THREAD(uv_pipe_handle_.loop);
+    DCHECK_IN_EVENT_LOOP_THREAD(uv_pipe_handle_.loop);
     uv_buf_t buf;
     buffer_pool_.Get(&buf);
     CHECK_LE(sizeof(Message), buf.len);

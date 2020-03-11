@@ -221,7 +221,7 @@ std::unique_ptr<uv_pipe_t> Server::CreatePipeToWorker(int* pipe_fd_for_worker) {
 
 void Server::TransferConnectionToWorker(IOWorker* io_worker, Connection* connection,
                                         uv_stream_t* send_handle) {
-    CHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
+    DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
     uv_write_t* write_req = connection->uv_write_req_for_transfer();
     size_t buf_len = sizeof(void*);
     char* buf = connection->pipe_write_buf_for_transfer();
@@ -235,7 +235,7 @@ void Server::TransferConnectionToWorker(IOWorker* io_worker, Connection* connect
 }
 
 void Server::ReturnConnection(Connection* connection) {
-    CHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
+    DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
     if (connection->type() == Connection::Type::Http) {
         HttpConnection* http_connection = static_cast<HttpConnection*>(connection);
         free_http_connections_.push_back(http_connection);

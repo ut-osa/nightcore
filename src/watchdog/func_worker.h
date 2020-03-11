@@ -11,7 +11,7 @@ namespace watchdog {
 class Watchdog;
 class WorkerFuncRunner;
 
-class FuncWorker {
+class FuncWorker : public uv::Base {
 public:
     FuncWorker(Watchdog* watchdog, absl::string_view fprocess, int worker_id);
     ~FuncWorker();

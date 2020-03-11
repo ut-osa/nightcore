@@ -14,7 +14,7 @@
 namespace faas {
 namespace gateway {
 
-class Server {
+class Server : public uv::Base {
 public:
     static constexpr int kDefaultListenBackLog = 32;
     static constexpr int kDefaultNumHttpWorkers = 1;

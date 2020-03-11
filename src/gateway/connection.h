@@ -8,7 +8,7 @@ namespace gateway {
 class Server;
 class IOWorker;
 
-class Connection {
+class Connection : public uv::Base {
 public:
     enum class Type { Http, Message };
 

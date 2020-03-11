@@ -11,7 +11,7 @@ namespace watchdog {
 class Watchdog;
 class FuncWorker;
 
-class FuncRunner {
+class FuncRunner : public uv::Base {
 public:
     FuncRunner(Watchdog* watchdog, uint64_t call_id)
         : state_(kCreated), watchdog_(watchdog), call_id_(call_id),

@@ -42,7 +42,7 @@ uv_stream_t* HttpConnection::InitUVHandle(uv_loop_t* uv_loop) {
 
 void HttpConnection::Start(IOWorker* io_worker) {
     CHECK(state_ == kCreated);
-    CHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
+    DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
     io_worker_ = io_worker;
     uv_tcp_handle_.data = this;
     response_write_req_.data = this;
@@ -63,7 +63,7 @@ void HttpConnection::Reset(int connection_id) {
 }
 
 void HttpConnection::ScheduleClose() {
-    CHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
+    DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
     if (state_ == kClosing) {
         HLOG(INFO) << "Already scheduled for closing";
         return;
@@ -84,7 +84,7 @@ void HttpConnection::ScheduleClose() {
 }
 
 void HttpConnection::StartRecvData() {
-    CHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
+    DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
     if (state_ != kRunning) {
         HLOG(WARNING) << "HttpConnection is closing or has closed, will not enable read event";
         return;
@@ -95,7 +95,7 @@ void HttpConnection::StartRecvData() {
 }
 
 void HttpConnection::StopRecvData() {
-    CHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
+    DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
     if (state_ != kRunning) {
         HLOG(WARNING) << "HttpConnection is closing or has closed, will not enable read event";
         return;
@@ -260,7 +260,7 @@ void HttpConnection::ResetHttpParser() {
 }
 
 void HttpConnection::OnNewHttpRequest(absl::string_view method, absl::string_view path) {
-    CHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
+    DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
     HVLOG(1) << "New HTTP request: " << method << " " << path;
     response_status_ = 200;
     response_content_type_ = kDefaultContentType;
@@ -307,7 +307,7 @@ void HttpConnection::AsyncRequestFinish(HttpAsyncRequestContext* context) {
 }
 
 void HttpConnection::SendHttpResponse() {
-    CHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
+    DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
     HVLOG(1) << "Send HTTP response with status " << response_status_;
     static const char* CRLF = "\r\n";
     std::ostringstream header;

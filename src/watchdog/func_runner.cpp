@@ -29,7 +29,7 @@ SerializingFuncRunner::~SerializingFuncRunner() {
 }
 
 void SerializingFuncRunner::Start(uv_loop_t* uv_loop) {
-    CHECK_IN_EVENT_LOOP_THREAD(uv_loop);
+    DCHECK_IN_EVENT_LOOP_THREAD(uv_loop);
     if (!subprocess_.Start(uv_loop, read_buffer_pool_,
                            absl::bind_front(&SerializingFuncRunner::OnSubprocessExit, this))) {
         HLOG(ERROR) << "Failed to start fprocess";

@@ -10,7 +10,7 @@ namespace gateway {
 
 class Server;
 
-class IOWorker {
+class IOWorker : public uv::Base {
 public:
     static constexpr size_t kDefaultBufferSize = 4096;
 
