@@ -1,7 +1,7 @@
 #pragma once
 
 #include "base/common.h"
-#include "base/protocol.h"
+#include "common/protocol.h"
 #include "utils/uv_utils.h"
 #include "utils/appendable_buffer.h"
 #include "utils/buffer_pool.h"

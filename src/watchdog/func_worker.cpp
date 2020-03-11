@@ -35,8 +35,8 @@ void FuncWorker::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool) 
     subprocess_.AddEnvVariable("INPUT_PIPE_FD", input_pipe_fd_);
     subprocess_.AddEnvVariable("OUTPUT_PIPE_FD", output_pipe_fd_);
     subprocess_.AddEnvVariable("SHARED_MEMORY_PATH", watchdog_->shared_mem_path());
-    DCHECK(subprocess_.Start(uv_loop, read_buffer_pool,
-                             absl::bind_front(&FuncWorker::OnSubprocessExit, this)))
+    CHECK(subprocess_.Start(uv_loop, read_buffer_pool,
+                            absl::bind_front(&FuncWorker::OnSubprocessExit, this)))
         << "Failed to start fprocess";
     uv_input_pipe_handle_ = subprocess_.GetPipe(input_pipe_fd_);
     uv_input_pipe_handle_->data = this;

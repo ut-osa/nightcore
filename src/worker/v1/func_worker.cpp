@@ -1,6 +1,6 @@
 #include "worker/v1/func_worker.h"
 
-#include "base/protocol.h"
+#include "common/protocol.h"
 #include "utils/io.h"
 #include "utils/socket.h"
 

@@ -72,7 +72,7 @@ void Server::RegisterInternalRequestHandlers() {
         return func_id > 0;
     }, [this] (std::shared_ptr<HttpAsyncRequestContext> context) {
         int func_id;
-        DCHECK(SimpleAtoi(absl::StripPrefix(context->path(), "/function/"), &func_id));
+        CHECK(SimpleAtoi(absl::StripPrefix(context->path(), "/function/"), &func_id));
         DCHECK(func_id > 0);
         OnExternalFuncCall(static_cast<uint16_t>(func_id), std::move(context));
     });
@@ -203,14 +203,14 @@ void Server::InitAndStartIOWorker(IOWorker* io_worker) {
     pipes_to_io_worker_[io_worker] = CreatePipeToWorker(&pipe_fd_for_worker);
     uv_pipe_t* pipe_to_worker = pipes_to_io_worker_[io_worker].get();
     UV_DCHECK_OK(uv_read_start(UV_AS_STREAM(pipe_to_worker),
-                              &PipeReadBufferAllocCallback,
-                              &Server::ReturnConnectionCallback));
+                               &PipeReadBufferAllocCallback,
+                               &Server::ReturnConnectionCallback));
     io_worker->Start(pipe_fd_for_worker);
 }
 
 std::unique_ptr<uv_pipe_t> Server::CreatePipeToWorker(int* pipe_fd_for_worker) {
-    int pipe_fds[2];
-    DCHECK_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, pipe_fds), 0);
+    int pipe_fds[2] = { -1, -1 };
+    CHECK_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, pipe_fds), 0);
     std::unique_ptr<uv_pipe_t> pipe_to_worker = absl::make_unique<uv_pipe_t>();
     UV_DCHECK_OK(uv_pipe_init(&uv_loop_, pipe_to_worker.get(), 1));
     pipe_to_worker->data = this;
@@ -270,6 +270,7 @@ void Server::ReturnConnection(Connection* connection) {
 
 void Server::OnNewHandshake(MessageConnection* connection,
                             const HandshakeMessage& message, HandshakeResponse* response) {
+    HLOG(INFO) << "Receive new handshake message from message connection";
     uint16_t client_id = next_client_id_.fetch_add(1);
     response->status = static_cast<uint16_t>(Status::OK);
     response->client_id = client_id;
