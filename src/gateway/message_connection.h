@@ -64,5 +64,5 @@ private:
     DISALLOW_COPY_AND_ASSIGN(MessageConnection);
 };
 
-}
-}
+}  // namespace gateway
+}  // namespace faas

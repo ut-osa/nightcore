@@ -12,5 +12,5 @@ bool MakeDirectory(absl::string_view path, mode_t mode = 0777);
 bool Remove(absl::string_view path);
 bool RemoveDirectoryRecursively(absl::string_view path);
 
-}  // namespace utils
+}  // namespace fs_utils
 }  // namespace faas

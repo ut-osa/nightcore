@@ -50,5 +50,5 @@ bool RemoveDirectoryRecursively(absl::string_view path) {
                 FTW_DEPTH|FTW_MOUNT|FTW_PHYS) == 0;
 }
 
-}  // namespace utils
+}  // namespace fs_utils
 }  // namespace faas

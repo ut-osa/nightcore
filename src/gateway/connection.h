@@ -38,5 +38,5 @@ private:
     DISALLOW_COPY_AND_ASSIGN(Connection);
 };
 
-}
-}
+}  // namespace gateway
+}  // namespace faas
