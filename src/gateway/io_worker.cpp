@@ -140,7 +140,6 @@ UV_READ_CB_FOR_CLASS(IOWorker, NewConnection) {
 
 UV_WRITE_CB_FOR_CLASS(IOWorker, PipeWrite) {
     CHECK(status == 0) << "Failed to write to pipe: " << uv_strerror(status);
-    HLOG(INFO) << "Pipe write successful";
     Connection* connection = reinterpret_cast<Connection*>(req->data);
     CHECK(connections_.contains(connection));
     connections_.erase(connection);

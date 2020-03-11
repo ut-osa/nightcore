@@ -133,8 +133,12 @@ UV_WRITE_CB_FOR_CLASS(MessageConnection, WriteHandshakeResponse) {
 
 UV_READ_CB_FOR_CLASS(MessageConnection, ReadMessage) {
     if (nread < 0) {
-        HLOG(WARNING) << "Read error, will close this connection: "
-                      << uv_strerror(nread);
+        if (nread == UV_EOF) {
+            HLOG(INFO) << "Connection closed remotely";
+        } else {
+            HLOG(WARNING) << "Read error, will close this connection: "
+                        << uv_strerror(nread);
+        }
         ScheduleClose();
     } else if (nread > 0) {
         utils::ReadMessages<Message>(

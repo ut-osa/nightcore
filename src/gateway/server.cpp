@@ -240,8 +240,14 @@ void Server::ReturnConnection(Connection* connection) {
             CHECK(message_connections_by_client_id_.contains(message_connection->client_id()));
             message_connections_by_client_id_.erase(message_connection->client_id());
             if (message_connection->role() == Role::WATCHDOG) {
-                CHECK(watchdog_connections_by_func_id_.contains(message_connection->func_id()));
-                watchdog_connections_by_func_id_.erase(message_connection->func_id());
+                uint16_t func_id = message_connection->func_id();
+                if (watchdog_connections_by_func_id_.contains(func_id)) {
+                    if (watchdog_connections_by_func_id_[func_id] == connection) {
+                        watchdog_connections_by_func_id_.erase(func_id);
+                    }
+                } else {
+                    HLOG(WARNING) << "Cannot find watchdog connection of func_id " << func_id;
+                }
             }
             message_connections_.erase(message_connection);
         }
@@ -260,7 +266,12 @@ void Server::OnNewHandshake(MessageConnection* connection,
         absl::MutexLock lk(&message_connection_mu_);
         message_connections_by_client_id_[client_id] = connection;
         if (static_cast<Role>(message.role) == Role::WATCHDOG) {
-            watchdog_connections_by_func_id_[message.func_id] = connection;
+            if (watchdog_connections_by_func_id_.contains(message.func_id)) {
+                HLOG(WARNING) << "Watchdog for func_id " << message.func_id << " already exists";
+                response->status = static_cast<uint16_t>(Status::WATCHDOG_EXISTS);
+            } else {
+                watchdog_connections_by_func_id_[message.func_id] = connection;
+            }
         }
     }
 }

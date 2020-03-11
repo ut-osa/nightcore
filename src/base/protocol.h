@@ -7,7 +7,8 @@ namespace protocol {
 
 enum class Status {
     INVALID = 0,
-    OK = 1
+    OK = 1,
+    WATCHDOG_EXISTS = 2
 };
 
 enum class Role {
