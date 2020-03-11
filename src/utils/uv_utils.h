@@ -74,7 +74,7 @@ private:
     void ClassName::FnName##Callback(uv_stream_t* stream, ssize_t nread, \
                                      const uv_buf_t* buf) {              \
         DCHECK_IN_EVENT_LOOP_THREAD(stream->loop);                       \
-        UV_DCHECK_INSTANCE_OF(stream->data, ClassName);                     \
+        UV_DCHECK_INSTANCE_OF(stream->data, ClassName);                  \
         ClassName* self = reinterpret_cast<ClassName*>(stream->data);    \
         self->On##FnName(nread, buf);                                    \
     }                                                                    \
@@ -87,7 +87,7 @@ private:
 #define UV_WRITE_CB_FOR_CLASS(ClassName, FnName)                            \
     void ClassName::FnName##Callback(uv_write_t* req, int status) {         \
         DCHECK_IN_EVENT_LOOP_THREAD(req->handle->loop);                     \
-        UV_DCHECK_INSTANCE_OF(req->handle->data, ClassName);                   \
+        UV_DCHECK_INSTANCE_OF(req->handle->data, ClassName);                \
         ClassName* self = reinterpret_cast<ClassName*>(req->handle->data);  \
         self->On##FnName(req, status);                                      \
     }                                                                       \
@@ -102,7 +102,7 @@ private:
     void ClassName::FnName##Callback(uv_handle_t* handle,                    \
                                      size_t suggested_size, uv_buf_t* buf) { \
         DCHECK_IN_EVENT_LOOP_THREAD(handle->loop);                           \
-        UV_DCHECK_INSTANCE_OF(handle->data, ClassName);                         \
+        UV_DCHECK_INSTANCE_OF(handle->data, ClassName);                      \
         ClassName* self = reinterpret_cast<ClassName*>(handle->data);        \
         self->On##FnName(suggested_size, buf);                               \
     }                                                                        \
@@ -115,7 +115,7 @@ private:
 #define UV_ASYNC_CB_FOR_CLASS(ClassName, FnName)                       \
     void ClassName::FnName##Callback(uv_async_t* handle) {             \
         DCHECK_IN_EVENT_LOOP_THREAD(handle->loop);                     \
-        UV_DCHECK_INSTANCE_OF(handle->data, ClassName);                   \
+        UV_DCHECK_INSTANCE_OF(handle->data, ClassName);                \
         ClassName* self = reinterpret_cast<ClassName*>(handle->data);  \
         self->On##FnName();                                            \
     }                                                                  \
@@ -128,7 +128,7 @@ private:
 #define UV_CLOSE_CB_FOR_CLASS(ClassName, FnName)                      \
     void ClassName::FnName##Callback(uv_handle_t* handle) {           \
         DCHECK_IN_EVENT_LOOP_THREAD(handle->loop);                    \
-        UV_DCHECK_INSTANCE_OF(handle->data, ClassName);                  \
+        UV_DCHECK_INSTANCE_OF(handle->data, ClassName);               \
         ClassName* self = reinterpret_cast<ClassName*>(handle->data); \
         self->On##FnName();                                           \
     }                                                                 \
@@ -141,7 +141,7 @@ private:
 #define UV_CONNECTION_CB_FOR_CLASS(ClassName, FnName)                     \
     void ClassName::FnName##Callback(uv_stream_t* server, int status) {   \
         DCHECK_IN_EVENT_LOOP_THREAD(server->loop);                        \
-        UV_DCHECK_INSTANCE_OF(server->data, ClassName);                      \
+        UV_DCHECK_INSTANCE_OF(server->data, ClassName);                   \
         ClassName* self = reinterpret_cast<ClassName*>(server->data);     \
         self->On##FnName(status);                                         \
     }                                                                     \
@@ -154,7 +154,7 @@ private:
 #define UV_CONNECT_CB_FOR_CLASS(ClassName, FnName)                         \
     void ClassName::FnName##Callback(uv_connect_t* req, int status) {      \
         DCHECK_IN_EVENT_LOOP_THREAD(req->handle->loop);                    \
-        UV_DCHECK_INSTANCE_OF(req->handle->data, ClassName);                  \
+        UV_DCHECK_INSTANCE_OF(req->handle->data, ClassName);               \
         ClassName* self = reinterpret_cast<ClassName*>(req->handle->data); \
         self->On##FnName(status);                                          \
     }                                                                      \
@@ -169,7 +169,7 @@ private:
     void ClassName::FnName##Callback(uv_process_t* process,                   \
                                      int64_t exit_status, int term_signal) {  \
         DCHECK_IN_EVENT_LOOP_THREAD(process->loop);                           \
-        UV_DCHECK_INSTANCE_OF(process->data, ClassName);                         \
+        UV_DCHECK_INSTANCE_OF(process->data, ClassName);                      \
         ClassName* self = reinterpret_cast<ClassName*>(process->data);        \
         self->On##FnName(exit_status, term_signal);                           \
     }                                                                         \
