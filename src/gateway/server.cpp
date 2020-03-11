@@ -1,5 +1,7 @@
 #include "gateway/server.h"
 
+#include "utils/fs.h"
+
 #include <absl/strings/match.h>
 #include <absl/strings/strip.h>
 #include <absl/strings/numbers.h>
@@ -81,6 +83,12 @@ void Server::Start() {
     RegisterInternalRequestHandlers();
     // Create shared memory pool
     CHECK(!shared_mem_path_.empty());
+    if (fs_utils::IsDirectory(shared_mem_path_)) {
+        PCHECK(fs_utils::RemoveDirectoryRecursively(shared_mem_path_));
+    } else if (fs_utils::Exists(shared_mem_path_)) {
+        PCHECK(fs_utils::Remove(shared_mem_path_));
+    }
+    PCHECK(fs_utils::MakeDirectory(shared_mem_path_));
     shared_memory_ = absl::make_unique<utils::SharedMemory>(shared_mem_path_);
     // Start IO workers
     for (int i = 0; i < num_http_workers_; i++) {
@@ -111,7 +119,9 @@ void Server::Start() {
     // Listen on ipc_path
     UV_CHECK_OK(uv_pipe_init(&uv_loop_, &uv_ipc_handle_, 0));
     uv_ipc_handle_.data = this;
-    unlink(ipc_path_.c_str());
+    if (fs_utils::Exists(ipc_path_)) {
+        fs_utils::Remove(ipc_path_);
+    }
     UV_CHECK_OK(uv_pipe_bind(&uv_ipc_handle_, ipc_path_.c_str()));
     HLOG(INFO) << "Listen on " << ipc_path_ << " for IPC with watchdog processes";
     UV_CHECK_OK(uv_listen(

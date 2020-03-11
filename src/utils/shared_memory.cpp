@@ -1,18 +1,17 @@
 #include "utils/shared_memory.h"
 
+#include "utils/fs.h"
+
 #include <sys/mman.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <fcntl.h>
 
 namespace faas {
 namespace utils {
 
 SharedMemory::SharedMemory(absl::string_view base_path)
     : base_path_(base_path) {
-    struct stat statbuf;
-    CHECK(stat(base_path_.c_str(), &statbuf) == 0) << base_path_ << " does not exist";
-    CHECK(S_ISDIR(statbuf.st_mode)) << base_path_ << " is not a directory";
+    CHECK(fs_utils::IsDirectory(base_path_));
 }
 
 SharedMemory::~SharedMemory() {
@@ -21,11 +20,6 @@ SharedMemory::~SharedMemory() {
         LOG(WARNING) << "Unclosed shared memory region: " << region->path();
         PCHECK(munmap(region->base(), region->size()) == 0);
     }
-}
-
-bool SharedMemory::Exists(absl::string_view path) {
-    std::string full_path(absl::StrFormat("%s/%s", base_path_, path));
-    return access(full_path.c_str(), F_OK) == 0;
 }
 
 SharedMemory::Region* SharedMemory::Create(absl::string_view path, size_t size) {
@@ -68,8 +62,8 @@ void SharedMemory::Close(SharedMemory::Region* region, bool remove) {
     CHECK(regions_.contains(region));
     PCHECK(munmap(region->base(), region->size()) == 0);
     if (remove) {
-        std::string full_path(absl::StrFormat("%s/%s", base_path_, region->path()));
-        PCHECK(unlink(full_path.c_str()) == 0);
+        PCHECK(fs_utils::Remove(
+            absl::StrFormat("%s/%s", base_path_, region->path())));
     }
     regions_.erase(region);
 }

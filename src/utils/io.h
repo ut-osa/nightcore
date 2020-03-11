@@ -3,7 +3,7 @@
 #include "base/common.h"
 
 namespace faas {
-namespace utils {
+namespace io_utils {
 
 template<class T>
 bool SendMessage(int fd, const T& message) {
@@ -45,5 +45,5 @@ bool RecvMessage(int fd, T* message, bool* eof) {
     return true;
 }
 
-}  // namespace utils
+}  // namespace io_utils
 }  // namespace faas

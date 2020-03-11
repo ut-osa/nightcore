@@ -40,7 +40,6 @@ public:
         DISALLOW_COPY_AND_ASSIGN(Region);
     };
 
-    bool Exists(absl::string_view path);
     Region* Create(absl::string_view path, size_t size);
     Region* OpenReadOnly(absl::string_view path);
     void Close(Region* region, bool remove = false);

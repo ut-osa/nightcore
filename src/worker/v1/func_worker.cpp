@@ -62,7 +62,7 @@ void FuncWorker::MainServingLoop() {
     while (true) {
         Message message;
         bool input_pipe_closed;
-        if (!utils::RecvMessage(input_pipe_fd_, &message, &input_pipe_closed)) {
+        if (!io_utils::RecvMessage(input_pipe_fd_, &message, &input_pipe_closed)) {
             if (input_pipe_closed) {
                 LOG(WARNING) << "Pipe to watchdog closed remotely";
                 break;
@@ -81,9 +81,9 @@ void FuncWorker::MainServingLoop() {
                  response.message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_FAILED);
              }
              if (success) {
-                 PCHECK(utils::SendMessage(gateway_sock_fd_, response));
+                 PCHECK(io_utils::SendMessage(gateway_sock_fd_, response));
              }
-             PCHECK(utils::SendMessage(output_pipe_fd_, response));
+             PCHECK(io_utils::SendMessage(output_pipe_fd_, response));
         } else {
             LOG(FATAL) << "Unknown message type";
         }
@@ -98,10 +98,10 @@ void FuncWorker::GatewayIpcHandshake() {
         .role = static_cast<uint16_t>(Role::FUNC_WORKER),
         .func_id = static_cast<uint16_t>(func_id_)
     };
-    PCHECK(utils::SendMessage(gateway_sock_fd_, message));
+    PCHECK(io_utils::SendMessage(gateway_sock_fd_, message));
     HandshakeResponse response;
     bool sock_closed;
-    if (!utils::RecvMessage(gateway_sock_fd_, &response, &sock_closed)) {
+    if (!io_utils::RecvMessage(gateway_sock_fd_, &response, &sock_closed)) {
         if (sock_closed) {
             LOG(FATAL) << "Gateway socket closed remotely";
         } else {
@@ -119,7 +119,7 @@ void FuncWorker::GatewayIpcThreadMain() {
     while (true) {
         Message message;
         bool sock_closed;
-        if (!utils::RecvMessage(gateway_sock_fd_, &message, &sock_closed)) {
+        if (!io_utils::RecvMessage(gateway_sock_fd_, &message, &sock_closed)) {
             if (sock_closed || errno == EBADF) {
                 LOG(WARNING) << "Gateway socket closed remotely";
                 gateway_disconnected_.store(true);
@@ -190,7 +190,7 @@ bool FuncWorker::InvokeFunc(int func_id, const char* input_data, size_t input_le
             .func_call = func_call
         };
         func_invoke_contexts_[func_call.full_call_id] = absl::WrapUnique(context);
-        PCHECK(utils::SendMessage(gateway_sock_fd_, message));
+        PCHECK(io_utils::SendMessage(gateway_sock_fd_, message));
     }
     context->finished.WaitForNotification();
     if (context->success) {
