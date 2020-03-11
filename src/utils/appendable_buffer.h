@@ -111,7 +111,7 @@ void ReadMessages(AppendableBuffer* buffer,
     while (new_data_length + buffer->length() >= sizeof(T)) {
         size_t copy_size = sizeof(T) - buffer->length();
         buffer->AppendData(new_data, copy_size);
-        CHECK_EQ(buffer->length(), sizeof(T));
+        DCHECK_EQ(buffer->length(), sizeof(T));
         T* message = reinterpret_cast<T*>(buffer->data());
         callback(message);
         buffer->Reset();

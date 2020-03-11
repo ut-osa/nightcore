@@ -53,12 +53,12 @@ public:
         bool async() const { return async_; }
 
         void CallSync(HttpSyncRequestContext* context) const {
-            CHECK(!async_);
+            DCHECK(!async_);
             sync_handler_(context);
         }
 
         void CallAsync(std::shared_ptr<HttpAsyncRequestContext> context) const {
-            CHECK(async_);
+            DCHECK(async_);
             async_handler_(std::move(context));
         }
 

@@ -16,7 +16,7 @@ public:
     FuncRunner(Watchdog* watchdog, uint64_t call_id)
         : state_(kCreated), watchdog_(watchdog), call_id_(call_id),
           log_header_(absl::StrFormat("FuncRunner[%d]: ", call_id)) {}
-    virtual ~FuncRunner() { CHECK(state_ != kRunning); }
+    virtual ~FuncRunner() { DCHECK(state_ != kRunning); }
 
     uint64_t call_id() const { return call_id_; }
     virtual void Start(uv_loop_t* uv_loop) = 0;

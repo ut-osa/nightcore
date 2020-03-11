@@ -13,7 +13,7 @@ public:
 
     ~Thread() {
         State state = state_.load();
-        CHECK(state == kCreated || state == kFinished);
+        DCHECK(state == kCreated || state == kFinished);
     }
 
     void Start();

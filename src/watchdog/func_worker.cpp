@@ -21,11 +21,11 @@ FuncWorker::FuncWorker(Watchdog* watchdog,
       subprocess_(fprocess) {}
 
 FuncWorker::~FuncWorker() {
-    CHECK(state_ == kCreated || state_ == kClosed);
+    DCHECK(state_ == kCreated || state_ == kClosed);
 }
 
 void FuncWorker::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool) {
-    CHECK(state_ == kCreated);
+    DCHECK(state_ == kCreated);
     uv_loop_ = uv_loop;
     read_buffer_pool_ = read_buffer_pool;
     input_pipe_fd_ = subprocess_.CreateReadablePipe();
@@ -35,8 +35,8 @@ void FuncWorker::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool) 
     subprocess_.AddEnvVariable("INPUT_PIPE_FD", input_pipe_fd_);
     subprocess_.AddEnvVariable("OUTPUT_PIPE_FD", output_pipe_fd_);
     subprocess_.AddEnvVariable("SHARED_MEMORY_PATH", watchdog_->shared_mem_path());
-    CHECK(subprocess_.Start(uv_loop, read_buffer_pool,
-                            absl::bind_front(&FuncWorker::OnSubprocessExit, this)))
+    DCHECK(subprocess_.Start(uv_loop, read_buffer_pool,
+                             absl::bind_front(&FuncWorker::OnSubprocessExit, this)))
         << "Failed to start fprocess";
     uv_input_pipe_handle_ = subprocess_.GetPipe(input_pipe_fd_);
     uv_input_pipe_handle_->data = this;
@@ -46,7 +46,7 @@ void FuncWorker::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool) 
 }
 
 void FuncWorker::ScheduleClose() {
-    CHECK(state_ != kCreated);
+    DCHECK(state_ != kCreated);
     DCHECK_IN_EVENT_LOOP_THREAD(uv_loop_);
     if (state_ == kClosed || state_ == kClosing) {
         HLOG(WARNING) << "Already scheduled to close or has closed";
@@ -57,7 +57,7 @@ void FuncWorker::ScheduleClose() {
 }
 
 bool FuncWorker::ScheduleFuncCall(WorkerFuncRunner* func_runner, uint64_t call_id) {
-    CHECK(state_ != kCreated);
+    DCHECK(state_ != kCreated);
     DCHECK_IN_EVENT_LOOP_THREAD(uv_loop_);
     if (state_ == kClosed || state_ == kClosing) {
         HLOG(WARNING) << "This FuncWorker is scheduled to close or already closed, "
@@ -75,7 +75,7 @@ bool FuncWorker::ScheduleFuncCall(WorkerFuncRunner* func_runner, uint64_t call_i
 
 void FuncWorker::OnSubprocessExit(int exit_status, absl::Span<const char> stdout,
                                   absl::Span<const char> stderr) {
-    CHECK(state_ != kCreated);
+    DCHECK(state_ != kCreated);
     DCHECK_IN_EVENT_LOOP_THREAD(uv_loop_);
     if (exit_status != 0) {
         HLOG(WARNING) << "Subprocess exits abnormally with code: " << exit_status;
@@ -113,7 +113,7 @@ void FuncWorker::OnRecvMessage(const Message& message) {
         HLOG(WARNING) << "This FuncWorker is scheduled to close or already closed";
         return;
     }
-    CHECK(state_ == kReceiving);
+    DCHECK(state_ == kReceiving);
     state_ = kIdle;
     if (!pending_func_calls_.empty()) {
         uint64_t call_id = pending_func_calls_.front();
@@ -129,7 +129,7 @@ void FuncWorker::DispatchFuncCall(uint64_t call_id) {
                       << "cannot dispatch function call further";
         return;
     }
-    CHECK(state_ == kIdle);
+    DCHECK(state_ == kIdle);
     if (subprocess_.PipeClosed(input_pipe_fd_)) {
         HLOG(WARNING) << "Input pipe closed, cannot send data further";
         return;
@@ -141,7 +141,7 @@ void FuncWorker::DispatchFuncCall(uint64_t call_id) {
         .len = sizeof(Message)
     };
     state_ = kSending;
-    UV_CHECK_OK(uv_write(&write_req_, UV_AS_STREAM(uv_input_pipe_handle_),
+    UV_DCHECK_OK(uv_write(&write_req_, UV_AS_STREAM(uv_input_pipe_handle_),
                          &buf, 1, &FuncWorker::WriteMessageCallback));
 }
 
@@ -158,7 +158,7 @@ UV_READ_CB_FOR_CLASS(FuncWorker, ReadMessage) {
         recv_buffer_.AppendData(buf->base, nread);
         if (recv_buffer_.length() == sizeof(Message)) {
             if (!subprocess_.PipeClosed(output_pipe_fd_)) {
-                UV_CHECK_OK(uv_read_stop(UV_AS_STREAM(uv_output_pipe_handle_)));
+                UV_DCHECK_OK(uv_read_stop(UV_AS_STREAM(uv_output_pipe_handle_)));
             }
             Message* message = reinterpret_cast<Message*>(recv_buffer_.data());
             OnRecvMessage(*message);
@@ -185,7 +185,7 @@ UV_WRITE_CB_FOR_CLASS(FuncWorker, WriteMessage) {
     }
     state_ = kReceiving;
     recv_buffer_.Reset();
-    UV_CHECK_OK(uv_read_start(UV_AS_STREAM(uv_output_pipe_handle_),
+    UV_DCHECK_OK(uv_read_start(UV_AS_STREAM(uv_output_pipe_handle_),
                               &FuncWorker::BufferAllocCallback,
                               &FuncWorker::ReadMessageCallback));
 }

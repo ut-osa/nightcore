@@ -12,7 +12,7 @@ namespace faas {
 namespace watchdog {
 
 void FuncRunner::Complete(Status status) {
-    CHECK(state_ != kCompleted);
+    DCHECK(state_ != kCompleted);
     state_ = kCompleted;
     watchdog_->OnFuncRunnerComplete(this, status);
 }
@@ -25,7 +25,7 @@ SerializingFuncRunner::SerializingFuncRunner(Watchdog* watchdog, uint64_t call_i
       input_region_(nullptr) {}
 
 SerializingFuncRunner::~SerializingFuncRunner() {
-    CHECK(input_region_ == nullptr);
+    DCHECK(input_region_ == nullptr);
 }
 
 void SerializingFuncRunner::Start(uv_loop_t* uv_loop) {
@@ -43,8 +43,8 @@ void SerializingFuncRunner::Start(uv_loop_t* uv_loop) {
         .len = input_region_->size()
     };
     subprocess_stdin->data = this;
-    UV_CHECK_OK(uv_write(&write_req_, UV_AS_STREAM(subprocess_stdin),
-                         &buf, 1, &SerializingFuncRunner::WriteSubprocessStdinCallback));
+    UV_DCHECK_OK(uv_write(&write_req_, UV_AS_STREAM(subprocess_stdin),
+                          &buf, 1, &SerializingFuncRunner::WriteSubprocessStdinCallback));
     state_ = kRunning;
 }
 
@@ -78,7 +78,7 @@ UV_WRITE_CB_FOR_CLASS(SerializingFuncRunner, WriteSubprocessStdin) {
         HLOG(ERROR) << "Failed to write input data";
         subprocess_.Kill();
     }
-    CHECK(input_region_ != nullptr);
+    DCHECK(input_region_ != nullptr);
     input_region_->Close();
     input_region_ = nullptr;
     subprocess_.ClosePipe(Subprocess::kStdin);

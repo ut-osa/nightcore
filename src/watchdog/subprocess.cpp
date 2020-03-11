@@ -15,28 +15,28 @@ Subprocess::Subprocess(absl::string_view cmd, size_t max_stdout_size, size_t max
 }
 
 Subprocess::~Subprocess() {
-    CHECK(state_ == kCreated || state_ == kClosed);
+    DCHECK(state_ == kCreated || state_ == kClosed);
 }
 
 int Subprocess::CreateReadablePipe() {
-    CHECK(state_ == kCreated);
+    DCHECK(state_ == kCreated);
     pipe_types_.push_back(UV_READABLE_PIPE);
     return static_cast<int>(pipe_types_.size()) - 1;
 }
 
 int Subprocess::CreateWritablePipe() {
-    CHECK(state_ == kCreated);
+    DCHECK(state_ == kCreated);
     pipe_types_.push_back(UV_WRITABLE_PIPE);
     return static_cast<int>(pipe_types_.size()) - 1;
 }
 
 void Subprocess::AddEnvVariable(absl::string_view name, absl::string_view value) {
-    CHECK(state_ == kCreated);
+    DCHECK(state_ == kCreated);
     env_variables_.push_back(absl::StrFormat("%s=%s", name, value));
 }
 
 void Subprocess::AddEnvVariable(absl::string_view name, int value) {
-    CHECK(state_ == kCreated);
+    DCHECK(state_ == kCreated);
     env_variables_.push_back(absl::StrFormat("%s=%d", name, value));
 }
 
@@ -64,13 +64,13 @@ bool Subprocess::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool,
     env_ptrs.push_back(nullptr);
     options.env = const_cast<char**>(env_ptrs.data());
     int num_pipes = pipe_types_.size();
-    CHECK_GE(num_pipes, 3);
+    DCHECK_GE(num_pipes, 3);
     std::vector<uv_stdio_container_t> stdio(num_pipes);
     uv_pipe_handles_.resize(num_pipes);
     pipe_closed_.assign(num_pipes, false);
     for (int i = 0; i < num_pipes; i++) {
         uv_pipe_t* uv_pipe = &uv_pipe_handles_[i];
-        UV_CHECK_OK(uv_pipe_init(uv_loop, uv_pipe, 0));
+        UV_DCHECK_OK(uv_pipe_init(uv_loop, uv_pipe, 0));
         uv_pipe->data = this;
         stdio[i].flags = static_cast<uv_stdio_flags>(UV_CREATE_PIPE | pipe_types_[i]);
         stdio[i].data.stream = UV_AS_STREAM(uv_pipe);
@@ -83,33 +83,33 @@ bool Subprocess::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool,
     }
     closed_uv_handles_ = 0;
     total_uv_handles_ = num_pipes + 1;
-    UV_CHECK_OK(uv_read_start(UV_AS_STREAM(&uv_pipe_handles_[kStdout]),
-                              &Subprocess::BufferAllocCallback, &Subprocess::ReadStdoutCallback));
-    UV_CHECK_OK(uv_read_start(UV_AS_STREAM(&uv_pipe_handles_[kStderr]),
-                              &Subprocess::BufferAllocCallback, &Subprocess::ReadStderrCallback));
+    UV_DCHECK_OK(uv_read_start(UV_AS_STREAM(&uv_pipe_handles_[kStdout]),
+                               &Subprocess::BufferAllocCallback, &Subprocess::ReadStdoutCallback));
+    UV_DCHECK_OK(uv_read_start(UV_AS_STREAM(&uv_pipe_handles_[kStderr]),
+                               &Subprocess::BufferAllocCallback, &Subprocess::ReadStderrCallback));
     state_ = kRunning;
     return true;
 }
 
 void Subprocess::Kill(int signum) {
-    CHECK(state_ != kCreated);
+    DCHECK(state_ != kCreated);
     DCHECK_IN_EVENT_LOOP_THREAD(uv_process_handle_.loop);
     if (state_ == kRunning) {
-        UV_CHECK_OK(uv_process_kill(&uv_process_handle_, signum));
+        UV_DCHECK_OK(uv_process_kill(&uv_process_handle_, signum));
     } else {
         HLOG(WARNING) << "Process not in running state, cannot kill";
     }
 }
 
 uv_pipe_t* Subprocess::GetPipe(int fd) {
-    CHECK(state_ != kCreated);
+    DCHECK(state_ != kCreated);
     // We prevent touching stdout and stderr pipes directly
-    CHECK(fd != kStdout && fd != kStderr);
+    DCHECK(fd != kStdout && fd != kStderr);
     return &uv_pipe_handles_[fd];
 }
 
 void Subprocess::ClosePipe(int fd) {
-    CHECK(state_ != kCreated);
+    DCHECK(state_ != kCreated);
     DCHECK_IN_EVENT_LOOP_THREAD(uv_process_handle_.loop);
     if (pipe_closed_[fd]) {
         return;
@@ -121,7 +121,7 @@ void Subprocess::ClosePipe(int fd) {
 }
 
 bool Subprocess::PipeClosed(int fd) {
-    CHECK(state_ != kCreated);
+    DCHECK(state_ != kCreated);
     return pipe_closed_[fd];
 }
 
@@ -183,7 +183,7 @@ UV_EXIT_CB_FOR_CLASS(Subprocess, ProcessExit) {
 }
 
 UV_CLOSE_CB_FOR_CLASS(Subprocess, Close) {
-    CHECK_LT(closed_uv_handles_, total_uv_handles_);
+    DCHECK_LT(closed_uv_handles_, total_uv_handles_);
     closed_uv_handles_++;
     if (closed_uv_handles_ == total_uv_handles_) {
         state_ = kClosed;

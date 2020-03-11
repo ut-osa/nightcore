@@ -59,7 +59,7 @@ SharedMemory::Region* SharedMemory::OpenReadOnly(absl::string_view path) {
 
 void SharedMemory::Close(SharedMemory::Region* region, bool remove) {
     absl::MutexLock lk(&regions_mu_);
-    CHECK(regions_.contains(region));
+    DCHECK(regions_.contains(region));
     PCHECK(munmap(region->base(), region->size()) == 0);
     if (remove) {
         PCHECK(fs_utils::Remove(

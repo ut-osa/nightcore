@@ -110,10 +110,10 @@ void Server::Start() {
     struct sockaddr_in bind_addr;
     CHECK(!address_.empty());
     CHECK_NE(port_, -1);
-    UV_CHECK_OK(uv_ip4_addr(address_.c_str(), port_, &bind_addr));
-    UV_CHECK_OK(uv_tcp_bind(&uv_tcp_handle_, (const struct sockaddr *)&bind_addr, 0));
+    UV_DCHECK_OK(uv_ip4_addr(address_.c_str(), port_, &bind_addr));
+    UV_DCHECK_OK(uv_tcp_bind(&uv_tcp_handle_, (const struct sockaddr *)&bind_addr, 0));
     HLOG(INFO) << "Listen on " << address_ << ":" << port_;
-    UV_CHECK_OK(uv_listen(
+    UV_DCHECK_OK(uv_listen(
         UV_AS_STREAM(&uv_tcp_handle_), listen_backlog_,
         &Server::HttpConnectionCallback));
     // Listen on ipc_path
@@ -122,9 +122,9 @@ void Server::Start() {
     if (fs_utils::Exists(ipc_path_)) {
         PCHECK(fs_utils::Remove(ipc_path_));
     }
-    UV_CHECK_OK(uv_pipe_bind(&uv_ipc_handle_, ipc_path_.c_str()));
+    UV_DCHECK_OK(uv_pipe_bind(&uv_ipc_handle_, ipc_path_.c_str()));
     HLOG(INFO) << "Listen on " << ipc_path_ << " for IPC with watchdog processes";
-    UV_CHECK_OK(uv_listen(
+    UV_DCHECK_OK(uv_listen(
         UV_AS_STREAM(&uv_ipc_handle_), listen_backlog_,
         &Server::MessageConnectionCallback));
     // Start thread for running event loop
@@ -202,7 +202,7 @@ void Server::InitAndStartIOWorker(IOWorker* io_worker) {
     int pipe_fd_for_worker;
     pipes_to_io_worker_[io_worker] = CreatePipeToWorker(&pipe_fd_for_worker);
     uv_pipe_t* pipe_to_worker = pipes_to_io_worker_[io_worker].get();
-    UV_CHECK_OK(uv_read_start(UV_AS_STREAM(pipe_to_worker),
+    UV_DCHECK_OK(uv_read_start(UV_AS_STREAM(pipe_to_worker),
                               &PipeReadBufferAllocCallback,
                               &Server::ReturnConnectionCallback));
     io_worker->Start(pipe_fd_for_worker);
@@ -210,11 +210,11 @@ void Server::InitAndStartIOWorker(IOWorker* io_worker) {
 
 std::unique_ptr<uv_pipe_t> Server::CreatePipeToWorker(int* pipe_fd_for_worker) {
     int pipe_fds[2];
-    CHECK_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, pipe_fds), 0);
+    DCHECK_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, pipe_fds), 0);
     std::unique_ptr<uv_pipe_t> pipe_to_worker = absl::make_unique<uv_pipe_t>();
-    UV_CHECK_OK(uv_pipe_init(&uv_loop_, pipe_to_worker.get(), 1));
+    UV_DCHECK_OK(uv_pipe_init(&uv_loop_, pipe_to_worker.get(), 1));
     pipe_to_worker->data = this;
-    UV_CHECK_OK(uv_pipe_open(pipe_to_worker.get(), pipe_fds[0]));
+    UV_DCHECK_OK(uv_pipe_open(pipe_to_worker.get(), pipe_fds[0]));
     *pipe_fd_for_worker = pipe_fds[1];
     return pipe_to_worker;
 }
@@ -229,7 +229,7 @@ void Server::TransferConnectionToWorker(IOWorker* io_worker, Connection* connect
     uv_buf_t uv_buf = uv_buf_init(buf, buf_len);
     uv_pipe_t* pipe_to_worker = pipes_to_io_worker_[io_worker].get();
     write_req->data = send_handle;
-    UV_CHECK_OK(uv_write2(write_req, UV_AS_STREAM(pipe_to_worker),
+    UV_DCHECK_OK(uv_write2(write_req, UV_AS_STREAM(pipe_to_worker),
                           &uv_buf, 1, UV_AS_STREAM(send_handle),
                           &PipeWrite2Callback));
 }
@@ -448,7 +448,7 @@ UV_CONNECTION_CB_FOR_CLASS(Server, MessageConnection) {
     HLOG(INFO) << "New message connection";
     std::unique_ptr<MessageConnection> connection = absl::make_unique<MessageConnection>(this);
     uv_pipe_t* client = new uv_pipe_t;
-    UV_CHECK_OK(uv_pipe_init(&uv_loop_, client, 0));
+    UV_DCHECK_OK(uv_pipe_init(&uv_loop_, client, 0));
     if (uv_accept(UV_AS_STREAM(&uv_ipc_handle_), UV_AS_STREAM(client)) == 0) {
         TransferConnectionToWorker(PickIpcWorker(), connection.get(),
                                    UV_AS_STREAM(client));
@@ -485,7 +485,7 @@ UV_ASYNC_CB_FOR_CLASS(Server, Stop) {
     for (const auto& io_worker : io_workers_) {
         io_worker->ScheduleStop();
         uv_pipe_t* pipe = pipes_to_io_worker_[io_worker.get()].get();
-        UV_CHECK_OK(uv_read_stop(UV_AS_STREAM(pipe)));
+        UV_DCHECK_OK(uv_read_stop(UV_AS_STREAM(pipe)));
         uv_close(UV_AS_HANDLE(pipe), nullptr);
     }
     uv_close(UV_AS_HANDLE(&uv_tcp_handle_), nullptr);
@@ -495,7 +495,7 @@ UV_ASYNC_CB_FOR_CLASS(Server, Stop) {
 }
 
 UV_WRITE_CB_FOR_CLASS(Server, PipeWrite2) {
-    CHECK(status == 0) << "Failed to write to pipe: " << uv_strerror(status);
+    DCHECK(status == 0) << "Failed to write to pipe: " << uv_strerror(status);
     uv_pipe_t* send_handle = reinterpret_cast<uv_pipe_t*>(req->data);
     uv_close(UV_AS_HANDLE(send_handle), nullptr);
     delete send_handle;

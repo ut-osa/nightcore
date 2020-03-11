@@ -22,26 +22,26 @@ Watchdog::Watchdog()
       event_loop_thread_("Watchdog_EventLoop",
                          std::bind(&Watchdog::EventLoopThreadMain, this)),
       gateway_connection_(this), next_func_worker_id_(0) {
-    UV_CHECK_OK(uv_loop_init(&uv_loop_));
+    UV_DCHECK_OK(uv_loop_init(&uv_loop_));
     uv_loop_.data = &event_loop_thread_;
-    UV_CHECK_OK(uv_async_init(&uv_loop_, &stop_event_, &Watchdog::StopCallback));
+    UV_DCHECK_OK(uv_async_init(&uv_loop_, &stop_event_, &Watchdog::StopCallback));
     stop_event_.data = this;
 }
 
 Watchdog::~Watchdog() {
     State state = state_.load();
-    CHECK(state == kCreated || state == kStopped);
-    UV_CHECK_OK(uv_loop_close(&uv_loop_));
-    CHECK(func_runners_.empty());
+    DCHECK(state == kCreated || state == kStopped);
+    UV_DCHECK_OK(uv_loop_close(&uv_loop_));
+    DCHECK(func_runners_.empty());
 }
 
 void Watchdog::ScheduleStop() {
     HLOG(INFO) << "Scheduled to stop";
-    UV_CHECK_OK(uv_async_send(&stop_event_));
+    UV_DCHECK_OK(uv_async_send(&stop_event_));
 }
 
 void Watchdog::Start() {
-    CHECK(state_.load() == kCreated);
+    DCHECK(state_.load() == kCreated);
     CHECK(func_id_ != -1);
     CHECK(!fprocess_.empty());
     switch (run_mode_) {
@@ -66,7 +66,7 @@ void Watchdog::Start() {
     shared_memory_ = absl::make_unique<utils::SharedMemory>(shared_mem_path_);
     // Connect to gateway via IPC path
     uv_pipe_t* pipe_handle = gateway_connection_.uv_pipe_handle();
-    UV_CHECK_OK(uv_pipe_init(&uv_loop_, pipe_handle, 0));
+    UV_DCHECK_OK(uv_pipe_init(&uv_loop_, pipe_handle, 0));
     HandshakeMessage message;
     message.role = static_cast<uint16_t>(Role::WATCHDOG);
     message.func_id = func_id_;
@@ -77,9 +77,9 @@ void Watchdog::Start() {
 }
 
 void Watchdog::WaitForFinish() {
-    CHECK(state_.load() != kCreated);
+    DCHECK(state_.load() != kCreated);
     event_loop_thread_.Join();
-    CHECK(state_.load() == kStopped);
+    DCHECK(state_.load() == kStopped);
     HLOG(INFO) << "Stopped";
 }
 
@@ -141,7 +141,7 @@ void Watchdog::OnRecvMessage(const protocol::Message& message) {
 
 void Watchdog::OnFuncRunnerComplete(FuncRunner* func_runner, FuncRunner::Status status) {
     DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
-    CHECK(func_runners_.contains(func_runner->call_id()));
+    DCHECK(func_runners_.contains(func_runner->call_id()));
     FuncCall func_call;
     func_call.full_call_id = func_runner->call_id();
     func_runners_.erase(func_runner->call_id());

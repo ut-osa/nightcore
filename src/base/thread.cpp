@@ -17,7 +17,7 @@ void Thread::Start() {
     state_.store(kStarting);
     CHECK_EQ(pthread_create(&pthread_, nullptr, &Thread::StartRoutine, this), 0);
     started_.WaitForNotification();
-    CHECK(state_.load() == kRunning);
+    DCHECK(state_.load() == kRunning);
 }
 
 void Thread::Join() {
@@ -25,7 +25,7 @@ void Thread::Join() {
     if (state == kFinished) {
         return;
     }
-    CHECK(state == kRunning);
+    DCHECK(state == kRunning);
     CHECK_EQ(pthread_join(pthread_, nullptr), 0);
 }
 

@@ -11,7 +11,7 @@ bool SendMessage(int fd, const T& message) {
     size_t pos = 0;
     while (pos < sizeof(T)) {
         ssize_t nwrite = write(fd, buffer + pos, sizeof(T) - pos);
-        CHECK(nwrite != 0) << "write() returns 0";
+        DCHECK(nwrite != 0) << "write() returns 0";
         if (nwrite < 0) {
             if (errno == EAGAIN || errno == EINTR) {
                 continue;

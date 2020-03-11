@@ -32,21 +32,21 @@ HttpConnection::HttpConnection(Server* server, int connection_id)
 }
 
 HttpConnection::~HttpConnection() {
-    CHECK(state_ == kCreated || state_ == kClosed);
+    DCHECK(state_ == kCreated || state_ == kClosed);
 }
 
 uv_stream_t* HttpConnection::InitUVHandle(uv_loop_t* uv_loop) {
-    UV_CHECK_OK(uv_tcp_init(uv_loop, &uv_tcp_handle_));
+    UV_DCHECK_OK(uv_tcp_init(uv_loop, &uv_tcp_handle_));
     return UV_AS_STREAM(&uv_tcp_handle_);
 }
 
 void HttpConnection::Start(IOWorker* io_worker) {
-    CHECK(state_ == kCreated);
+    DCHECK(state_ == kCreated);
     DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
     io_worker_ = io_worker;
     uv_tcp_handle_.data = this;
     response_write_req_.data = this;
-    UV_CHECK_OK(uv_async_init(uv_tcp_handle_.loop,
+    UV_DCHECK_OK(uv_async_init(uv_tcp_handle_.loop,
                               &async_request_finished_event_,
                               &HttpConnection::AsyncRequestFinishCallback));
     async_request_finished_event_.data = this;
@@ -55,7 +55,7 @@ void HttpConnection::Start(IOWorker* io_worker) {
 }
 
 void HttpConnection::Reset(int connection_id) {
-    CHECK(state_ == kClosed);
+    DCHECK(state_ == kClosed);
     connection_id_ = connection_id;
     log_header_ = absl::StrFormat("HttpConnection[%d]: ", connection_id);
     ResetHttpParser();
@@ -68,7 +68,7 @@ void HttpConnection::ScheduleClose() {
         HLOG(INFO) << "Already scheduled for closing";
         return;
     }
-    CHECK(state_ == kRunning);
+    DCHECK(state_ == kRunning);
     if (within_async_request_) {
         async_request_context_->OnConnectionClose();
         async_request_context_ = nullptr;
@@ -89,9 +89,9 @@ void HttpConnection::StartRecvData() {
         HLOG(WARNING) << "HttpConnection is closing or has closed, will not enable read event";
         return;
     }
-    UV_CHECK_OK(uv_read_start(UV_AS_STREAM(&uv_tcp_handle_),
-                              &HttpConnection::BufferAllocCallback,
-                              &HttpConnection::RecvDataCallback));
+    UV_DCHECK_OK(uv_read_start(UV_AS_STREAM(&uv_tcp_handle_),
+                               &HttpConnection::BufferAllocCallback,
+                               &HttpConnection::RecvDataCallback));
 }
 
 void HttpConnection::StopRecvData() {
@@ -100,7 +100,7 @@ void HttpConnection::StopRecvData() {
         HLOG(WARNING) << "HttpConnection is closing or has closed, will not enable read event";
         return;
     }
-    UV_CHECK_OK(uv_read_stop(UV_AS_STREAM(&uv_tcp_handle_)));
+    UV_DCHECK_OK(uv_read_stop(UV_AS_STREAM(&uv_tcp_handle_)));
 }
 
 UV_READ_CB_FOR_CLASS(HttpConnection, RecvData) {
@@ -145,7 +145,7 @@ UV_ALLOC_CB_FOR_CLASS(HttpConnection, BufferAlloc) {
 
 UV_ASYNC_CB_FOR_CLASS(HttpConnection, AsyncRequestFinish) {
     HttpAsyncRequestContext* context = async_request_context_.get();
-    CHECK(context != nullptr);
+    DCHECK(context != nullptr);
     if (!within_async_request_) {
         HLOG(WARNING) << "HttpConnection is closing or has closed, will not handle the finish of async request";
         return;
@@ -163,8 +163,8 @@ UV_ASYNC_CB_FOR_CLASS(HttpConnection, AsyncRequestFinish) {
 }
 
 UV_CLOSE_CB_FOR_CLASS(HttpConnection, Close) {
-    CHECK(state_ == kClosing);
-    CHECK_LT(closed_uv_handles_, total_uv_handles_);
+    DCHECK(state_ == kClosing);
+    DCHECK_LT(closed_uv_handles_, total_uv_handles_);
     closed_uv_handles_++;
     if (closed_uv_handles_ == total_uv_handles_) {
         state_ = kClosed;
@@ -303,7 +303,7 @@ void HttpConnection::OnNewHttpRequest(absl::string_view method, absl::string_vie
 }
 
 void HttpConnection::AsyncRequestFinish(HttpAsyncRequestContext* context) {
-    UV_CHECK_OK(uv_async_send(&async_request_finished_event_));
+    UV_DCHECK_OK(uv_async_send(&async_request_finished_event_));
 }
 
 void HttpConnection::SendHttpResponse() {
@@ -341,8 +341,8 @@ void HttpConnection::SendHttpResponse() {
         { .base = response_header_buffer_.data(), .len = response_header_buffer_.length() },
         { .base = response_body_buffer_.data(), .len = response_body_buffer_.length() }
     };
-    UV_CHECK_OK(uv_write(&response_write_req_, UV_AS_STREAM(&uv_tcp_handle_),
-                            bufs, 2, &HttpConnection::DataWrittenCallback));
+    UV_DCHECK_OK(uv_write(&response_write_req_, UV_AS_STREAM(&uv_tcp_handle_),
+                          bufs, 2, &HttpConnection::DataWrittenCallback));
 }
 
 int HttpConnection::HttpParserOnMessageBeginCallback(http_parser* http_parser) {

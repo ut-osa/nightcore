@@ -34,7 +34,7 @@ public:
     }
 
     void Return(const uv_buf_t* buf) {
-        CHECK_EQ(buf->len, buffer_size_);
+        DCHECK_EQ(buf->len, buffer_size_);
         Return(buf->base);
     }
 

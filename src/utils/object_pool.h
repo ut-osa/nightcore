@@ -25,7 +25,7 @@ public:
             free_objs_.push_back(new_obj);
             objs_.emplace_back(new_obj);
         }
-        CHECK(!free_objs_.empty());
+        DCHECK(!free_objs_.empty());
         T* obj = free_objs_.back();
         free_objs_.pop_back();
         return obj;

@@ -16,7 +16,7 @@ bool HttpAsyncRequestContext::Finish() {
 
 void HttpAsyncRequestContext::OnConnectionClose() {
     absl::MutexLock lk(&mu_);
-    CHECK(connection_ != nullptr);
+    DCHECK(connection_ != nullptr);
     connection_ = nullptr;
 }
 
