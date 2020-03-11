@@ -9,7 +9,7 @@ namespace utils {
 namespace {
 
 void FillAddressPath(struct sockaddr_un* addr, absl::string_view path) {
-    CHECK_LT(sizeof(addr->sun_path), path.length());
+    CHECK_LT(path.length(), sizeof(addr->sun_path));
     memcpy(addr->sun_path, path.data(), path.length());
     addr->sun_path[path.length()] = '\0';
 }

@@ -65,7 +65,6 @@ public:
         content_type_ = std::string(content_type);
     }
     void AppendToResponseBody(absl::Span<const char> data) {
-        LOG(INFO) << data.length();
         response_body_buffer_.AppendData(data);
     }
     // Append a null-terminated C string. Implicit conversion from

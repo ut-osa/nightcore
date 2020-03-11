@@ -16,7 +16,7 @@ ABSL_FLAG(std::string, shared_mem_path, "/dev/shm/faas",
           "Root directory for shared memories used by FaaS");
 
 static std::atomic<faas::gateway::Server*> server_ptr(nullptr);
-void SignalHandlerToCloseServer(int signal) {
+void SignalHandlerToStopServer(int signal) {
     faas::gateway::Server* server = server_ptr.exchange(nullptr);
     if (server != nullptr) {
         server->ScheduleStop();
@@ -24,7 +24,7 @@ void SignalHandlerToCloseServer(int signal) {
 }
 
 int main(int argc, char* argv[]) {
-    signal(SIGINT, SignalHandlerToCloseServer);
+    signal(SIGINT, SignalHandlerToStopServer);
     faas::base::InitMain(argc, argv);
 
     auto server = absl::make_unique<faas::gateway::Server>();

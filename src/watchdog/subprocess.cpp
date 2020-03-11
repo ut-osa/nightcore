@@ -8,27 +8,36 @@ namespace watchdog {
 
 Subprocess::Subprocess(absl::string_view cmd, size_t max_stdout_size, size_t max_stderr_size)
     : state_(kCreated), cmd_(cmd),
-      max_stdout_size_(max_stdout_size), max_stderr_size_(max_stderr_size),
-      stdin_pipe_closed_(false) {}
+      max_stdout_size_(max_stdout_size), max_stderr_size_(max_stderr_size) {
+    pipe_types_.push_back(UV_READABLE_PIPE);  // stdin
+    pipe_types_.push_back(UV_WRITABLE_PIPE);  // stdout
+    pipe_types_.push_back(UV_WRITABLE_PIPE);  // stderr
+}
 
 Subprocess::~Subprocess() {
     CHECK(state_ == kCreated || state_ == kClosed);
 }
 
-void Subprocess::BuildReadablePipe(uv_loop_t* uv_loop, uv_pipe_t* uv_pipe,
-                                   uv_stdio_container_t* stdio_container) {
-    UV_CHECK_OK(uv_pipe_init(uv_loop, uv_pipe, 0));
-    uv_pipe->data = this;
-    stdio_container->flags = static_cast<uv_stdio_flags>(UV_CREATE_PIPE | UV_READABLE_PIPE);
-    stdio_container->data.stream = UV_AS_STREAM(uv_pipe);
+int Subprocess::CreateReadablePipe() {
+    CHECK(state_ == kCreated);
+    pipe_types_.push_back(UV_READABLE_PIPE);
+    return static_cast<int>(pipe_types_.size()) - 1;
 }
 
-void Subprocess::BuildWritablePipe(uv_loop_t* uv_loop, uv_pipe_t* uv_pipe,
-                                   uv_stdio_container_t* stdio_container) {
-    UV_CHECK_OK(uv_pipe_init(uv_loop, uv_pipe, 0));
-    uv_pipe->data = this;
-    stdio_container->flags = static_cast<uv_stdio_flags>(UV_CREATE_PIPE | UV_WRITABLE_PIPE);
-    stdio_container->data.stream = UV_AS_STREAM(uv_pipe);
+int Subprocess::CreateWritablePipe() {
+    CHECK(state_ == kCreated);
+    pipe_types_.push_back(UV_WRITABLE_PIPE);
+    return static_cast<int>(pipe_types_.size()) - 1;
+}
+
+void Subprocess::AddEnvVariable(absl::string_view name, absl::string_view value) {
+    CHECK(state_ == kCreated);
+    env_variables_.push_back(absl::StrFormat("%s=%s", name, value));
+}
+
+void Subprocess::AddEnvVariable(absl::string_view name, int value) {
+    CHECK(state_ == kCreated);
+    env_variables_.push_back(absl::StrFormat("%s=%d", name, value));
 }
 
 bool Subprocess::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool,
@@ -41,21 +50,42 @@ bool Subprocess::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool,
     options.file = kShellPath;
     const char* args[] = { kShellPath, "-c", cmd_.c_str(), nullptr };
     options.args = const_cast<char**>(args);
-    uv_stdio_container_t stdio[3];
-    BuildReadablePipe(uv_loop, &uv_stdin_pipe_, &stdio[0]);
-    BuildWritablePipe(uv_loop, &uv_stdout_pipe_, &stdio[1]);
-    BuildWritablePipe(uv_loop, &uv_stderr_pipe_, &stdio[2]);
-    options.stdio_count = 3;
-    options.stdio = stdio;
+    std::vector<const char*> env_ptrs;
+    // First add all parent environment variables
+    char** ptr = environ;
+    while (*ptr != nullptr) {
+        env_ptrs.push_back(*ptr);
+        ptr++;
+    }
+    // Then add new variables
+    for (const std::string& item : env_variables_) {
+        env_ptrs.push_back(item.c_str());
+    }
+    env_ptrs.push_back(nullptr);
+    options.env = const_cast<char**>(env_ptrs.data());
+    int num_pipes = pipe_types_.size();
+    CHECK_GE(num_pipes, 3);
+    std::vector<uv_stdio_container_t> stdio(num_pipes);
+    uv_pipe_handles_.resize(num_pipes);
+    pipe_closed_.assign(num_pipes, false);
+    for (int i = 0; i < num_pipes; i++) {
+        uv_pipe_t* uv_pipe = &uv_pipe_handles_[i];
+        UV_CHECK_OK(uv_pipe_init(uv_loop, uv_pipe, 0));
+        uv_pipe->data = this;
+        stdio[i].flags = static_cast<uv_stdio_flags>(UV_CREATE_PIPE | pipe_types_[i]);
+        stdio[i].data.stream = UV_AS_STREAM(uv_pipe);
+    }
+    options.stdio_count = num_pipes;
+    options.stdio = stdio.data();
     uv_process_handle_.data = this;
     if (uv_spawn(uv_loop, &uv_process_handle_, &options) != 0) {
         return false;
     }
     closed_uv_handles_ = 0;
-    total_uv_handles_ = 4;
-    UV_CHECK_OK(uv_read_start(UV_AS_STREAM(&uv_stdout_pipe_),
+    total_uv_handles_ = num_pipes + 1;
+    UV_CHECK_OK(uv_read_start(UV_AS_STREAM(&uv_pipe_handles_[kStdout]),
                               &Subprocess::BufferAllocCallback, &Subprocess::ReadStdoutCallback));
-    UV_CHECK_OK(uv_read_start(UV_AS_STREAM(&uv_stderr_pipe_),
+    UV_CHECK_OK(uv_read_start(UV_AS_STREAM(&uv_pipe_handles_[kStderr]),
                               &Subprocess::BufferAllocCallback, &Subprocess::ReadStderrCallback));
     state_ = kRunning;
     return true;
@@ -71,21 +101,28 @@ void Subprocess::Kill(int signum) {
     }
 }
 
-uv_pipe_t* Subprocess::StdinPipe() {
+uv_pipe_t* Subprocess::GetPipe(int fd) {
     CHECK(state_ != kCreated);
-    CHECK_IN_EVENT_LOOP_THREAD(uv_process_handle_.loop);
-    return &uv_stdin_pipe_;
+    // We prevent touching stdout and stderr pipes directly
+    CHECK(fd != kStdout && fd != kStderr);
+    return &uv_pipe_handles_[fd];
 }
 
-void Subprocess::CloseStdin() {
+void Subprocess::ClosePipe(int fd) {
     CHECK(state_ != kCreated);
     CHECK_IN_EVENT_LOOP_THREAD(uv_process_handle_.loop);
-    if (stdin_pipe_closed_) {
+    if (pipe_closed_[fd]) {
         return;
     }
-    stdin_pipe_closed_ = true;
-    uv_stdin_pipe_.data = this;
-    uv_close(UV_AS_HANDLE(&uv_stdin_pipe_), &Subprocess::CloseCallback);
+    pipe_closed_[fd] = true;
+    uv_pipe_t* uv_pipe = &uv_pipe_handles_[fd];
+    uv_pipe->data = this;
+    uv_close(UV_AS_HANDLE(uv_pipe), &Subprocess::CloseCallback);
+}
+
+bool Subprocess::PipeClosed(int fd) {
+    CHECK(state_ != kCreated);
+    return pipe_closed_[fd];
 }
 
 UV_ALLOC_CB_FOR_CLASS(Subprocess, BufferAlloc) {
@@ -98,6 +135,8 @@ UV_READ_CB_FOR_CLASS(Subprocess, ReadStdout) {
             HLOG(WARNING) << "Read error on stdout, will kill the process: "
                           << uv_strerror(nread);
             Kill();
+        } else {
+            ClosePipe(kStdout);
         }
     } else if (nread > 0) {
         if (stdout_.length() + nread > max_stdout_size_) {
@@ -118,6 +157,8 @@ UV_READ_CB_FOR_CLASS(Subprocess, ReadStderr) {
             HLOG(WARNING) << "Read error on stderr, will kill the process: "
                           << uv_strerror(nread);
             Kill();
+        } else {
+            ClosePipe(kStderr);
         }
     } else if (nread > 0) {
         if (stderr_.length() + nread > max_stderr_size_) {
@@ -134,9 +175,9 @@ UV_READ_CB_FOR_CLASS(Subprocess, ReadStderr) {
 
 UV_EXIT_CB_FOR_CLASS(Subprocess, ProcessExit) {
     exit_status_ = static_cast<int>(exit_status);
-    CloseStdin();
-    uv_close(UV_AS_HANDLE(&uv_stdout_pipe_), &Subprocess::CloseCallback);
-    uv_close(UV_AS_HANDLE(&uv_stderr_pipe_), &Subprocess::CloseCallback);
+    for (size_t i = 0; i < uv_pipe_handles_.size(); i++) {
+        ClosePipe(i);
+    }
     uv_close(UV_AS_HANDLE(&uv_process_handle_), &Subprocess::CloseCallback);
     state_ = kExited;
 }

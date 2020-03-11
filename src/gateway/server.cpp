@@ -18,6 +18,12 @@ using protocol::FuncCall;
 using protocol::MessageType;
 using protocol::Message;
 
+constexpr int Server::kDefaultListenBackLog;
+constexpr int Server::kDefaultNumHttpWorkers;
+constexpr int Server::kDefaultNumIpcWorkers;
+constexpr size_t Server::kHttpConnectionBufferSize;
+constexpr size_t Server::kMessageConnectionBufferSize;
+
 Server::Server()
     : state_(kCreated), port_(-1), listen_backlog_(kDefaultListenBackLog),
       num_http_workers_(kDefaultNumHttpWorkers), num_ipc_workers_(kDefaultNumIpcWorkers),
@@ -194,7 +200,6 @@ void Server::InitAndStartIOWorker(IOWorker* io_worker) {
 
 std::unique_ptr<uv_pipe_t> Server::CreatePipeToWorker(int* pipe_fd_for_worker) {
     int pipe_fds[2];
-    // pipe2 does not work with uv_write2, use socketpair instead
     CHECK_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, pipe_fds), 0);
     std::unique_ptr<uv_pipe_t> pipe_to_worker = absl::make_unique<uv_pipe_t>();
     UV_CHECK_OK(uv_pipe_init(&uv_loop_, pipe_to_worker.get(), 1));
@@ -213,10 +218,10 @@ void Server::TransferConnectionToWorker(IOWorker* io_worker, Connection* connect
     memcpy(buf, &connection, buf_len);
     uv_buf_t uv_buf = uv_buf_init(buf, buf_len);
     uv_pipe_t* pipe_to_worker = pipes_to_io_worker_[io_worker].get();
+    write_req->data = send_handle;
     UV_CHECK_OK(uv_write2(write_req, UV_AS_STREAM(pipe_to_worker),
                           &uv_buf, 1, UV_AS_STREAM(send_handle),
                           &PipeWrite2Callback));
-    uv_close(UV_AS_HANDLE(send_handle), nullptr);
 }
 
 void Server::ReturnConnection(Connection* connection) {
@@ -240,6 +245,7 @@ void Server::ReturnConnection(Connection* connection) {
             }
             message_connections_.erase(message_connection);
         }
+        HLOG(INFO) << "A MessageConnection is returned";
     } else {
         LOG(FATAL) << "Unknown connection type!";
     }
@@ -399,11 +405,11 @@ UV_CONNECTION_CB_FOR_CLASS(Server, HttpConnection) {
         connection = http_connections_.back().get();
         HLOG(INFO) << "Allocate new HttpConnection object, current count is " << http_connections_.size();
     }
-    uv_tcp_t client;
-    UV_CHECK_OK(uv_tcp_init(&uv_loop_, &client));
+    uv_tcp_t* client = new uv_tcp_t;
+    UV_CHECK_OK(uv_tcp_init(&uv_loop_, client));
     UV_CHECK_OK(uv_accept(UV_AS_STREAM(&uv_tcp_handle_),
-                          UV_AS_STREAM(&client)));
-    TransferConnectionToWorker(PickHttpWorker(), connection, UV_AS_STREAM(&client));
+                          UV_AS_STREAM(client)));
+    TransferConnectionToWorker(PickHttpWorker(), connection, UV_AS_STREAM(client));
     active_http_connections_.insert(connection);
 }
 
@@ -414,12 +420,11 @@ UV_CONNECTION_CB_FOR_CLASS(Server, MessageConnection) {
     }
     HLOG(INFO) << "New message connection";
     std::unique_ptr<MessageConnection> connection = absl::make_unique<MessageConnection>(this);
-    uv_pipe_t client;
-    UV_CHECK_OK(uv_pipe_init(&uv_loop_, &client, 0));
-    UV_CHECK_OK(uv_accept(UV_AS_STREAM(&uv_ipc_handle_),
-                          UV_AS_STREAM(&client)));
+    uv_pipe_t* client = new uv_pipe_t;
+    UV_CHECK_OK(uv_pipe_init(&uv_loop_, client, 0));
+    UV_CHECK_OK(uv_accept(UV_AS_STREAM(&uv_ipc_handle_), UV_AS_STREAM(client)));
     TransferConnectionToWorker(PickIpcWorker(), connection.get(),
-                               UV_AS_STREAM(&client));
+                               UV_AS_STREAM(client));
     message_connections_.insert(std::move(connection));
 }
 
@@ -430,13 +435,13 @@ UV_READ_CB_FOR_CLASS(Server, ReturnConnection) {
         } else {
             HLOG(ERROR) << "Failed to read from pipe: " << uv_strerror(nread);
         }
+    } else if (nread > 0) {
+        utils::ReadMessages<Connection*>(
+            &return_connection_read_buffer_, buf->base, nread,
+            [this] (Connection** connection) {
+                ReturnConnection(*connection);
+            });
     }
-    if (nread <= 0) return;
-    utils::ReadMessages<Connection*>(
-        &return_connection_read_buffer_, buf->base, nread,
-        [this] (Connection** connection) {
-            ReturnConnection(*connection);
-        });
     free(buf->base);
 }
 
@@ -460,6 +465,9 @@ UV_ASYNC_CB_FOR_CLASS(Server, Stop) {
 
 UV_WRITE_CB_FOR_CLASS(Server, PipeWrite2) {
     CHECK(status == 0) << "Failed to write to pipe: " << uv_strerror(status);
+    uv_pipe_t* send_handle = reinterpret_cast<uv_pipe_t*>(req->data);
+    uv_close(UV_AS_HANDLE(send_handle), nullptr);
+    delete send_handle;
 }
 
 }  // namespace gateway

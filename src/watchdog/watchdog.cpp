@@ -14,12 +14,14 @@ using protocol::MessageType;
 using protocol::FuncCall;
 using protocol::Message;
 
+constexpr size_t Watchdog::kSubprocessPipeBufferSizeForSerializingMode;
+constexpr size_t Watchdog::kSubprocessPipeBufferSizeForFuncWorkerMode;
+
 Watchdog::Watchdog()
     : state_(kCreated), func_id_(-1), client_id_(0),
       event_loop_thread_("Watchdog_EventLoop",
                          std::bind(&Watchdog::EventLoopThreadMain, this)),
-      gateway_connection_(this),
-      buffer_pool_for_subprocess_pipes_("SubprocessPipe", kSubprocessPipeBufferSize) {
+      gateway_connection_(this), next_func_worker_id_(0) {
     UV_CHECK_OK(uv_loop_init(&uv_loop_));
     uv_loop_.data = &event_loop_thread_;
     UV_CHECK_OK(uv_async_init(&uv_loop_, &stop_event_, &Watchdog::StopCallback));
@@ -30,6 +32,7 @@ Watchdog::~Watchdog() {
     State state = state_.load();
     CHECK(state == kCreated || state == kStopped);
     UV_CHECK_OK(uv_loop_close(&uv_loop_));
+    CHECK(func_runners_.empty());
 }
 
 void Watchdog::ScheduleStop() {
@@ -41,7 +44,23 @@ void Watchdog::Start() {
     CHECK(state_.load() == kCreated);
     CHECK(func_id_ != -1);
     CHECK(!fprocess_.empty());
-    CHECK(run_mode_ == RunMode::SERIALIZING);
+    switch (run_mode_) {
+    case RunMode::SERIALIZING:
+        buffer_pool_for_subprocess_pipes_ = absl::make_unique<utils::BufferPool>(
+            "SubprocessPipe", kSubprocessPipeBufferSizeForSerializingMode);
+        break;
+    case RunMode::FUNC_WORKER:
+        buffer_pool_for_subprocess_pipes_ = absl::make_unique<utils::BufferPool>(
+            "SubprocessPipe", kSubprocessPipeBufferSizeForFuncWorkerMode);
+        for (int i = 0; i < num_func_workers_; i++) {
+            auto func_worker = absl::make_unique<FuncWorker>(this, fprocess_, i);
+            func_worker->Start(&uv_loop_, buffer_pool_for_subprocess_pipes_.get());
+            func_workers_.push_back(std::move(func_worker));
+        }
+        break;
+    default:
+        LOG(FATAL) << "Unknown run mode";
+    }
     // Create shared memory pool
     CHECK(!shared_mem_path_.empty());
     shared_memory_ = absl::make_unique<utils::SharedMemory>(shared_mem_path_);
@@ -101,13 +120,17 @@ void Watchdog::OnRecvMessage(const protocol::Message& message) {
         }
         FuncRunner* func_runner;
         switch (run_mode_) {
-            case RunMode::SERIALIZING:
-                func_runner = new SerializingFuncRunner(
-                    this, func_call.full_call_id,
-                    &buffer_pool_for_subprocess_pipes_, shared_memory_.get());
-                break;
-            default:
-                LOG(FATAL) << "Unknown run mode";
+        case RunMode::SERIALIZING:
+            func_runner = new SerializingFuncRunner(
+                this, func_call.full_call_id,
+                buffer_pool_for_subprocess_pipes_.get(), shared_memory_.get());
+            break;
+        case RunMode::FUNC_WORKER:
+            func_runner = new WorkerFuncRunner(
+                this, func_call.full_call_id, PickFuncWorker());
+            break;
+        default:
+            LOG(FATAL) << "Unknown run mode";
         }
         func_runners_[func_call.full_call_id] = std::unique_ptr<FuncRunner>(func_runner);
         func_runner->Start(&uv_loop_);
@@ -122,11 +145,17 @@ void Watchdog::OnFuncRunnerComplete(FuncRunner* func_runner, FuncRunner::Status 
     FuncCall func_call;
     func_call.full_call_id = func_runner->call_id();
     func_runners_.erase(func_runner->call_id());
+    if (state_.load() == kStopping) {
+        HLOG(WARNING) << "Watchdog is scheduled to close, will not write to gateway connection";
+        return;
+    }
     if (status == FuncRunner::kSuccess) {
-        gateway_connection_.WriteWMessage({
-            .message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_COMPLETE),
-            .func_call = func_call
-        });
+        if (run_mode_ == RunMode::SERIALIZING) {
+            gateway_connection_.WriteWMessage({
+                .message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_COMPLETE),
+                .func_call = func_call
+            });
+        }
     } else {
         gateway_connection_.WriteWMessage({
             .message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_FAILED),
@@ -135,12 +164,29 @@ void Watchdog::OnFuncRunnerComplete(FuncRunner* func_runner, FuncRunner::Status 
     }
 }
 
+void Watchdog::OnFuncWorkerClose(FuncWorker* func_worker) {
+    HLOG(WARNING) << "FuncWorker[" << func_worker->id() << "] closed";
+}
+
+FuncWorker* Watchdog::PickFuncWorker() {
+    FuncWorker* func_worker = func_workers_[next_func_worker_id_].get();
+    next_func_worker_id_ = (next_func_worker_id_ + 1) % func_workers_.size();
+    return func_worker;
+}
+
 UV_ASYNC_CB_FOR_CLASS(Watchdog, Stop) {
     if (state_.load(std::memory_order_consume) == kStopping) {
         HLOG(WARNING) << "Already in stopping state";
         return;
     }
     gateway_connection_.ScheduleClose();
+    for (const auto& entry : func_runners_) {
+        FuncRunner* func_runner = entry.second.get();
+        func_runner->ScheduleStop();
+    }
+    for (const auto& func_worker : func_workers_) {
+        func_worker->ScheduleClose();
+    }
     uv_close(UV_AS_HANDLE(&stop_event_), nullptr);
     state_.store(kStopping);
 }

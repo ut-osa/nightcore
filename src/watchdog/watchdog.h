@@ -8,13 +8,15 @@
 #include "watchdog/run_mode.h"
 #include "watchdog/gateway_connection.h"
 #include "watchdog/func_runner.h"
+#include "watchdog/func_worker.h"
 
 namespace faas {
 namespace watchdog {
 
 class Watchdog {
 public:
-    static constexpr size_t kSubprocessPipeBufferSize = 65536;
+    static constexpr size_t kSubprocessPipeBufferSizeForSerializingMode = 65536;
+    static constexpr size_t kSubprocessPipeBufferSizeForFuncWorkerMode = 256;
 
     Watchdog();
     ~Watchdog();
@@ -34,6 +36,13 @@ public:
     void set_run_mode(int run_mode) {
         run_mode_ = static_cast<RunMode>(run_mode);
     }
+    void set_num_func_workers(int num_func_workers) {
+        num_func_workers_ = num_func_workers;
+    }
+
+    absl::string_view gateway_ipc_path() const { return gateway_ipc_path_; }
+    int func_id() const { return func_id_; }
+    absl::string_view shared_mem_path() const { return shared_mem_path_; }
 
     absl::string_view fprocess() const { return fprocess_; }
 
@@ -43,6 +52,7 @@ public:
 
     void OnGatewayConnectionClose();
     void OnFuncRunnerComplete(FuncRunner* func_runner, FuncRunner::Status status);
+    void OnFuncWorkerClose(FuncWorker* func_worker);
 
     bool OnRecvHandshakeResponse(const protocol::HandshakeResponse& response);
     void OnRecvMessage(const protocol::Message& message);
@@ -56,6 +66,7 @@ private:
     std::string fprocess_;
     std::string shared_mem_path_;
     RunMode run_mode_;
+    int num_func_workers_;
     uint16_t client_id_;
 
     uv_loop_t uv_loop_;
@@ -65,10 +76,14 @@ private:
     std::unique_ptr<utils::SharedMemory> shared_memory_;
 
     GatewayConnection gateway_connection_;
-    utils::BufferPool buffer_pool_for_subprocess_pipes_;
+    std::unique_ptr<utils::BufferPool> buffer_pool_for_subprocess_pipes_;
     absl::flat_hash_map<uint64_t, std::unique_ptr<FuncRunner>> func_runners_;
 
+    std::vector<std::unique_ptr<FuncWorker>> func_workers_;
+    int next_func_worker_id_;
+
     void EventLoopThreadMain();
+    FuncWorker* PickFuncWorker();
 
     DECLARE_UV_ASYNC_CB_FOR_CLASS(Stop);
 

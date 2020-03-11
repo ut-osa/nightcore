@@ -6,6 +6,8 @@
 namespace faas {
 namespace gateway {
 
+constexpr size_t IOWorker::kDefaultBufferSize;
+
 IOWorker::IOWorker(Server* server, absl::string_view worker_name,
                    size_t read_buffer_size, size_t write_buffer_size)
     : server_(server), worker_name_(worker_name), state_(kCreated),
@@ -79,20 +81,17 @@ void IOWorker::ReturnWriteBuffer(char* buf) {
 
 void IOWorker::OnConnectionClose(Connection* connection) {
     CHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
+    CHECK(pipe_to_server_.loop == &uv_loop_);
     CHECK(connections_.contains(connection));
-    connections_.erase(connection);
+    HLOG(INFO) << "An associated connection closed";
     uv_write_t* write_req = connection->uv_write_req_for_back_transfer();
     size_t buf_len = sizeof(void*);
     char* buf = connection->pipe_write_buf_for_transfer();
     memcpy(buf, &connection, buf_len);
     uv_buf_t uv_buf = uv_buf_init(buf, buf_len);
-    write_req->data = this;
+    write_req->data = connection;
     UV_CHECK_OK(uv_write(write_req, UV_AS_STREAM(&pipe_to_server_),
                          &uv_buf, 1, &IOWorker::PipeWriteCallback));
-    if (state_.load(std::memory_order_consume) == kStopping && connections_.empty()) {
-        // We have returned all Connection objects to Server
-        uv_close(UV_AS_HANDLE(&pipe_to_server_), nullptr);
-    }
 }
 
 void IOWorker::EventLoopThreadMain() {
@@ -113,6 +112,7 @@ UV_ASYNC_CB_FOR_CLASS(IOWorker, Stop) {
     HLOG(INFO) << "Start stopping process";
     UV_CHECK_OK(uv_read_stop(UV_AS_STREAM(&pipe_to_server_)));
     if (connections_.empty()) {
+        HLOG(INFO) << "Close pipe to Server";
         uv_close(UV_AS_HANDLE(&pipe_to_server_), nullptr);
     } else {
         for (Connection* connection : connections_) {
@@ -140,6 +140,15 @@ UV_READ_CB_FOR_CLASS(IOWorker, NewConnection) {
 
 UV_WRITE_CB_FOR_CLASS(IOWorker, PipeWrite) {
     CHECK(status == 0) << "Failed to write to pipe: " << uv_strerror(status);
+    HLOG(INFO) << "Pipe write successful";
+    Connection* connection = reinterpret_cast<Connection*>(req->data);
+    CHECK(connections_.contains(connection));
+    connections_.erase(connection);
+    if (state_.load(std::memory_order_consume) == kStopping && connections_.empty()) {
+        // We have returned all Connection objects to Server
+        HLOG(INFO) << "Close pipe to Server";
+        uv_close(UV_AS_HANDLE(&pipe_to_server_), nullptr);
+    }
 }
 
 }  // namespace gateway

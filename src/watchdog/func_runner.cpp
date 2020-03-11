@@ -1,6 +1,7 @@
 #include "watchdog/func_runner.h"
 
 #include "watchdog/watchdog.h"
+#include "watchdog/func_worker.h"
 
 #include <absl/functional/bind_front.h>
 
@@ -35,7 +36,7 @@ void SerializingFuncRunner::Start(uv_loop_t* uv_loop) {
         Complete(kFailedToStartProcess);
         return;
     }
-    uv_pipe_t* subprocess_stdin = subprocess_.StdinPipe();
+    uv_pipe_t* subprocess_stdin = subprocess_.GetPipe(Subprocess::kStdin);
     input_region_ = shared_memory_->OpenReadOnly(absl::StrCat(call_id_, ".i"));
     uv_buf_t buf = {
         .base = const_cast<char*>(input_region_->base()),
@@ -68,6 +69,10 @@ void SerializingFuncRunner::OnSubprocessExit(int exit_status,
     Complete(kSuccess);
 }
 
+void SerializingFuncRunner::ScheduleStop() {
+    subprocess_.Kill();
+}
+
 UV_WRITE_CB_FOR_CLASS(SerializingFuncRunner, WriteSubprocessStdin) {
     if (status != 0) {
         HLOG(ERROR) << "Failed to write input data";
@@ -76,7 +81,23 @@ UV_WRITE_CB_FOR_CLASS(SerializingFuncRunner, WriteSubprocessStdin) {
     CHECK(input_region_ != nullptr);
     input_region_->Close();
     input_region_ = nullptr;
-    subprocess_.CloseStdin();
+    subprocess_.ClosePipe(Subprocess::kStdin);
+}
+
+WorkerFuncRunner::WorkerFuncRunner(Watchdog* watchdog, uint64_t call_id,
+                                   FuncWorker* func_worker)
+    : FuncRunner(watchdog, call_id), func_worker_(func_worker) {}
+
+WorkerFuncRunner::~WorkerFuncRunner() {}
+
+void WorkerFuncRunner::Start(uv_loop_t* uv_loop) {
+    if (func_worker_ == nullptr || !func_worker_->ScheduleFuncCall(this, call_id_)) {
+        Complete(kFailedToSchedule);
+    }
+}
+
+void WorkerFuncRunner::ScheduleStop() {
+    // Barely do nothing
 }
 
 }  // namespace watchdog

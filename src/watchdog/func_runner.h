@@ -9,6 +9,7 @@ namespace faas {
 namespace watchdog {
 
 class Watchdog;
+class FuncWorker;
 
 class FuncRunner {
 public:
@@ -19,10 +20,13 @@ public:
 
     uint64_t call_id() const { return call_id_; }
     virtual void Start(uv_loop_t* uv_loop) = 0;
+    virtual void ScheduleStop() = 0;
 
     enum Status {
         kSuccess,
+        kFailedWithoutReason,
         kFailedToStartProcess,
+        kFailedToSchedule,
         kProcessExitAbnormally,
         kEmptyOutput
     };
@@ -47,6 +51,7 @@ public:
     ~SerializingFuncRunner();
 
     void Start(uv_loop_t* uv_loop) override;
+    void ScheduleStop() override;
 
 private:
     Subprocess subprocess_;
@@ -58,10 +63,25 @@ private:
 
     void OnSubprocessExit(int exit_status, absl::Span<const char> stdout,
                           absl::Span<const char> stderr);
-    
+
     DECLARE_UV_WRITE_CB_FOR_CLASS(WriteSubprocessStdin);
 
     DISALLOW_COPY_AND_ASSIGN(SerializingFuncRunner);
+};
+
+class WorkerFuncRunner final : public FuncRunner {
+public:
+    WorkerFuncRunner(Watchdog* watchdog, uint64_t call_id,
+                     FuncWorker* func_worker);
+    ~WorkerFuncRunner();
+
+    void Start(uv_loop_t* uv_loop) override;
+    void ScheduleStop() override;
+
+private:
+    FuncWorker* func_worker_;
+
+    DISALLOW_COPY_AND_ASSIGN(WorkerFuncRunner);
 };
 
 }  // namespace watchdog

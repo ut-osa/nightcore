@@ -10,7 +10,9 @@ enum class RunMode {
     // In Serializing mode, a new fprocess is created for each
     // function call. Input data is sent via stdin, and output
     // data is read from stdout.
-    SERIALIZING = 1
+    SERIALIZING = 1,
+
+    FUNC_WORKER = 2
 };
 
 }  // namespace watchdog

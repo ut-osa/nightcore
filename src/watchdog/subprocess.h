@@ -14,10 +14,22 @@ public:
     static constexpr size_t kDefaultMaxStderrSize = 1 * 1024 * 1024;   // 1MB
     static constexpr const char* kShellPath = "/bin/bash";
 
+    enum StandardPipe { kStdin = 0, kStdout = 1, kStderr = 2 };
+
     explicit Subprocess(absl::string_view cmd,
                         size_t max_stdout_size = kDefaultMaxStdoutSize,
                         size_t max_stderr_size = kDefaultMaxStderrSize);
     ~Subprocess();
+
+    // For both CreateReadPipe and CreateWritePipe, fd is returned. stdin, stdout,
+    // and stderr pipes will be created automatically, thus new pipes start with fd 3. 
+    // Also note that notions of readable/writable is from the perspective of created
+    // subprocess.
+    int CreateReadablePipe();
+    int CreateWritablePipe();
+
+    void AddEnvVariable(absl::string_view name, absl::string_view value);
+    void AddEnvVariable(absl::string_view name, int value);
 
     typedef std::function<void(int /* exit_status */, absl::Span<const char> /* stdout */,
                                absl::Span<const char> /* stderr */)> ExitCallback;
@@ -26,9 +38,13 @@ public:
                ExitCallback exit_callback);
     void Kill(int signum = SIGKILL);
 
-    // Caller should not close stdin pipe by itself, but to call CloseStdin()
-    uv_pipe_t* StdinPipe();
-    void CloseStdin();
+    // Caller should not close pipe by itself, but to call ClosePipe with fd.
+    // Note that the caller should NOT touch stdout (fd = 1) and stderr (fd = 2)
+    // with GetPipe and ClosePipe. These two pipes are fully managed by Subprocess
+    // class.
+    uv_pipe_t* GetPipe(int fd);
+    void ClosePipe(int fd);
+    bool PipeClosed(int fd);
 
 private:
     enum State { kCreated, kRunning, kExited, kClosed };
@@ -42,20 +58,16 @@ private:
     int closed_uv_handles_;
     int total_uv_handles_;
 
+    std::vector<uv_stdio_flags> pipe_types_;
+    std::vector<std::string> env_variables_;
+
     uv_process_t uv_process_handle_;
-    uv_pipe_t uv_stdin_pipe_;
-    uv_pipe_t uv_stdout_pipe_;
-    uv_pipe_t uv_stderr_pipe_;
-    bool stdin_pipe_closed_;
+    std::vector<uv_pipe_t> uv_pipe_handles_;
+    std::vector<bool> pipe_closed_;
 
     utils::BufferPool* read_buffer_pool_;
     utils::AppendableBuffer stdout_;
     utils::AppendableBuffer stderr_;
-
-    void BuildReadablePipe(uv_loop_t* uv_loop, uv_pipe_t* uv_pipe,
-                           uv_stdio_container_t* stdio_container);
-    void BuildWritablePipe(uv_loop_t* uv_loop, uv_pipe_t* uv_pipe,
-                           uv_stdio_container_t* stdio_container);
 
     DECLARE_UV_ALLOC_CB_FOR_CLASS(BufferAlloc);
     DECLARE_UV_READ_CB_FOR_CLASS(ReadStdout);
