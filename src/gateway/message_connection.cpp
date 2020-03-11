@@ -184,7 +184,7 @@ UV_ASYNC_CB_FOR_CLASS(MessageConnection, NewMessageForWrite) {
         io_worker_->NewWriteBuffer(&buf);
         size_t copy_size = std::min(buf.len, write_size);
         memcpy(buf.base, ptr, copy_size);
-        buf.len = write_size;
+        buf.len = copy_size;
         uv_write_t* write_req = write_req_pool_.Get();
         write_req->data = buf.base;
         UV_CHECK_OK(uv_write(write_req, UV_AS_STREAM(&uv_pipe_handle_),
