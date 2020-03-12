@@ -19,7 +19,7 @@ INCLUDES = -I$(SRC_PATH) -I./include -Ideps/out/include
 ABSL_LIBRARIES = $(shell find deps/out/lib/libabsl_*.a -printf '%f\n' \
 	| sed -e 's/libabsl_\([a-z0-9_]\+\)\.a/-labsl_\1/g')
 LINK_FLAGS = -Ldeps/out/lib \
-	-Wl,-Bstatic -luv_a -lhttp_parser \
+	-Wl,-Bstatic -luv_a -lhttp_parser -lyaml-cpp \
 	-Wl,--start-group $(ABSL_LIBRARIES) -Wl,--end-group \
 	-Wl,-Bdynamic -lpthread -ldl
 # Additional release-specific linker settings
@@ -27,6 +27,10 @@ RLINK_FLAGS = -Wl,-Bstatic -lglog -Wl,-Bdynamic
 # Additional debug-specific linker settings
 DLINK_FLAGS = -Wl,-Bstatic -lglogd -Wl,-Bdynamic
 #### END PROJECT SETTINGS ####
+
+ifeq ($(CXX),clang++)
+	COMPILE_FLAGS += -Wthread-safety -Wno-unused-private-field
+endif
 
 # Optionally you may move the section above to a separate config.mk file, and
 # uncomment the line below
