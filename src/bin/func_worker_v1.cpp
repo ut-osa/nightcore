@@ -22,6 +22,8 @@ int main(int argc, char* argv[]) {
         faas::utils::GetEnvVariableAsInt<int>("OUTPUT_PIPE_FD", -1));
     func_worker->set_shared_mem_path(
         faas::utils::GetEnvVariable("SHARED_MEMORY_PATH", "/dev/shm/faas"));
+    func_worker->set_func_config_file(
+        faas::utils::GetEnvVariable("FUNC_CONFIG_FILE"));
 
     func_worker->Serve();
 

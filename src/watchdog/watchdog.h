@@ -2,6 +2,7 @@
 
 #include "base/common.h"
 #include "common/protocol.h"
+#include "common/func_config.h"
 #include "utils/uv_utils.h"
 #include "utils/shared_memory.h"
 #include "utils/buffer_pool.h"
@@ -30,8 +31,11 @@ public:
     void set_fprocess(absl::string_view fprocess) {
         fprocess_ = std::string(fprocess);
     }
-    void set_shared_mem_path(absl::string_view shared_mem_path) {
-        shared_mem_path_ = std::string(shared_mem_path);
+    void set_shared_mem_path(absl::string_view path) {
+        shared_mem_path_ = std::string(path);
+    }
+    void set_func_config_file(absl::string_view path) {
+        func_config_file_ = std::string(path);
     }
     void set_run_mode(int run_mode) {
         run_mode_ = static_cast<RunMode>(run_mode);
@@ -43,6 +47,7 @@ public:
     absl::string_view gateway_ipc_path() const { return gateway_ipc_path_; }
     int func_id() const { return func_id_; }
     absl::string_view shared_mem_path() const { return shared_mem_path_; }
+    absl::string_view func_config_file() const { return func_config_file_; }
 
     absl::string_view fprocess() const { return fprocess_; }
 
@@ -65,6 +70,7 @@ private:
     int func_id_;
     std::string fprocess_;
     std::string shared_mem_path_;
+    std::string func_config_file_;
     RunMode run_mode_;
     int num_func_workers_;
     uint16_t client_id_;
@@ -73,6 +79,7 @@ private:
     uv_async_t stop_event_;
     base::Thread event_loop_thread_;
 
+    FuncConfig func_config_;
     std::unique_ptr<utils::SharedMemory> shared_memory_;
 
     GatewayConnection gateway_connection_;

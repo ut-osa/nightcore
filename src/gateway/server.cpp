@@ -60,27 +60,28 @@ void Server::RegisterInternalRequestHandlers() {
     }, [] (HttpSyncRequestContext* context) {
         context->AppendToResponseBody("Hello world\n");
     });
-    // POST /function/[func_id]
-    RegisterAsyncRequestHandler([] (absl::string_view method, absl::string_view path) -> bool {
+    // POST /function/[:name]
+    RegisterAsyncRequestHandler([this] (absl::string_view method, absl::string_view path) -> bool {
         if (method != "POST" || !absl::StartsWith(path, "/function/")) {
             return false;
         }
-        int func_id;
-        if (!SimpleAtoi(absl::StripPrefix(path, "/function/"), &func_id)) {
-            return false;
-        }
-        return func_id > 0;
+        absl::string_view func_name = absl::StripPrefix(path, "/function/");
+        const FuncConfig::Entry* func_entry = func_config_.find_by_func_name(func_name);
+        return func_entry != nullptr;
     }, [this] (std::shared_ptr<HttpAsyncRequestContext> context) {
-        int func_id;
-        CHECK(SimpleAtoi(absl::StripPrefix(context->path(), "/function/"), &func_id));
-        DCHECK(func_id > 0);
-        OnExternalFuncCall(static_cast<uint16_t>(func_id), std::move(context));
+        const FuncConfig::Entry* func_entry = func_config_.find_by_func_name(
+            absl::StripPrefix(context->path(), "/function/"));
+        DCHECK(func_entry != nullptr);
+        OnExternalFuncCall(static_cast<uint16_t>(func_entry->func_id), std::move(context));
     });
 }
 
 void Server::Start() {
     DCHECK(state_.load() == kCreated);
     RegisterInternalRequestHandlers();
+    // Load function config file
+    CHECK(!func_config_file_.empty());
+    CHECK(func_config_.Load(func_config_file_));
     // Create shared memory pool
     CHECK(!shared_mem_path_.empty());
     if (fs_utils::IsDirectory(shared_mem_path_)) {
@@ -401,7 +402,7 @@ void Server::OnExternalFuncCall(uint16_t func_id, std::shared_ptr<HttpAsyncReque
             });
         } else {
             http_context->AppendToResponseBody(
-                absl::StrFormat("Cannot find function with func_id %d\n", static_cast<int>(func_id)));
+                absl::StrFormat("Cannot find watchdog for func_id %d\n", static_cast<int>(func_id)));
             http_context->SetStatus(404);
             http_context->Finish();
             return;

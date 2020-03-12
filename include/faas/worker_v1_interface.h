@@ -20,7 +20,7 @@ typedef void (*faas_append_output_fn)(
 
 // Return 0 on success.
 typedef int (*faas_invoke_func_fn)(
-    void* caller_context, int func_id,
+    void* caller_context, const char* func_name,
     const char* input_data, size_t input_length,
     const char** output_data, size_t* output_length);
 

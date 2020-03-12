@@ -2,6 +2,7 @@
 
 #include "base/common.h"
 #include "common/protocol.h"
+#include "common/func_config.h"
 #include "utils/uv_utils.h"
 #include "utils/buffer_pool.h"
 #include "utils/shared_memory.h"
@@ -31,8 +32,11 @@ public:
     void set_listen_backlog(int value) { listen_backlog_ = value; }
     void set_num_http_workers(int value) { num_http_workers_ = value; }
     void set_num_ipc_workers(int value) { num_ipc_workers_ = value; }
-    void set_shared_mem_path(absl::string_view shared_mem_path) {
-        shared_mem_path_ = std::string(shared_mem_path);
+    void set_shared_mem_path(absl::string_view path) {
+        shared_mem_path_ = std::string(path);
+    }
+    void set_func_config_file(absl::string_view path) {
+        func_config_file_ = std::string(path);
     }
 
     void Start();
@@ -99,6 +103,7 @@ private:
     int num_http_workers_;
     int num_ipc_workers_;
     std::string shared_mem_path_;
+    std::string func_config_file_;
 
     uv_loop_t uv_loop_;
     uv_tcp_t uv_tcp_handle_;
@@ -130,6 +135,7 @@ private:
         watchdog_connections_by_func_id_ ABSL_GUARDED_BY(message_connection_mu_);
     absl::flat_hash_set<std::unique_ptr<MessageConnection>> message_connections_;
 
+    FuncConfig func_config_;
     std::atomic<uint32_t> next_call_id_;
     std::unique_ptr<utils::SharedMemory> shared_memory_;
     absl::Mutex external_func_calls_mu_;

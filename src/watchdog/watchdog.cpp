@@ -42,7 +42,11 @@ void Watchdog::ScheduleStop() {
 
 void Watchdog::Start() {
     DCHECK(state_.load() == kCreated);
+    // Load function config file
+    CHECK(!func_config_file_.empty());
+    CHECK(func_config_.Load(func_config_file_));
     CHECK(func_id_ != -1);
+    CHECK(func_config_.find_by_func_id(func_id_) != nullptr);
     CHECK(!fprocess_.empty());
     switch (run_mode_) {
     case RunMode::SERIALIZING:

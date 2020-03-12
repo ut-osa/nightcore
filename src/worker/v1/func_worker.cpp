@@ -27,6 +27,11 @@ FuncWorker::~FuncWorker() {
 }
 
 void FuncWorker::Serve() {
+    // Load function config file
+    CHECK(!func_config_file_.empty());
+    CHECK(func_config_.Load(func_config_file_));
+    CHECK(func_id_ != -1);
+    CHECK(func_config_.find_by_func_id(func_id_) != nullptr);
     // Load function library
     CHECK(!func_library_path_.empty());
     func_library_ = utils::DynamicLibrary::Create(func_library_path_);
@@ -46,7 +51,6 @@ void FuncWorker::Serve() {
     shared_memory_ = absl::make_unique<utils::SharedMemory>(shared_mem_path_);
     // Connect to gateway via IPC path
     CHECK(!gateway_ipc_path_.empty());
-    CHECK(func_id_ != -1);
     gateway_sock_fd_ = utils::UnixDomainSocketConnect(gateway_ipc_path_);
     GatewayIpcHandshake();
     gateway_ipc_thread_.Start();
@@ -170,13 +174,18 @@ bool FuncWorker::RunFuncHandler(void* worker_handle, uint64_t call_id) {
     return true;
 }
 
-bool FuncWorker::InvokeFunc(int func_id, const char* input_data, size_t input_length,
+bool FuncWorker::InvokeFunc(const char* func_name, const char* input_data, size_t input_length,
                             const char** output_data, size_t* output_length) {
+    const FuncConfig::Entry* func_entry = func_config_.find_by_func_name(
+        absl::string_view(func_name, strlen(func_name)));
+    if (func_entry == nullptr) {
+        return false;
+    }
     FuncInvokeContext* context = new FuncInvokeContext;
     context->success = false;
     context->output_region = nullptr;
     FuncCall func_call;
-    func_call.func_id = static_cast<uint16_t>(func_id);
+    func_call.func_id = static_cast<uint16_t>(func_entry->func_id);
     func_call.client_id = client_id_;
     {
         absl::MutexLock lk(&invoke_func_mu_);
@@ -209,11 +218,11 @@ void FuncWorker::AppendOutputWrapper(void* caller_context, const char* data, siz
     self->func_output_buffer_.AppendData(data, length);
 }
 
-int FuncWorker::InvokeFuncWrapper(void* caller_context, int func_id,
+int FuncWorker::InvokeFuncWrapper(void* caller_context, const char* func_name,
                                   const char* input_data, size_t input_length,
                                   const char** output_data, size_t* output_length) {
     FuncWorker* self = reinterpret_cast<FuncWorker*>(caller_context);
-    bool success = self->InvokeFunc(func_id, input_data, input_length, output_data, output_length);
+    bool success = self->InvokeFunc(func_name, input_data, input_length, output_data, output_length);
     return success ? 0 : -1;
 }
 
