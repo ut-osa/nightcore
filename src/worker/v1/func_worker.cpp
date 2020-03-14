@@ -60,7 +60,10 @@ void FuncWorker::Serve() {
 
 void FuncWorker::MainServingLoop() {
     void* func_worker;
-    CHECK(create_func_worker_fn_(this, &func_worker) == 0)
+    CHECK(create_func_worker_fn_(this,
+                                 &FuncWorker::InvokeFuncWrapper,
+                                 &FuncWorker::AppendOutputWrapper,
+                                 &func_worker) == 0)
         << "Failed to create function worker";
 
     while (true) {
@@ -160,10 +163,9 @@ bool FuncWorker::RunFuncHandler(void* worker_handle, uint64_t call_id) {
         absl::StrCat(call_id, ".i"));
     func_output_buffer_.Reset();
     int ret = func_call_fn_(
-        worker_handle, input_region->base(), input_region->size(),
-        &FuncWorker::InvokeFuncWrapper, &FuncWorker::AppendOutputWrapper);
+        worker_handle, input_region->base(), input_region->size());
     input_region->Close();
-    if (ret != 0) {
+    if (ret != 0 || func_output_buffer_.length() == 0) {
         return false;
     }
     utils::SharedMemory::Region* output_region = shared_memory_->Create(

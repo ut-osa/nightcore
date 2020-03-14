@@ -15,11 +15,11 @@ extern "C" {
 
 // ================== INTERFACE START ==================
 
-typedef void (*faas_append_output_fn)(
+typedef void (*faas_append_output_fn_t)(
     void* caller_context, const char* data, size_t length);
 
 // Return 0 on success.
-typedef int (*faas_invoke_func_fn)(
+typedef int (*faas_invoke_func_fn_t)(
     void* caller_context, const char* func_name,
     const char* input_data, size_t input_length,
     const char** output_data, size_t* output_length);
@@ -31,22 +31,24 @@ typedef int (*faas_invoke_func_fn)(
 // the dynamic library.
 API_EXPORT int faas_init();
 // Create a new function worker.
-API_EXPORT int faas_create_func_worker(void* caller_context, void** worker_handle);
+// When calling `invoke_func_fn` and `append_output_fn`, caller_context
+// received in `faas_create_func_worker` should be passed unchanged.
+API_EXPORT int faas_create_func_worker(
+    void* caller_context,
+    faas_invoke_func_fn_t invoke_func_fn,
+    faas_append_output_fn_t append_output_fn,
+    void** worker_handle);
 // Destroy a function worker.
 API_EXPORT int faas_destroy_func_worker(void* worker_handle);
 // Execute the function. `append_output_fn` can be called multiple
 // times to append new data to the output buffer. invoke_func_fn
 // can be used to invoke other functions in the system.
-// When calling `invoke_func_fn` and `append_output_fn`, caller_context
-// received in `faas_create_func_worker` should be passed unchanged.
 // For the same worker_handle, faas_func_call will never be called
 // concurrently from different threads, i.e. the implementation
 // does not need to be thread-safe for a single function worker.
 API_EXPORT int faas_func_call(
     void* worker_handle,
-    const char* input, size_t input_length,
-    faas_invoke_func_fn invoke_func_fn,
-    faas_append_output_fn append_output_fn);
+    const char* input, size_t input_length);
 
 // =================== INTERFACE END ===================
 
