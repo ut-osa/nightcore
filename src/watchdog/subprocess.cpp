@@ -12,10 +12,25 @@ Subprocess::Subprocess(absl::string_view cmd, size_t max_stdout_size, size_t max
     pipe_types_.push_back(UV_READABLE_PIPE);  // stdin
     pipe_types_.push_back(UV_WRITABLE_PIPE);  // stdout
     pipe_types_.push_back(UV_WRITABLE_PIPE);  // stderr
+    std_fds_.assign(kNumStdPipes, -1);
 }
 
 Subprocess::~Subprocess() {
     DCHECK(state_ == kCreated || state_ == kClosed);
+}
+
+void Subprocess::SetStandardFile(StandardPipe pipe, absl::string_view file_path) {
+    DCHECK(state_ == kCreated);
+    DCHECK_EQ(std_fds_[pipe], -1);
+    int fd;
+    if (pipe == kStdin) {
+        fd = open(std::string(file_path).c_str(), O_RDONLY);
+        PCHECK(fd != -1);
+    } else {
+        fd = creat(std::string(file_path).c_str(), 0666);
+        PCHECK(fd != -1);
+    }
+    std_fds_[pipe] = fd;
 }
 
 int Subprocess::CreateReadablePipe() {
@@ -68,12 +83,21 @@ bool Subprocess::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool,
     std::vector<uv_stdio_container_t> stdio(num_pipes);
     uv_pipe_handles_.resize(num_pipes);
     pipe_closed_.assign(num_pipes, false);
+    closed_uv_handles_ = 0;
+    total_uv_handles_ = 1;
     for (int i = 0; i < num_pipes; i++) {
         uv_pipe_t* uv_pipe = &uv_pipe_handles_[i];
-        UV_DCHECK_OK(uv_pipe_init(uv_loop, uv_pipe, 0));
-        uv_pipe->data = this;
-        stdio[i].flags = static_cast<uv_stdio_flags>(UV_CREATE_PIPE | pipe_types_[i]);
-        stdio[i].data.stream = UV_AS_STREAM(uv_pipe);
+        if (i < kNumStdPipes && std_fds_[i] != -1) {
+            stdio[i].flags = UV_INHERIT_FD;
+            stdio[i].data.fd = std_fds_[i];
+            pipe_closed_[i] = true;
+        } else {
+            UV_DCHECK_OK(uv_pipe_init(uv_loop, uv_pipe, 0));
+            uv_pipe->data = this;
+            stdio[i].flags = static_cast<uv_stdio_flags>(UV_CREATE_PIPE | pipe_types_[i]);
+            stdio[i].data.stream = UV_AS_STREAM(uv_pipe);
+            total_uv_handles_++;
+        }
     }
     options.stdio_count = num_pipes;
     options.stdio = stdio.data();
@@ -81,12 +105,19 @@ bool Subprocess::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool,
     if (uv_spawn(uv_loop, &uv_process_handle_, &options) != 0) {
         return false;
     }
-    closed_uv_handles_ = 0;
-    total_uv_handles_ = num_pipes + 1;
-    UV_DCHECK_OK(uv_read_start(UV_AS_STREAM(&uv_pipe_handles_[kStdout]),
-                               &Subprocess::BufferAllocCallback, &Subprocess::ReadStdoutCallback));
-    UV_DCHECK_OK(uv_read_start(UV_AS_STREAM(&uv_pipe_handles_[kStderr]),
-                               &Subprocess::BufferAllocCallback, &Subprocess::ReadStderrCallback));
+    if (std_fds_[kStdout] == -1) {
+        UV_DCHECK_OK(uv_read_start(UV_AS_STREAM(&uv_pipe_handles_[kStdout]),
+                                   &Subprocess::BufferAllocCallback, &Subprocess::ReadStdoutCallback));
+    }
+    if (std_fds_[kStderr] == -1) {
+        UV_DCHECK_OK(uv_read_start(UV_AS_STREAM(&uv_pipe_handles_[kStderr]),
+                                   &Subprocess::BufferAllocCallback, &Subprocess::ReadStderrCallback));
+    }
+    for (int i = 0; i < kNumStdPipes; i++) {
+        if (std_fds_[i] != -1) {
+            PCHECK(close(std_fds_[i]) == 0);
+        }
+    }
     state_ = kRunning;
     return true;
 }

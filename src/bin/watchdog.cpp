@@ -14,6 +14,9 @@ ABSL_FLAG(int, func_id, -1, "Function ID of this watchdog process");
 ABSL_FLAG(std::string, fprocess, "", "Function process");
 ABSL_FLAG(int, run_mode, 1, "Function run mode");
 ABSL_FLAG(int, num_func_workers, 2, "Number of function workers");
+ABSL_FLAG(std::string, func_worker_output_dir, "",
+          "If not empty, stdout and stderr of function workers will be saved "
+          "in the given directory");
 
 static std::atomic<faas::watchdog::Watchdog*> watchdog_ptr(nullptr);
 void SignalHandlerToStopWatchdog(int signal) {
@@ -35,6 +38,7 @@ int main(int argc, char* argv[]) {
     watchdog->set_run_mode(absl::GetFlag(FLAGS_run_mode));
     watchdog->set_num_func_workers(absl::GetFlag(FLAGS_num_func_workers));
     watchdog->set_func_config_file(absl::GetFlag(FLAGS_func_config_file));
+    watchdog->set_func_worker_output_dir(absl::GetFlag(FLAGS_func_worker_output_dir));
 
     watchdog->Start();
     watchdog_ptr.store(watchdog.get());

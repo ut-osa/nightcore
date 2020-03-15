@@ -1,5 +1,7 @@
 #include "watchdog/watchdog.h"
 
+#include "utils/fs.h"
+
 #define HLOG(l) LOG(l) << "Watchdog: "
 #define HVLOG(l) VLOG(l) << "Watchdog: "
 
@@ -54,10 +56,13 @@ void Watchdog::Start() {
             "SubprocessPipe", kSubprocessPipeBufferSizeForSerializingMode);
         break;
     case RunMode::FUNC_WORKER:
+        if (!func_worker_output_dir_.empty() && !fs_utils::Exists(func_worker_output_dir_)) {
+            CHECK(fs_utils::MakeDirectory(func_worker_output_dir_));
+        }
         buffer_pool_for_subprocess_pipes_ = absl::make_unique<utils::BufferPool>(
             "SubprocessPipe", kSubprocessPipeBufferSizeForFuncWorkerMode);
         for (int i = 0; i < num_func_workers_; i++) {
-            auto func_worker = absl::make_unique<FuncWorker>(this, fprocess_, i);
+            auto func_worker = absl::make_unique<FuncWorker>(this, i);
             func_worker->Start(&uv_loop_, buffer_pool_for_subprocess_pipes_.get());
             func_workers_.push_back(std::move(func_worker));
         }

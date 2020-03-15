@@ -14,12 +14,15 @@ public:
     static constexpr size_t kDefaultMaxStderrSize = 1 * 1024 * 1024;   // 1MB
     static constexpr const char* kShellPath = "/bin/bash";
 
-    enum StandardPipe { kStdin = 0, kStdout = 1, kStderr = 2 };
+    enum StandardPipe { kStdin = 0, kStdout = 1, kStderr = 2, kNumStdPipes = 3 };
 
     explicit Subprocess(absl::string_view cmd,
                         size_t max_stdout_size = kDefaultMaxStdoutSize,
                         size_t max_stderr_size = kDefaultMaxStderrSize);
     ~Subprocess();
+
+    // Open file for standard file
+    void SetStandardFile(StandardPipe pipe, absl::string_view file_path);
 
     // For both CreateReadPipe and CreateWritePipe, fd is returned. stdin, stdout,
     // and stderr pipes will be created automatically, thus new pipes start with fd 3. 
@@ -58,6 +61,7 @@ private:
     int closed_uv_handles_;
     int total_uv_handles_;
 
+    std::vector<int> std_fds_;
     std::vector<uv_stdio_flags> pipe_types_;
     std::vector<std::string> env_variables_;
 

@@ -43,13 +43,21 @@ public:
     void set_num_func_workers(int num_func_workers) {
         num_func_workers_ = num_func_workers;
     }
+    void set_func_worker_output_dir(absl::string_view path) {
+        func_worker_output_dir_ = std::string(path);
+    }
 
     absl::string_view gateway_ipc_path() const { return gateway_ipc_path_; }
     int func_id() const { return func_id_; }
+    absl::string_view fprocess() const { return fprocess_; }
     absl::string_view shared_mem_path() const { return shared_mem_path_; }
     absl::string_view func_config_file() const { return func_config_file_; }
+    absl::string_view func_worker_output_dir() const { return func_worker_output_dir_; }
 
-    absl::string_view fprocess() const { return fprocess_; }
+    absl::string_view func_name() const {
+        const FuncConfig::Entry* entry = func_config_.find_by_func_id(func_id_);
+        return entry->func_name;
+    }
 
     void Start();
     void ScheduleStop();
@@ -73,6 +81,7 @@ private:
     std::string func_config_file_;
     RunMode run_mode_;
     int num_func_workers_;
+    std::string func_worker_output_dir_;
     uint16_t client_id_;
 
     uv_loop_t uv_loop_;

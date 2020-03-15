@@ -13,7 +13,7 @@ class WorkerFuncRunner;
 
 class FuncWorker : public uv::Base {
 public:
-    FuncWorker(Watchdog* watchdog, absl::string_view fprocess, int worker_id);
+    FuncWorker(Watchdog* watchdog, int worker_id);
     ~FuncWorker();
 
     int id() const { return worker_id_; }

@@ -14,11 +14,10 @@ namespace watchdog {
 using protocol::MessageType;
 using protocol::Message;
 
-FuncWorker::FuncWorker(Watchdog* watchdog,
-                       absl::string_view fprocess, int worker_id)
+FuncWorker::FuncWorker(Watchdog* watchdog, int worker_id)
     : state_(kCreated), watchdog_(watchdog), worker_id_(worker_id),
       log_header_(absl::StrFormat("FuncWorker[%d]: ", worker_id)),
-      subprocess_(fprocess) {}
+      subprocess_(watchdog->fprocess()) {}
 
 FuncWorker::~FuncWorker() {
     DCHECK(state_ == kCreated || state_ == kClosed);
@@ -36,6 +35,16 @@ void FuncWorker::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool) 
     subprocess_.AddEnvVariable("OUTPUT_PIPE_FD", output_pipe_fd_);
     subprocess_.AddEnvVariable("SHARED_MEMORY_PATH", watchdog_->shared_mem_path());
     subprocess_.AddEnvVariable("FUNC_CONFIG_FILE", watchdog_->func_config_file());
+    if (!watchdog_->func_worker_output_dir().empty()) {
+        absl::string_view output_dir = watchdog_->func_worker_output_dir();
+        absl::string_view func_name = watchdog_->func_name();
+        subprocess_.SetStandardFile(Subprocess::kStdout,
+                                    absl::StrFormat("%s/%s_worker_%d.stdout",
+                                                    output_dir, func_name, worker_id_));
+        subprocess_.SetStandardFile(Subprocess::kStderr,
+                                    absl::StrFormat("%s/%s_worker_%d.stderr",
+                                                    output_dir, func_name, worker_id_));
+    }
     CHECK(subprocess_.Start(uv_loop, read_buffer_pool,
                             absl::bind_front(&FuncWorker::OnSubprocessExit, this)))
         << "Failed to start fprocess";
