@@ -36,7 +36,7 @@ bool FuncConfig::Load(absl::string_view yaml_path) {
     }
     try {
         for (const auto& item : config) {
-            absl::string_view func_name = item.first.as<std::string>();
+            std::string func_name = item.first.as<std::string>();
             if (!is_valid_func_name(func_name)) {
                 LOG(ERROR) << "Invalid func_name: " << func_name;
                 return false;
@@ -50,9 +50,9 @@ bool FuncConfig::Load(absl::string_view yaml_path) {
             LOG(INFO) << "Load configuration for function " << func_name
                       << "[" << func_id << "]";
             auto entry = absl::make_unique<Entry>();
-            entry->func_name = std::string(func_name);
+            entry->func_name = func_name;
             entry->func_id = func_id;
-            entires_by_func_name_[std::string(func_name)] = entry.get();
+            entires_by_func_name_[func_name] = entry.get();
             entries_by_func_id_[func_id] = entry.get();
             entries_.push_back(std::move(entry));
         }
