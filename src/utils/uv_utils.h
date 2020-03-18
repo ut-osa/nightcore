@@ -14,6 +14,11 @@ private:
     DISALLOW_COPY_AND_ASSIGN(Base);
 };
 
+// Assume uv_loop->data is the event loop thread
+inline bool WithinEventLoop(uv_loop_t* uv_loop) {
+    return base::Thread::current() == reinterpret_cast<base::Thread*>(uv_loop->data);
+}
+
 }  // namespace uv
 }  // namespace faas
 
@@ -60,10 +65,7 @@ private:
 #define UV_AS_HANDLE(uv_ptr) reinterpret_cast<uv_handle_t*>(uv_ptr)
 #define UV_AS_STREAM(uv_ptr) reinterpret_cast<uv_stream_t*>(uv_ptr)
 
-// Assume loop->data is the event loop thread
-#define DCHECK_IN_EVENT_LOOP_THREAD(loop)                    \
-    DCHECK_EQ(base::Thread::current(),                       \
-              reinterpret_cast<base::Thread*>((loop)->data))
+#define DCHECK_IN_EVENT_LOOP_THREAD(loop) DCHECK(uv::WithinEventLoop(loop))
 
 #define DECLARE_UV_READ_CB_FOR_CLASS(FnName)                         \
     void On##FnName(ssize_t nread, const uv_buf_t* buf);             \

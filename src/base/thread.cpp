@@ -45,5 +45,14 @@ void* Thread::StartRoutine(void* arg) {
     return nullptr;
 }
 
+void Thread::RegisterMainThread() {
+    Thread* thread = new Thread("Main", std::function<void()>());
+    thread->state_.store(kRunning);
+    thread->tid_ = gettid();
+    thread->pthread_ = pthread_self();
+    current_ = thread;
+    LOG(INFO) << "Register main thread: tid=" << thread->tid_;
+}
+
 }  // namespace base
 }  // namespace faas

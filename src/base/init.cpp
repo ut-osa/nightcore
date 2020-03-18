@@ -1,4 +1,5 @@
 #include "base/init.h"
+#include "base/thread.h"
 
 #include <absl/flags/parse.h>
 #include <absl/debugging/symbolize.h>
@@ -13,6 +14,8 @@ void InitMain(int argc, char* argv[],
     absl::InitializeSymbolizer(argv[0]);
     absl::FailureSignalHandlerOptions options;
     absl::InstallFailureSignalHandler(options);
+
+    Thread::RegisterMainThread();
 
     std::vector<char*> unparsed_args = absl::ParseCommandLine(argc, argv);
     InitGoogleLogging(argv[0]);

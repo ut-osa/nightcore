@@ -303,7 +303,11 @@ void HttpConnection::OnNewHttpRequest(absl::string_view method, absl::string_vie
 }
 
 void HttpConnection::AsyncRequestFinish(HttpAsyncRequestContext* context) {
-    UV_DCHECK_OK(uv_async_send(&async_request_finished_event_));
+    if (uv::WithinEventLoop(uv_tcp_handle_.loop)) {
+        OnAsyncRequestFinish();
+    } else {
+        UV_DCHECK_OK(uv_async_send(&async_request_finished_event_));
+    }
 }
 
 void HttpConnection::SendHttpResponse() {

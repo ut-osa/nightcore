@@ -21,7 +21,12 @@ public:
 
     absl::string_view name() const { return name_; }
     int tid() { return tid_; }
-    static Thread* current() { return current_; }
+    static Thread* current() {
+        DCHECK(current_ != nullptr);
+        return current_;
+    }
+
+    static void RegisterMainThread();
 
 private:
     enum State { kCreated, kStarting, kRunning, kFinished };

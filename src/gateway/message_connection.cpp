@@ -87,18 +87,20 @@ void MessageConnection::RecvHandshakeMessage() {
 }
 
 void MessageConnection::WriteMessage(const Message& message) {
-    write_message_mu_.Lock();
-    if (state_.load() != kRunning) {
-        HLOG(WARNING) << "MessageConnection is not in running state, cannot write message";
-        return;
+    bool within_my_event_loop = uv::WithinEventLoop(uv_pipe_handle_.loop);
+    {
+        absl::MutexLock lk(&write_message_mu_);
+        if (state_.load() != kRunning) {
+            HLOG(WARNING) << "MessageConnection is not in running state, cannot write message";
+            return;
+        }
+        pending_messages_.push_back(message);
+        if (!within_my_event_loop) {
+            UV_DCHECK_OK(uv_async_send(&write_message_event_));
+        }
     }
-    pending_messages_.push_back(message);
-    if (base::Thread::current() == reinterpret_cast<base::Thread*>(uv_pipe_handle_.loop->data)) {
-        write_message_mu_.Unlock();
+    if (within_my_event_loop) {
         OnNewMessageForWrite();
-    } else {
-        UV_DCHECK_OK(uv_async_send(&write_message_event_));
-        write_message_mu_.Unlock();
     }
 }
 
