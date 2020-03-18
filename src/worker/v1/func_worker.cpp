@@ -165,6 +165,17 @@ bool FuncWorker::RunFuncHandler(void* worker_handle, uint64_t call_id) {
     int ret = func_call_fn_(
         worker_handle, input_region->base(), input_region->size());
     input_region->Close();
+    {
+        absl::MutexLock lk(&invoke_func_mu_);
+        for (const auto& entry : func_invoke_contexts_) {
+            FuncInvokeContext* context = entry.second.get();
+            context->input_region->Close(true);
+            if (context->output_region != nullptr) {
+                context->output_region->Close(true);
+            }
+        }
+        func_invoke_contexts_.clear();
+    }
     if (ret != 0 || func_output_buffer_.length() == 0) {
         return false;
     }
@@ -178,6 +189,9 @@ bool FuncWorker::RunFuncHandler(void* worker_handle, uint64_t call_id) {
 
 bool FuncWorker::InvokeFunc(const char* func_name, const char* input_data, size_t input_length,
                             const char** output_data, size_t* output_length) {
+    if (input_length == 0) {
+        return false;
+    }
     const FuncConfig::Entry* func_entry = func_config_.find_by_func_name(
         absl::string_view(func_name, strlen(func_name)));
     if (func_entry == nullptr) {
@@ -189,17 +203,16 @@ bool FuncWorker::InvokeFunc(const char* func_name, const char* input_data, size_
     FuncCall func_call;
     func_call.func_id = static_cast<uint16_t>(func_entry->func_id);
     func_call.client_id = client_id_;
+    func_call.call_id = next_call_id_.fetch_add(1);
+    context->input_region = shared_memory_->Create(
+        absl::StrCat(func_call.full_call_id, ".i"), input_length);
+    memcpy(context->input_region->base(), input_data, input_length);
+    Message message = {
+        .message_type = static_cast<uint16_t>(MessageType::INVOKE_FUNC),
+        .func_call = func_call
+    };
     {
         absl::MutexLock lk(&invoke_func_mu_);
-        func_call.call_id = next_call_id_++;
-        utils::SharedMemory::Region* input_region = shared_memory_->Create(
-            absl::StrCat(func_call.full_call_id, ".i"), input_length);
-        memcpy(input_region->base(), input_data, input_length);
-        input_region->Close();
-        Message message = {
-            .message_type = static_cast<uint16_t>(MessageType::INVOKE_FUNC),
-            .func_call = func_call
-        };
         func_invoke_contexts_[func_call.full_call_id] = absl::WrapUnique(context);
         PCHECK(io_utils::SendMessage(gateway_sock_fd_, message));
     }

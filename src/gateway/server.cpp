@@ -369,7 +369,7 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
                 func_call_context->http_context()->Finish();
                 external_func_calls_.erase(full_call_id);
             } else {
-                HLOG(ERROR) << "Cannot find external call with func_id=" << message.func_call.call_id << ", "
+                HLOG(ERROR) << "Cannot find external call with func_id=" << message.func_call.func_id << ", "
                             << "call_id=" << message.func_call.call_id;
             }
         }
@@ -430,14 +430,14 @@ UV_CONNECTION_CB_FOR_CLASS(Server, HttpConnection) {
         http_connections_.insert(std::move(new_connection));
         HLOG(INFO) << "Allocate new HttpConnection object, current count is " << http_connections_.size();
     }
-    uv_tcp_t* client = new uv_tcp_t;
+    uv_tcp_t* client = reinterpret_cast<uv_tcp_t*>(malloc(sizeof(uv_tcp_t)));
     UV_DCHECK_OK(uv_tcp_init(&uv_loop_, client));
     if (uv_accept(UV_AS_STREAM(&uv_tcp_handle_), UV_AS_STREAM(client)) == 0) {
         TransferConnectionToWorker(PickHttpWorker(), connection, UV_AS_STREAM(client));
         active_http_connections_.insert(connection);
     } else {
         LOG(ERROR) << "Failed to accept new HTTP connection";
-        delete client;
+        free(client);
         free_http_connections_.push_back(connection);
     }
 }
@@ -449,7 +449,7 @@ UV_CONNECTION_CB_FOR_CLASS(Server, MessageConnection) {
     }
     HLOG(INFO) << "New message connection";
     std::unique_ptr<MessageConnection> connection = absl::make_unique<MessageConnection>(this);
-    uv_pipe_t* client = new uv_pipe_t;
+    uv_pipe_t* client = reinterpret_cast<uv_pipe_t*>(malloc(sizeof(uv_pipe_t)));
     UV_DCHECK_OK(uv_pipe_init(&uv_loop_, client, 0));
     if (uv_accept(UV_AS_STREAM(&uv_ipc_handle_), UV_AS_STREAM(client)) == 0) {
         TransferConnectionToWorker(PickIpcWorker(), connection.get(),
@@ -457,7 +457,7 @@ UV_CONNECTION_CB_FOR_CLASS(Server, MessageConnection) {
         message_connections_.insert(std::move(connection));
     } else {
         LOG(ERROR) << "Failed to accept new message connection";
-        delete client;
+        free(client);
     }
 }
 
@@ -496,11 +496,16 @@ UV_ASYNC_CB_FOR_CLASS(Server, Stop) {
     state_.store(kStopping);
 }
 
+namespace {
+void HandleFreeCallback(uv_handle_t* handle) {
+    free(handle);
+}
+}
+
 UV_WRITE_CB_FOR_CLASS(Server, PipeWrite2) {
     DCHECK(status == 0) << "Failed to write to pipe: " << uv_strerror(status);
-    uv_pipe_t* send_handle = reinterpret_cast<uv_pipe_t*>(req->data);
-    uv_close(UV_AS_HANDLE(send_handle), nullptr);
-    delete send_handle;
+    uv_handle_t* send_handle = reinterpret_cast<uv_handle_t*>(req->data);
+    uv_close(send_handle, HandleFreeCallback);
 }
 
 }  // namespace gateway

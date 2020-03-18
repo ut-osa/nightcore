@@ -67,11 +67,12 @@ private:
     struct FuncInvokeContext {
         absl::Notification finished;
         bool success;
+        utils::SharedMemory::Region* input_region;
         utils::SharedMemory::Region* output_region;
     };
 
     absl::Mutex invoke_func_mu_;
-    uint32_t next_call_id_ ABSL_GUARDED_BY(invoke_func_mu_);
+    std::atomic<uint32_t> next_call_id_;
     absl::flat_hash_map<uint64_t, std::unique_ptr<FuncInvokeContext>>
         func_invoke_contexts_ ABSL_GUARDED_BY(invoke_func_mu_);
 

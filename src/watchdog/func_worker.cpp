@@ -35,6 +35,7 @@ void FuncWorker::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool) 
     subprocess_.AddEnvVariable("OUTPUT_PIPE_FD", output_pipe_fd_);
     subprocess_.AddEnvVariable("SHARED_MEMORY_PATH", watchdog_->shared_mem_path());
     subprocess_.AddEnvVariable("FUNC_CONFIG_FILE", watchdog_->func_config_file());
+    subprocess_.AddEnvVariable("WORKER_ID", worker_id_);
     if (!watchdog_->func_worker_output_dir().empty()) {
         absl::string_view output_dir = watchdog_->func_worker_output_dir();
         absl::string_view func_name = watchdog_->func_name();
