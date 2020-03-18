@@ -117,7 +117,7 @@ private:
     absl::flat_hash_map<IOWorker*, std::unique_ptr<uv_pipe_t>> pipes_to_io_worker_;
 
     absl::flat_hash_set<HttpConnection*> active_http_connections_;
-    std::vector<HttpConnection*> free_http_connections_;
+    absl::InlinedVector<HttpConnection*, 32> free_http_connections_;
     absl::flat_hash_set<std::unique_ptr<HttpConnection>> http_connections_;
     utils::AppendableBuffer return_connection_read_buffer_;
 

@@ -41,8 +41,8 @@ public:
 private:
     std::string pool_name_;
     size_t buffer_size_;
-    std::vector<char*> available_buffers_;
-    std::vector<std::unique_ptr<char[]>> all_buffers_;
+    absl::InlinedVector<char*, 16> available_buffers_;
+    absl::InlinedVector<std::unique_ptr<char[]>, 16> all_buffers_;
 
     DISALLOW_COPY_AND_ASSIGN(BufferPool);
 };

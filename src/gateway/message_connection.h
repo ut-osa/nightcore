@@ -47,9 +47,11 @@ private:
     utils::AppendableBuffer message_buffer_;
     protocol::HandshakeResponse handshake_response_;
     utils::SimpleObjectPool<uv_write_t> write_req_pool_;
+    utils::AppendableBuffer write_message_buffer_;
 
     absl::Mutex write_message_mu_;
-    std::vector<protocol::Message> pending_messages_ ABSL_GUARDED_BY(write_message_mu_);
+    absl::InlinedVector<protocol::Message, 16>
+        pending_messages_ ABSL_GUARDED_BY(write_message_mu_);
 
     void RecvHandshakeMessage();
 

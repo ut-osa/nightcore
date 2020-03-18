@@ -37,8 +37,8 @@ public:
 
 private:
     std::function<T*()> object_constructor_;
-    std::vector<std::unique_ptr<T>> objs_;
-    std::vector<T*> free_objs_;
+    absl::InlinedVector<std::unique_ptr<T>, 16> objs_;
+    absl::InlinedVector<T*, 16> free_objs_;
 
     DISALLOW_COPY_AND_ASSIGN(SimpleObjectPool);
 };

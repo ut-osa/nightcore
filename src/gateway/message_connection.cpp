@@ -87,13 +87,19 @@ void MessageConnection::RecvHandshakeMessage() {
 }
 
 void MessageConnection::WriteMessage(const Message& message) {
-    absl::MutexLock lk(&write_message_mu_);
+    write_message_mu_.Lock();
     if (state_.load() != kRunning) {
         HLOG(WARNING) << "MessageConnection is not in running state, cannot write message";
         return;
     }
     pending_messages_.push_back(message);
-    UV_DCHECK_OK(uv_async_send(&write_message_event_));
+    if (base::Thread::current() == reinterpret_cast<base::Thread*>(uv_pipe_handle_.loop->data)) {
+        write_message_mu_.Unlock();
+        OnNewMessageForWrite();
+    } else {
+        UV_DCHECK_OK(uv_async_send(&write_message_event_));
+        write_message_mu_.Unlock();
+    }
 }
 
 UV_ALLOC_CB_FOR_CLASS(MessageConnection, BufferAlloc) {
@@ -171,20 +177,21 @@ UV_ASYNC_CB_FOR_CLASS(MessageConnection, NewMessageForWrite) {
         return;
     }
     size_t write_size = 0;
-    char* data = nullptr;
     {
         absl::MutexLock lk(&write_message_mu_);
         write_size = pending_messages_.size() * sizeof(Message);
         if (write_size > 0) {
-            data = reinterpret_cast<char*>(malloc(write_size));
-            memcpy(data, pending_messages_.data(), write_size);
+            write_message_buffer_.Reset();
+            write_message_buffer_.AppendData(
+                reinterpret_cast<char*>(pending_messages_.data()),
+                write_size);
             pending_messages_.clear();
         }
     }
     if (write_size == 0) {
         return;
     }
-    char* ptr = data;
+    char* ptr = write_message_buffer_.data();
     while (write_size > 0) {
         uv_buf_t buf;
         io_worker_->NewWriteBuffer(&buf);
@@ -198,7 +205,6 @@ UV_ASYNC_CB_FOR_CLASS(MessageConnection, NewMessageForWrite) {
         write_size -= copy_size;
         ptr += copy_size;
     }
-    free(data);
 }
 
 UV_CLOSE_CB_FOR_CLASS(MessageConnection, Close) {
