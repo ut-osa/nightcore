@@ -22,6 +22,7 @@ public:
     void ScheduleClose();
 
     bool ScheduleFuncCall(WorkerFuncRunner* func_runner, uint64_t call_id);
+    bool is_idle() const { return state_ == kIdle; }
 
 private:
     enum State { kCreated, kIdle, kSending, kReceiving, kClosing, kClosed };

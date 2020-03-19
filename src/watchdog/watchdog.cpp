@@ -2,6 +2,8 @@
 
 #include "utils/fs.h"
 
+#include <absl/random/distributions.h>
+
 #define HLOG(l) LOG(l) << "Watchdog: "
 #define HVLOG(l) VLOG(l) << "Watchdog: "
 
@@ -50,25 +52,26 @@ void Watchdog::Start() {
     CHECK(func_id_ != -1);
     CHECK(func_config_.find_by_func_id(func_id_) != nullptr);
     CHECK(!fprocess_.empty());
-    switch (run_mode_) {
-    case RunMode::SERIALIZING:
+    if (run_mode_ == RunMode::SERIALIZING) {
         buffer_pool_for_subprocess_pipes_ = absl::make_unique<utils::BufferPool>(
             "SubprocessPipe", kSubprocessPipeBufferSizeForSerializingMode);
-        break;
-    case RunMode::FUNC_WORKER:
+    } else if (run_mode_ == RunMode::FUNC_WORKER_FIXED || run_mode_ == RunMode::FUNC_WORKER_ON_DEMAND) {
         if (!func_worker_output_dir_.empty() && !fs_utils::Exists(func_worker_output_dir_)) {
             CHECK(fs_utils::MakeDirectory(func_worker_output_dir_));
         }
         buffer_pool_for_subprocess_pipes_ = absl::make_unique<utils::BufferPool>(
             "SubprocessPipe", kSubprocessPipeBufferSizeForFuncWorkerMode);
-        for (int i = 0; i < num_func_workers_; i++) {
+        int initial_num_func_workers_ = run_mode_ == RunMode::FUNC_WORKER_FIXED
+            ? max_num_func_workers_
+            : min_num_func_workers_;
+        for (int i = 0; i < initial_num_func_workers_; i++) {
             auto func_worker = absl::make_unique<FuncWorker>(this, i);
             func_worker->Start(&uv_loop_, buffer_pool_for_subprocess_pipes_.get());
             func_workers_.push_back(std::move(func_worker));
         }
-        break;
-    default:
-        LOG(FATAL) << "Unknown run mode";
+        HLOG(INFO) << "Initial number of FuncWorker: " << initial_num_func_workers_;
+    } else {
+        HLOG(FATAL) << "Unknown run mode";
     }
     // Create shared memory pool
     CHECK(!shared_mem_path_.empty());
@@ -134,7 +137,8 @@ void Watchdog::OnRecvMessage(const protocol::Message& message) {
                 this, func_call.full_call_id,
                 buffer_pool_for_subprocess_pipes_.get(), shared_memory_.get());
             break;
-        case RunMode::FUNC_WORKER:
+        case RunMode::FUNC_WORKER_FIXED:
+        case RunMode::FUNC_WORKER_ON_DEMAND:
             func_runner = new WorkerFuncRunner(
                 this, func_call.full_call_id, PickFuncWorker());
             break;
@@ -177,9 +181,34 @@ void Watchdog::OnFuncWorkerClose(FuncWorker* func_worker) {
     HLOG(WARNING) << "FuncWorker[" << func_worker->id() << "] closed";
 }
 
+void Watchdog::OnFuncWorkerIdle(FuncWorker* func_worker) {
+    idle_func_workers_.push_back(func_worker);
+}
+
 FuncWorker* Watchdog::PickFuncWorker() {
-    FuncWorker* func_worker = func_workers_[next_func_worker_id_].get();
-    next_func_worker_id_ = (next_func_worker_id_ + 1) % func_workers_.size();
+    FuncWorker* func_worker;
+    if (run_mode_ == RunMode::FUNC_WORKER_FIXED) {
+        func_worker = func_workers_[next_func_worker_id_].get();
+        next_func_worker_id_ = (next_func_worker_id_ + 1) % func_workers_.size();
+    } else if (run_mode_ == RunMode::FUNC_WORKER_ON_DEMAND) {
+        if (!idle_func_workers_.empty()) {
+            func_worker = idle_func_workers_.back();
+            idle_func_workers_.pop_back();
+            DCHECK(func_worker->is_idle());
+        } else if (func_workers_.size() < max_num_func_workers_) {
+            auto new_func_worker = absl::make_unique<FuncWorker>(this, func_workers_.size());
+            new_func_worker->Start(&uv_loop_, buffer_pool_for_subprocess_pipes_.get());
+            func_worker = new_func_worker.get();
+            DCHECK(func_worker->is_idle());
+            func_workers_.push_back(std::move(new_func_worker));
+            HLOG(INFO) << "Create new FuncWorker, current count is " << func_workers_.size();
+        } else {
+            int idx = absl::Uniform<int>(random_bit_gen_, 0, func_workers_.size());
+            func_worker = func_workers_[idx].get();
+        }
+    } else {
+        HLOG(FATAL) << "Should not reach here!";
+    }
     return func_worker;
 }
 

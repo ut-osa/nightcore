@@ -11,6 +11,8 @@
 #include "watchdog/func_runner.h"
 #include "watchdog/func_worker.h"
 
+#include <absl/random/random.h>
+
 namespace faas {
 namespace watchdog {
 
@@ -40,8 +42,11 @@ public:
     void set_run_mode(int run_mode) {
         run_mode_ = static_cast<RunMode>(run_mode);
     }
-    void set_num_func_workers(int num_func_workers) {
-        num_func_workers_ = num_func_workers;
+    void set_min_num_func_workers(int value) {
+        min_num_func_workers_ = value;
+    }
+    void set_max_num_func_workers(int value) {
+        max_num_func_workers_ = value;
     }
     void set_func_worker_output_dir(absl::string_view path) {
         func_worker_output_dir_ = std::string(path);
@@ -66,6 +71,7 @@ public:
     void OnGatewayConnectionClose();
     void OnFuncRunnerComplete(FuncRunner* func_runner, FuncRunner::Status status);
     void OnFuncWorkerClose(FuncWorker* func_worker);
+    void OnFuncWorkerIdle(FuncWorker* func_worker);
 
     bool OnRecvHandshakeResponse(const protocol::HandshakeResponse& response);
     void OnRecvMessage(const protocol::Message& message);
@@ -80,7 +86,8 @@ private:
     std::string shared_mem_path_;
     std::string func_config_file_;
     RunMode run_mode_;
-    int num_func_workers_;
+    int min_num_func_workers_;
+    int max_num_func_workers_;
     std::string func_worker_output_dir_;
     uint16_t client_id_;
 
@@ -96,7 +103,9 @@ private:
     absl::flat_hash_map<uint64_t, std::unique_ptr<FuncRunner>> func_runners_;
 
     std::vector<std::unique_ptr<FuncWorker>> func_workers_;
+    absl::InlinedVector<FuncWorker*, 16> idle_func_workers_;
     int next_func_worker_id_;
+    absl::BitGen random_bit_gen_;
 
     void EventLoopThreadMain();
     FuncWorker* PickFuncWorker();

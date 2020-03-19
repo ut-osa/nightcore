@@ -54,6 +54,7 @@ void FuncWorker::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool) 
     uv_output_pipe_handle_ = subprocess_.GetPipe(output_pipe_fd_);
     uv_output_pipe_handle_->data = this;
     state_ = kIdle;
+    watchdog_->OnFuncWorkerIdle(this);
 }
 
 void FuncWorker::ScheduleClose() {
@@ -130,6 +131,8 @@ void FuncWorker::OnRecvMessage(const Message& message) {
         uint64_t call_id = pending_func_calls_.front();
         pending_func_calls_.pop();
         DispatchFuncCall(call_id);
+    } else {
+        watchdog_->OnFuncWorkerIdle(this);
     }
 }
 
