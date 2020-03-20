@@ -191,17 +191,18 @@ FuncWorker* Watchdog::PickFuncWorker() {
         func_worker = func_workers_[next_func_worker_id_].get();
         next_func_worker_id_ = (next_func_worker_id_ + 1) % func_workers_.size();
     } else if (run_mode_ == RunMode::FUNC_WORKER_ON_DEMAND) {
+        if (idle_func_workers_.empty()
+                && static_cast<int>(func_workers_.size()) < max_num_func_workers_) {
+            auto new_func_worker = absl::make_unique<FuncWorker>(this, func_workers_.size());
+            new_func_worker->Start(&uv_loop_, buffer_pool_for_subprocess_pipes_.get());
+            func_workers_.push_back(std::move(new_func_worker));
+            HLOG(INFO) << "Create new FuncWorker, current count is " << func_workers_.size();
+            DCHECK(!idle_func_workers_.empty());
+        }
         if (!idle_func_workers_.empty()) {
             func_worker = idle_func_workers_.back();
             idle_func_workers_.pop_back();
             DCHECK(func_worker->is_idle());
-        } else if (func_workers_.size() < max_num_func_workers_) {
-            auto new_func_worker = absl::make_unique<FuncWorker>(this, func_workers_.size());
-            new_func_worker->Start(&uv_loop_, buffer_pool_for_subprocess_pipes_.get());
-            func_worker = new_func_worker.get();
-            DCHECK(func_worker->is_idle());
-            func_workers_.push_back(std::move(new_func_worker));
-            HLOG(INFO) << "Create new FuncWorker, current count is " << func_workers_.size();
         } else {
             int idx = absl::Uniform<int>(random_bit_gen_, 0, func_workers_.size());
             func_worker = func_workers_[idx].get();
