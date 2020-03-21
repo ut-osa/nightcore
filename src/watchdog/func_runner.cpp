@@ -1,5 +1,6 @@
 #include "watchdog/func_runner.h"
 
+#include "common/time.h"
 #include "watchdog/watchdog.h"
 #include "watchdog/func_worker.h"
 
@@ -11,10 +12,10 @@
 namespace faas {
 namespace watchdog {
 
-void FuncRunner::Complete(Status status) {
+void FuncRunner::Complete(Status status, uint32_t processing_time) {
     DCHECK(state_ != kCompleted);
     state_ = kCompleted;
-    watchdog_->OnFuncRunnerComplete(this, status);
+    watchdog_->OnFuncRunnerComplete(this, status, processing_time);
 }
 
 SerializingFuncRunner::SerializingFuncRunner(Watchdog* watchdog, uint64_t call_id,
@@ -30,6 +31,7 @@ SerializingFuncRunner::~SerializingFuncRunner() {
 
 void SerializingFuncRunner::Start(uv_loop_t* uv_loop) {
     DCHECK_IN_EVENT_LOOP_THREAD(uv_loop);
+    start_timestamp_ = GetMonotonicMicroTimestamp();
     if (!subprocess_.Start(uv_loop, read_buffer_pool_,
                            absl::bind_front(&SerializingFuncRunner::OnSubprocessExit, this))) {
         HLOG(ERROR) << "Failed to start fprocess";
@@ -66,7 +68,7 @@ void SerializingFuncRunner::OnSubprocessExit(int exit_status,
         absl::StrCat(call_id_, ".o"), stdout.length());
     memcpy(region->base(), stdout.data(), stdout.length());
     region->Close();
-    Complete(kSuccess);
+    Complete(kSuccess, GetMonotonicMicroTimestamp() - start_timestamp_);
 }
 
 void SerializingFuncRunner::ScheduleStop() {

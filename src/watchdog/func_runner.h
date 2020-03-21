@@ -30,7 +30,7 @@ public:
         kProcessExitAbnormally,
         kEmptyOutput
     };
-    void Complete(Status status);
+    void Complete(Status status, uint32_t processing_time = 0);
 
 protected:
     enum State { kCreated, kRunning, kCompleted };
@@ -60,6 +60,7 @@ private:
 
     uv_write_t write_req_;
     utils::SharedMemory::Region* input_region_;
+    uint64_t start_timestamp_;
 
     void OnSubprocessExit(int exit_status, absl::Span<const char> stdout,
                           absl::Span<const char> stderr);

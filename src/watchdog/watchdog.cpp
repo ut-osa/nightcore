@@ -159,7 +159,7 @@ void Watchdog::OnRecvMessage(const protocol::Message& message) {
     }
 }
 
-void Watchdog::OnFuncRunnerComplete(FuncRunner* func_runner, FuncRunner::Status status) {
+void Watchdog::OnFuncRunnerComplete(FuncRunner* func_runner, FuncRunner::Status status, uint32_t processing_time) {
     DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
     DCHECK(func_runners_.contains(func_runner->call_id()));
     FuncCall func_call;
@@ -174,14 +174,16 @@ void Watchdog::OnFuncRunnerComplete(FuncRunner* func_runner, FuncRunner::Status 
             gateway_connection_.WriteMessage({
                 .message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_COMPLETE),
                 .func_call = func_call,
-                .send_timestamp = GetMonotonicMicroTimestamp()
+                .send_timestamp = GetMonotonicMicroTimestamp(),
+                .processing_time = processing_time
             });
         }
     } else {
         gateway_connection_.WriteMessage({
             .message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_FAILED),
             .func_call = func_call,
-            .send_timestamp = GetMonotonicMicroTimestamp()
+            .send_timestamp = GetMonotonicMicroTimestamp(),
+            .processing_time = processing_time
         });
     }
 }

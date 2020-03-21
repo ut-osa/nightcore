@@ -1,5 +1,6 @@
 #include "utils/shared_memory.h"
 
+#include "common/time.h"
 #include "utils/fs.h"
 
 #include <sys/mman.h>
@@ -10,7 +11,9 @@ namespace faas {
 namespace utils {
 
 SharedMemory::SharedMemory(absl::string_view base_path)
-    : base_path_(base_path) {
+    : base_path_(base_path),
+      mmap_delay_stat_(
+          stat::StatisticsCollector<uint32_t>::StandardReportCallback("mmap_delay")) {
     CHECK(fs_utils::IsDirectory(base_path_));
 }
 
@@ -24,6 +27,7 @@ SharedMemory::~SharedMemory() {
 
 SharedMemory::Region* SharedMemory::Create(absl::string_view path, size_t size) {
     std::string full_path(absl::StrFormat("%s/%s", base_path_, path));
+    uint64_t start_timestamp = GetMonotonicMicroTimestamp();
     int fd = open(full_path.c_str(), O_CREAT|O_EXCL|O_RDWR, 0644);
     PCHECK(fd != -1) << "open failed";
     PCHECK(ftruncate(fd, size) == 0) << "ftruncate failed";
@@ -31,6 +35,7 @@ SharedMemory::Region* SharedMemory::Create(absl::string_view path, size_t size) 
     PCHECK(ptr != MAP_FAILED) << "mmap failed";
     PCHECK(close(fd) == 0) << "close failed";
     memset(ptr, 0, size);
+    mmap_delay_stat_.AddSample(GetMonotonicMicroTimestamp() - start_timestamp);
     Region* region = new Region(this, path, reinterpret_cast<char*>(ptr), size);
     {
         absl::MutexLock lk(&regions_mu_);
@@ -41,6 +46,7 @@ SharedMemory::Region* SharedMemory::Create(absl::string_view path, size_t size) 
 
 SharedMemory::Region* SharedMemory::OpenReadOnly(absl::string_view path) {
     std::string full_path(absl::StrFormat("%s/%s", base_path_, path));
+    uint64_t start_timestamp = GetMonotonicMicroTimestamp();
     int fd = open(full_path.c_str(), O_RDONLY);
     PCHECK(fd != -1) << "open failed";
     struct stat statbuf;
@@ -49,6 +55,7 @@ SharedMemory::Region* SharedMemory::OpenReadOnly(absl::string_view path) {
     void* ptr = mmap(0, size, PROT_READ, MAP_SHARED, fd, 0);
     PCHECK(ptr != MAP_FAILED) << "mmap failed";
     PCHECK(close(fd) == 0) << "close failed";
+    mmap_delay_stat_.AddSample(GetMonotonicMicroTimestamp() - start_timestamp);
     Region* region = new Region(this, path, reinterpret_cast<char*>(ptr), size);
     {
         absl::MutexLock lk(&regions_mu_);

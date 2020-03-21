@@ -357,7 +357,8 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
                 connection->WriteMessage({
                     .message_type = static_cast<uint16_t>(type),
                     .func_call = message.func_call,
-                    .send_timestamp = GetMonotonicMicroTimestamp()
+                    .send_timestamp = GetMonotonicMicroTimestamp(),
+                    .processing_time = message.processing_time
                 });
             } else {
                 HLOG(ERROR) << "Cannot find message connection with client_id " << client_id;

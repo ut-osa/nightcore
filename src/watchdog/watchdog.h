@@ -70,7 +70,7 @@ public:
     void WaitForFinish();
 
     void OnGatewayConnectionClose();
-    void OnFuncRunnerComplete(FuncRunner* func_runner, FuncRunner::Status status);
+    void OnFuncRunnerComplete(FuncRunner* func_runner, FuncRunner::Status status, uint32_t processing_time);
     void OnFuncWorkerClose(FuncWorker* func_worker);
     void OnFuncWorkerIdle(FuncWorker* func_worker);
     stat::StatisticsCollector<uint32_t>* func_worker_message_delay_stat() {

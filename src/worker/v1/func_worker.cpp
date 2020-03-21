@@ -26,7 +26,9 @@ FuncWorker::FuncWorker()
       watchdog_message_delay_stat_(
           stat::StatisticsCollector<uint32_t>::StandardReportCallback("watchdog_message_delay")),
       processing_delay_stat_(
-          stat::StatisticsCollector<uint32_t>::StandardReportCallback("processing_delay")) {}
+          stat::StatisticsCollector<uint32_t>::StandardReportCallback("processing_delay")),
+      system_protocol_overhead_stat_(
+          stat::StatisticsCollector<uint32_t>::StandardReportCallback("system_protocol_overhead")) {}
 
 FuncWorker::~FuncWorker() {
     close(gateway_sock_fd_);
@@ -92,13 +94,15 @@ void FuncWorker::MainServingLoop() {
              response.func_call = message.func_call;
              uint64_t start_timestamp = GetMonotonicMicroTimestamp();
              bool success = RunFuncHandler(func_worker, message.func_call.full_call_id);
-             processing_delay_stat_.AddSample(GetMonotonicMicroTimestamp() - start_timestamp);
+             uint32_t processing_time = GetMonotonicMicroTimestamp() - start_timestamp;
+             processing_delay_stat_.AddSample(processing_time);
              if (success) {
                  response.message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_COMPLETE);
              } else {
                  response.message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_FAILED);
              }
              response.send_timestamp = GetMonotonicMicroTimestamp();
+             response.processing_time = processing_time;
              if (success) {
                  PCHECK(io_utils::SendMessage(gateway_sock_fd_, response));
              }
@@ -161,6 +165,7 @@ void FuncWorker::GatewayIpcThreadMain() {
                     } else {
                         context->success = false;
                     }
+                    context->processing_time = message.processing_time;
                     context->finished.Notify();
                 } else {
                     LOG(ERROR) << "Cannot find InvokeContext for call_id " << call_id;
@@ -211,8 +216,10 @@ bool FuncWorker::InvokeFunc(const char* func_name, const char* input_data, size_
     if (func_entry == nullptr) {
         return false;
     }
+    uint64_t start_timestamp = GetMonotonicMicroTimestamp();
     FuncInvokeContext* context = new FuncInvokeContext;
     context->success = false;
+    context->processing_time = 0;
     context->output_region = nullptr;
     FuncCall func_call;
     func_call.func_id = static_cast<uint16_t>(func_entry->func_id);
@@ -237,6 +244,8 @@ bool FuncWorker::InvokeFunc(const char* func_name, const char* input_data, size_
             absl::StrCat(func_call.full_call_id, ".o"));
         *output_data = context->output_region->base();
         *output_length = context->output_region->size();
+        uint32_t end2end_time = GetMonotonicMicroTimestamp() - start_timestamp;
+        system_protocol_overhead_stat_.AddSample(end2end_time - context->processing_time);
         return true;
     } else {
         return false;

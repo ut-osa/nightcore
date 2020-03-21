@@ -1,6 +1,7 @@
 #pragma once
 
 #include "base/common.h"
+#include "common/stat.h"
 
 namespace faas {
 namespace utils {
@@ -48,6 +49,7 @@ private:
     std::string base_path_;
     absl::Mutex regions_mu_;
     absl::flat_hash_set<std::unique_ptr<Region>> regions_ ABSL_GUARDED_BY(regions_mu_);
+    stat::StatisticsCollector<uint32_t> mmap_delay_stat_;
 
     DISALLOW_COPY_AND_ASSIGN(SharedMemory);
 };

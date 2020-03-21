@@ -68,6 +68,7 @@ private:
     struct FuncInvokeContext {
         absl::Notification finished;
         bool success;
+        uint32_t processing_time;
         utils::SharedMemory::Region* input_region;
         utils::SharedMemory::Region* output_region;
     };
@@ -80,6 +81,7 @@ private:
     stat::StatisticsCollector<uint32_t> gateway_message_delay_stat_;
     stat::StatisticsCollector<uint32_t> watchdog_message_delay_stat_;
     stat::StatisticsCollector<uint32_t> processing_delay_stat_;
+    stat::StatisticsCollector<uint32_t> system_protocol_overhead_stat_;
 
     void MainServingLoop();
     void GatewayIpcHandshake();

@@ -115,7 +115,7 @@ void FuncWorker::OnRecvMessage(const Message& message) {
         if (func_runners_.contains(call_id)) {
             WorkerFuncRunner* func_runner = func_runners_[call_id];
             if (type == MessageType::FUNC_CALL_COMPLETE) {
-                func_runner->Complete(FuncRunner::kSuccess);
+                func_runner->Complete(FuncRunner::kSuccess, message.processing_time);
             } else {
                 func_runner->Complete(FuncRunner::kFailedWithoutReason);
             }
