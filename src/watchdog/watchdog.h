@@ -1,6 +1,7 @@
 #pragma once
 
 #include "base/common.h"
+#include "common/stat.h"
 #include "common/protocol.h"
 #include "common/func_config.h"
 #include "utils/uv_utils.h"
@@ -72,6 +73,9 @@ public:
     void OnFuncRunnerComplete(FuncRunner* func_runner, FuncRunner::Status status);
     void OnFuncWorkerClose(FuncWorker* func_worker);
     void OnFuncWorkerIdle(FuncWorker* func_worker);
+    stat::StatisticsCollector<uint32_t>* func_worker_message_delay_stat() {
+        return &func_worker_message_delay_stat_;
+    }
 
     bool OnRecvHandshakeResponse(const protocol::HandshakeResponse& response);
     void OnRecvMessage(const protocol::Message& message);
@@ -106,6 +110,9 @@ private:
     absl::InlinedVector<FuncWorker*, 16> idle_func_workers_;
     int next_func_worker_id_;
     absl::BitGen random_bit_gen_;
+
+    stat::StatisticsCollector<uint32_t> gateway_message_delay_stat_;
+    stat::StatisticsCollector<uint32_t> func_worker_message_delay_stat_;
 
     void EventLoopThreadMain();
     FuncWorker* PickFuncWorker();

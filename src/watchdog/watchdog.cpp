@@ -1,5 +1,6 @@
 #include "watchdog/watchdog.h"
 
+#include "common/time.h"
 #include "utils/fs.h"
 
 #include <absl/random/distributions.h>
@@ -25,7 +26,11 @@ Watchdog::Watchdog()
     : state_(kCreated), func_id_(-1), client_id_(0),
       event_loop_thread_("Watchdog_EventLoop",
                          std::bind(&Watchdog::EventLoopThreadMain, this)),
-      gateway_connection_(this), next_func_worker_id_(0) {
+      gateway_connection_(this), next_func_worker_id_(0),
+      gateway_message_delay_stat_(
+          stat::StatisticsCollector<uint32_t>::StandardReportCallback("gateway_message_delay")),
+      func_worker_message_delay_stat_(
+          stat::StatisticsCollector<uint32_t>::StandardReportCallback("func_worker_message_delay")) {
     UV_DCHECK_OK(uv_loop_init(&uv_loop_));
     uv_loop_.data = &event_loop_thread_;
     UV_DCHECK_OK(uv_async_init(&uv_loop_, &stop_event_, &Watchdog::StopCallback));
@@ -124,6 +129,8 @@ bool Watchdog::OnRecvHandshakeResponse(const HandshakeResponse& response) {
 void Watchdog::OnRecvMessage(const protocol::Message& message) {
     DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
     MessageType type = static_cast<MessageType>(message.message_type);
+    gateway_message_delay_stat_.AddSample(
+        GetMonotonicMicroTimestamp() - message.send_timestamp);
     if (type == MessageType::INVOKE_FUNC) {
         FuncCall func_call = message.func_call;
         if (func_call.func_id != func_id_) {
@@ -164,15 +171,17 @@ void Watchdog::OnFuncRunnerComplete(FuncRunner* func_runner, FuncRunner::Status 
     }
     if (status == FuncRunner::kSuccess) {
         if (run_mode_ == RunMode::SERIALIZING) {
-            gateway_connection_.WriteWMessage({
+            gateway_connection_.WriteMessage({
                 .message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_COMPLETE),
-                .func_call = func_call
+                .func_call = func_call,
+                .send_timestamp = GetMonotonicMicroTimestamp()
             });
         }
     } else {
-        gateway_connection_.WriteWMessage({
+        gateway_connection_.WriteMessage({
             .message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_FAILED),
-            .func_call = func_call
+            .func_call = func_call,
+            .send_timestamp = GetMonotonicMicroTimestamp()
         });
     }
 }

@@ -1,5 +1,6 @@
 #include "watchdog/func_worker.h"
 
+#include "common/time.h"
 #include "watchdog/func_runner.h"
 #include "watchdog/watchdog.h"
 
@@ -106,6 +107,8 @@ void FuncWorker::OnSubprocessExit(int exit_status, absl::Span<const char> stdout
 
 void FuncWorker::OnRecvMessage(const Message& message) {
     DCHECK_IN_EVENT_LOOP_THREAD(uv_loop_);
+    watchdog_->func_worker_message_delay_stat()->AddSample(
+        GetMonotonicMicroTimestamp() - message.send_timestamp);
     MessageType type = static_cast<MessageType>(message.message_type);
     uint64_t call_id = message.func_call.full_call_id;
     if (type == MessageType::FUNC_CALL_COMPLETE || type == MessageType::FUNC_CALL_FAILED) {
@@ -150,13 +153,14 @@ void FuncWorker::DispatchFuncCall(uint64_t call_id) {
     }
     message_to_send_.message_type = static_cast<uint16_t>(MessageType::INVOKE_FUNC);
     message_to_send_.func_call.full_call_id = call_id;
+    message_to_send_.send_timestamp = GetMonotonicMicroTimestamp();
     uv_buf_t buf = {
         .base = reinterpret_cast<char*>(&message_to_send_),
         .len = sizeof(Message)
     };
     state_ = kSending;
     UV_DCHECK_OK(uv_write(&write_req_, UV_AS_STREAM(uv_input_pipe_handle_),
-                         &buf, 1, &FuncWorker::WriteMessageCallback));
+                          &buf, 1, &FuncWorker::WriteMessageCallback));
 }
 
 UV_ALLOC_CB_FOR_CLASS(FuncWorker, BufferAlloc) {
@@ -200,8 +204,8 @@ UV_WRITE_CB_FOR_CLASS(FuncWorker, WriteMessage) {
     state_ = kReceiving;
     recv_buffer_.Reset();
     UV_DCHECK_OK(uv_read_start(UV_AS_STREAM(uv_output_pipe_handle_),
-                              &FuncWorker::BufferAllocCallback,
-                              &FuncWorker::ReadMessageCallback));
+                               &FuncWorker::BufferAllocCallback,
+                               &FuncWorker::ReadMessageCallback));
 }
 
 }  // namespace watchdog

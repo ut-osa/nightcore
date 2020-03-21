@@ -47,6 +47,7 @@ enum class MessageType {
 struct Message {
     uint16_t message_type;
     FuncCall func_call;
+    uint64_t send_timestamp;
 } __attribute__((packed));
 
 }  // namespace protocol

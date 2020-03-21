@@ -54,7 +54,7 @@ void GatewayConnection::RecvHandshakeResponse() {
     }
 }
 
-void GatewayConnection::WriteWMessage(const Message& message) {
+void GatewayConnection::WriteMessage(const Message& message) {
     DCHECK_IN_EVENT_LOOP_THREAD(uv_pipe_handle_.loop);
     uv_buf_t buf;
     buffer_pool_.Get(&buf);
@@ -64,7 +64,7 @@ void GatewayConnection::WriteWMessage(const Message& message) {
     uv_write_t* write_req = write_req_pool_.Get();
     write_req->data = buf.base;
     UV_DCHECK_OK(uv_write(write_req, UV_AS_STREAM(&uv_pipe_handle_),
-                         &buf, 1, &GatewayConnection::WriteMessageCallback));
+                          &buf, 1, &GatewayConnection::WriteMessageCallback));
 }
 
 UV_CONNECT_CB_FOR_CLASS(GatewayConnection, Connect) {

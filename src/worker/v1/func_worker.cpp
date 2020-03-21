@@ -1,5 +1,6 @@
 #include "worker/v1/func_worker.h"
 
+#include "common/time.h"
 #include "common/protocol.h"
 #include "utils/io.h"
 #include "utils/socket.h"
@@ -19,7 +20,11 @@ FuncWorker::FuncWorker()
     : func_id_(-1), input_pipe_fd_(-1), output_pipe_fd_(-1),
       gateway_sock_fd_(-1), gateway_disconnected_(false),
       gateway_ipc_thread_("GatewayIpc", std::bind(&FuncWorker::GatewayIpcThreadMain, this)),
-      next_call_id_(0) {}
+      next_call_id_(0),
+      gateway_message_delay_stat_(
+          stat::StatisticsCollector<uint32_t>::StandardReportCallback("gateway_message_delay")),
+      watchdog_message_delay_stat_(
+          stat::StatisticsCollector<uint32_t>::StandardReportCallback("watchdog_message_delay")) {}
 
 FuncWorker::~FuncWorker() {
     close(gateway_sock_fd_);
@@ -77,6 +82,8 @@ void FuncWorker::MainServingLoop() {
                 PLOG(FATAL) << "Failed to read from watchdog pipe";
             }
         }
+        watchdog_message_delay_stat_.AddSample(
+            GetMonotonicMicroTimestamp() - message.send_timestamp);
         MessageType type = static_cast<MessageType>(message.message_type);
         if (type == MessageType::INVOKE_FUNC) {
              Message response;
@@ -87,6 +94,7 @@ void FuncWorker::MainServingLoop() {
              } else {
                  response.message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_FAILED);
              }
+             response.send_timestamp = GetMonotonicMicroTimestamp();
              if (success) {
                  PCHECK(io_utils::SendMessage(gateway_sock_fd_, response));
              }
@@ -135,6 +143,8 @@ void FuncWorker::GatewayIpcThreadMain() {
                 PLOG(FATAL) << "Failed to read from gateway socket";
             }
         }
+        gateway_message_delay_stat_.AddSample(
+            GetMonotonicMicroTimestamp() - message.send_timestamp);
         MessageType type = static_cast<MessageType>(message.message_type);
         if (type == MessageType::FUNC_CALL_COMPLETE || type == MessageType::FUNC_CALL_FAILED) {
             uint64_t call_id = message.func_call.full_call_id;
@@ -209,7 +219,8 @@ bool FuncWorker::InvokeFunc(const char* func_name, const char* input_data, size_
     memcpy(context->input_region->base(), input_data, input_length);
     Message message = {
         .message_type = static_cast<uint16_t>(MessageType::INVOKE_FUNC),
-        .func_call = func_call
+        .func_call = func_call,
+        .send_timestamp = GetMonotonicMicroTimestamp()
     };
     {
         absl::MutexLock lk(&invoke_func_mu_);

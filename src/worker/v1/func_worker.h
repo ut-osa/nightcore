@@ -1,6 +1,7 @@
 #pragma once
 
 #include "base/common.h"
+#include "common/stat.h"
 #include "common/func_config.h"
 #include "utils/shared_memory.h"
 #include "utils/dynamic_library.h"
@@ -75,6 +76,9 @@ private:
     std::atomic<uint32_t> next_call_id_;
     absl::flat_hash_map<uint64_t, std::unique_ptr<FuncInvokeContext>>
         func_invoke_contexts_ ABSL_GUARDED_BY(invoke_func_mu_);
+    
+    stat::StatisticsCollector<uint32_t> gateway_message_delay_stat_;
+    stat::StatisticsCollector<uint32_t> watchdog_message_delay_stat_;
 
     void MainServingLoop();
     void GatewayIpcHandshake();

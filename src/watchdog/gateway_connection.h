@@ -25,7 +25,7 @@ public:
                const protocol::HandshakeMessage& handshake_message);
     void ScheduleClose();
 
-    void WriteWMessage(const protocol::Message& message);
+    void WriteMessage(const protocol::Message& message);
 
 private:
     enum State { kCreated, kHandshake, kRunning, kClosing, kClosed };

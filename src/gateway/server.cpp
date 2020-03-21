@@ -1,5 +1,6 @@
 #include "gateway/server.h"
 
+#include "common/time.h"
 #include "utils/fs.h"
 
 #include <absl/strings/match.h>
@@ -31,7 +32,9 @@ Server::Server()
       num_http_workers_(kDefaultNumHttpWorkers), num_ipc_workers_(kDefaultNumIpcWorkers),
       event_loop_thread_("Server_EventLoop", std::bind(&Server::EventLoopThreadMain, this)),
       next_http_connection_id_(0), next_http_worker_id_(0), next_ipc_worker_id_(0),
-      next_client_id_(1), next_call_id_(0) {
+      next_client_id_(1), next_call_id_(0),
+      message_delay_stat_(
+          stat::StatisticsCollector<uint32_t>::StandardReportCallback("message_delay")) {
     UV_DCHECK_OK(uv_loop_init(&uv_loop_));
     uv_loop_.data = &event_loop_thread_;
     UV_DCHECK_OK(uv_tcp_init(&uv_loop_, &uv_tcp_handle_));
@@ -329,6 +332,8 @@ private:
 };
 
 void Server::OnRecvMessage(MessageConnection* connection, const Message& message) {
+    message_delay_stat_.AddSample(
+        GetMonotonicMicroTimestamp() - message.send_timestamp);
     MessageType type = static_cast<MessageType>(message.message_type);
     if (type == MessageType::INVOKE_FUNC) {
         uint16_t func_id = message.func_call.func_id;
@@ -337,7 +342,8 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
             MessageConnection* connection = watchdog_connections_by_func_id_[func_id];
             connection->WriteMessage({
                 .message_type = static_cast<uint16_t>(MessageType::INVOKE_FUNC),
-                .func_call = message.func_call
+                .func_call = message.func_call,
+                .send_timestamp = GetMonotonicMicroTimestamp()
             });
         } else {
             HLOG(ERROR) << "Cannot find message connection of watchdog with func_id " << func_id;
@@ -350,7 +356,8 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
                 MessageConnection* connection = message_connections_by_client_id_[client_id];
                 connection->WriteMessage({
                     .message_type = static_cast<uint16_t>(type),
-                    .func_call = message.func_call
+                    .func_call = message.func_call,
+                    .send_timestamp = GetMonotonicMicroTimestamp()
                 });
             } else {
                 HLOG(ERROR) << "Cannot find message connection with client_id " << client_id;
@@ -398,7 +405,8 @@ void Server::OnExternalFuncCall(uint16_t func_id, std::shared_ptr<HttpAsyncReque
             MessageConnection* connection = watchdog_connections_by_func_id_[func_id];
             connection->WriteMessage({
                 .message_type = static_cast<uint16_t>(MessageType::INVOKE_FUNC),
-                .func_call = call
+                .func_call = call,
+                .send_timestamp = GetMonotonicMicroTimestamp()
             });
         } else {
             http_context->AppendToResponseBody(
