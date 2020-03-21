@@ -24,7 +24,9 @@ FuncWorker::FuncWorker()
       gateway_message_delay_stat_(
           stat::StatisticsCollector<uint32_t>::StandardReportCallback("gateway_message_delay")),
       watchdog_message_delay_stat_(
-          stat::StatisticsCollector<uint32_t>::StandardReportCallback("watchdog_message_delay")) {}
+          stat::StatisticsCollector<uint32_t>::StandardReportCallback("watchdog_message_delay")),
+      processing_delay_stat_(
+          stat::StatisticsCollector<uint32_t>::StandardReportCallback("processing_delay")) {}
 
 FuncWorker::~FuncWorker() {
     close(gateway_sock_fd_);
@@ -88,7 +90,9 @@ void FuncWorker::MainServingLoop() {
         if (type == MessageType::INVOKE_FUNC) {
              Message response;
              response.func_call = message.func_call;
+             uint64_t start_timestamp = GetMonotonicMicroTimestamp();
              bool success = RunFuncHandler(func_worker, message.func_call.full_call_id);
+             processing_delay_stat_.AddSample(GetMonotonicMicroTimestamp() - start_timestamp);
              if (success) {
                  response.message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_COMPLETE);
              } else {

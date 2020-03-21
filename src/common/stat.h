@@ -23,7 +23,7 @@ public:
     static ReportCallback StandardReportCallback(absl::string_view stat_name) {
         std::string stat_name_copy = std::string(stat_name);
         return [stat_name_copy] (absl::Duration d, size_t n_samples, const Report& report) {
-            LOG(INFO) << stat_name_copy << " statistics (" << n_samples << "): "
+            LOG(INFO) << stat_name_copy << " statistics (" << n_samples << " samples): "
                       << "p50=" << report.p50 << ", "
                       << "p70=" << report.p70 << ", "
                       << "p90=" << report.p90 << ", "
