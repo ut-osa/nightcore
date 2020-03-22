@@ -28,7 +28,11 @@ FuncWorker::FuncWorker()
       processing_delay_stat_(
           stat::StatisticsCollector<uint32_t>::StandardReportCallback("processing_delay")),
       system_protocol_overhead_stat_(
-          stat::StatisticsCollector<uint32_t>::StandardReportCallback("system_protocol_overhead")) {}
+          stat::StatisticsCollector<uint32_t>::StandardReportCallback("system_protocol_overhead")),
+      input_size_stat_(
+          stat::StatisticsCollector<uint32_t>::StandardReportCallback("input_size")),
+      output_size_stat_(
+          stat::StatisticsCollector<uint32_t>::StandardReportCallback("output_size")) {}
 
 FuncWorker::~FuncWorker() {
     close(gateway_sock_fd_);
@@ -180,6 +184,7 @@ void FuncWorker::GatewayIpcThreadMain() {
 bool FuncWorker::RunFuncHandler(void* worker_handle, uint64_t call_id) {
     utils::SharedMemory::Region* input_region = shared_memory_->OpenReadOnly(
         absl::StrCat(call_id, ".i"));
+    input_size_stat_.AddSample(input_region->size());
     func_output_buffer_.Reset();
     int ret = func_call_fn_(
         worker_handle, input_region->base(), input_region->size());
@@ -200,6 +205,7 @@ bool FuncWorker::RunFuncHandler(void* worker_handle, uint64_t call_id) {
     }
     utils::SharedMemory::Region* output_region = shared_memory_->Create(
         absl::StrCat(call_id, ".o"), func_output_buffer_.length());
+    output_size_stat_.AddSample(func_output_buffer_.length());
     memcpy(output_region->base(), func_output_buffer_.data(),
            func_output_buffer_.length());
     output_region->Close();

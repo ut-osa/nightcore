@@ -82,6 +82,8 @@ private:
     stat::StatisticsCollector<uint32_t> watchdog_message_delay_stat_;
     stat::StatisticsCollector<uint32_t> processing_delay_stat_;
     stat::StatisticsCollector<uint32_t> system_protocol_overhead_stat_;
+    stat::StatisticsCollector<uint32_t> input_size_stat_;
+    stat::StatisticsCollector<uint32_t> output_size_stat_;
 
     void MainServingLoop();
     void GatewayIpcHandshake();
