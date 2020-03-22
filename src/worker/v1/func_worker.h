@@ -84,6 +84,7 @@ private:
     stat::StatisticsCollector<uint32_t> system_protocol_overhead_stat_;
     stat::StatisticsCollector<uint32_t> input_size_stat_;
     stat::StatisticsCollector<uint32_t> output_size_stat_;
+    stat::Counter incoming_requests_counter_;
 
     void MainServingLoop();
     void GatewayIpcHandshake();

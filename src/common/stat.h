@@ -19,10 +19,11 @@ public:
         T p50; T p70; T p90; T p99; T p99_9;
     };
 
-    typedef std::function<void(absl::Duration, size_t, const Report&)> ReportCallback;
+    typedef std::function<void(absl::Duration /* duration */, size_t /* n_samples */,
+                               const Report& /* report */)> ReportCallback;
     static ReportCallback StandardReportCallback(absl::string_view stat_name) {
         std::string stat_name_copy = std::string(stat_name);
-        return [stat_name_copy] (absl::Duration d, size_t n_samples, const Report& report) {
+        return [stat_name_copy] (absl::Duration duration, size_t n_samples, const Report& report) {
             LOG(INFO) << stat_name_copy << " statistics (" << n_samples << " samples): "
                       << "p50=" << report.p50 << ", "
                       << "p70=" << report.p70 << ", "
@@ -101,6 +102,54 @@ constexpr absl::Duration StatisticsCollector<T>::kDefaultReportInterval;
 
 template<class T>
 constexpr size_t StatisticsCollector<T>::kDefaultMinReportSamples;
+
+class Counter {
+public:
+    static constexpr absl::Duration kDefaultReportInterval = absl::Seconds(1);
+
+    typedef std::function<void(absl::Duration /* duration */, uint64_t /* new_value */,
+                               uint64_t /* old_value */)> ReportCallback;
+    static ReportCallback StandardReportCallback(absl::string_view counter_name) {
+        std::string counter_name_copy = std::string(counter_name);
+        return [counter_name_copy] (absl::Duration duration, uint64_t new_value, uint64_t old_value) {
+            double rate = static_cast<double>(new_value - old_value) / absl::ToDoubleSeconds(duration);
+            LOG(INFO) << counter_name_copy << " counter: value=" << new_value << ", "
+                      << "rate=" << rate << " per sec";
+        };
+    }
+
+    explicit Counter(ReportCallback report_callback)
+        : report_interval_(kDefaultReportInterval),
+          report_callback_(report_callback),
+          last_report_time_(absl::InfinitePast()),
+          value_(0), last_report_value_(0) {}
+
+    void Tick(uint32_t delta = 1) {
+        absl::MutexLock lk(&mu_);
+        if (last_report_time_ == absl::InfinitePast()) {
+            last_report_time_ = absl::Now();
+        }
+        value_ += delta;
+        absl::Time current_time = absl::Now();
+        if (value_ > last_report_value_
+              && current_time >= last_report_time_ + report_interval_) {
+            report_callback_(current_time - last_report_time_, value_, last_report_value_);
+            last_report_time_ = current_time;
+            last_report_value_ = value_;
+        }
+    }
+
+private:
+    absl::Duration report_interval_;
+    ReportCallback report_callback_;
+
+    absl::Mutex mu_;
+    absl::Time last_report_time_ ABSL_GUARDED_BY(mu_);
+    uint64_t value_ ABSL_GUARDED_BY(mu_);
+    uint64_t last_report_value_ ABSL_GUARDED_BY(mu_);
+
+    DISALLOW_COPY_AND_ASSIGN(Counter);
+};
 
 }  // namespace stat
 }  // namespace faas

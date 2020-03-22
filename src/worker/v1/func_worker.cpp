@@ -32,7 +32,9 @@ FuncWorker::FuncWorker()
       input_size_stat_(
           stat::StatisticsCollector<uint32_t>::StandardReportCallback("input_size")),
       output_size_stat_(
-          stat::StatisticsCollector<uint32_t>::StandardReportCallback("output_size")) {}
+          stat::StatisticsCollector<uint32_t>::StandardReportCallback("output_size")),
+      incoming_requests_counter_(
+          stat::Counter::StandardReportCallback("incoming_ruquests")) {}
 
 FuncWorker::~FuncWorker() {
     close(gateway_sock_fd_);
@@ -94,23 +96,24 @@ void FuncWorker::MainServingLoop() {
             GetMonotonicMicroTimestamp() - message.send_timestamp);
         MessageType type = static_cast<MessageType>(message.message_type);
         if (type == MessageType::INVOKE_FUNC) {
-             Message response;
-             response.func_call = message.func_call;
-             uint64_t start_timestamp = GetMonotonicMicroTimestamp();
-             bool success = RunFuncHandler(func_worker, message.func_call.full_call_id);
-             uint32_t processing_time = GetMonotonicMicroTimestamp() - start_timestamp;
-             processing_delay_stat_.AddSample(processing_time);
-             if (success) {
-                 response.message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_COMPLETE);
-             } else {
-                 response.message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_FAILED);
-             }
-             response.send_timestamp = GetMonotonicMicroTimestamp();
-             response.processing_time = processing_time;
-             if (success) {
-                 PCHECK(io_utils::SendMessage(gateway_sock_fd_, response));
-             }
-             PCHECK(io_utils::SendMessage(output_pipe_fd_, response));
+            incoming_requests_counter_.Tick();
+            Message response;
+            response.func_call = message.func_call;
+            uint64_t start_timestamp = GetMonotonicMicroTimestamp();
+            bool success = RunFuncHandler(func_worker, message.func_call.full_call_id);
+            uint32_t processing_time = GetMonotonicMicroTimestamp() - start_timestamp;
+            processing_delay_stat_.AddSample(processing_time);
+            if (success) {
+                response.message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_COMPLETE);
+            } else {
+                response.message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_FAILED);
+            }
+            response.send_timestamp = GetMonotonicMicroTimestamp();
+            response.processing_time = processing_time;
+            if (success) {
+                PCHECK(io_utils::SendMessage(gateway_sock_fd_, response));
+            }
+            PCHECK(io_utils::SendMessage(output_pipe_fd_, response));
         } else {
             LOG(FATAL) << "Unknown message type";
         }
