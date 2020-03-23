@@ -113,6 +113,10 @@ private:
 
     stat::StatisticsCollector<uint32_t> gateway_message_delay_stat_;
     stat::StatisticsCollector<uint32_t> func_worker_message_delay_stat_;
+    stat::StatisticsCollector<uint32_t> processing_delay_stat_;
+    stat::CategoryCounter func_worker_decision_counter_;
+    stat::CategoryCounter func_worker_load_counter_;
+    stat::Counter incoming_requests_counter_;
 
     void EventLoopThreadMain();
     FuncWorker* PickFuncWorker();

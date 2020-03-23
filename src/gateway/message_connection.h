@@ -54,8 +54,6 @@ private:
     absl::InlinedVector<protocol::Message, 16>
         pending_messages_ ABSL_GUARDED_BY(write_message_mu_);
 
-    stat::StatisticsCollector<uint32_t> bytes_per_read_stat_;
-
     void RecvHandshakeMessage();
 
     DECLARE_UV_ALLOC_CB_FOR_CLASS(BufferAlloc);

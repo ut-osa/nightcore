@@ -105,7 +105,7 @@ constexpr size_t StatisticsCollector<T>::kDefaultMinReportSamples;
 
 class Counter {
 public:
-    static constexpr absl::Duration kDefaultReportInterval = absl::Seconds(1);
+    static constexpr absl::Duration kDefaultReportInterval = absl::Seconds(10);
 
     typedef std::function<void(absl::Duration /* duration */, uint64_t /* new_value */,
                                uint64_t /* old_value */)> ReportCallback;
@@ -123,6 +123,8 @@ public:
           report_callback_(report_callback),
           last_report_time_(absl::InfinitePast()),
           value_(0), last_report_value_(0) {}
+    
+    ~Counter() {}
 
     void Tick(uint32_t delta = 1) {
         absl::MutexLock lk(&mu_);
@@ -131,8 +133,7 @@ public:
         }
         value_ += delta;
         absl::Time current_time = absl::Now();
-        if (value_ > last_report_value_
-              && current_time >= last_report_time_ + report_interval_) {
+        if (value_ > last_report_value_ && current_time >= last_report_time_ + report_interval_) {
             report_callback_(current_time - last_report_time_, value_, last_report_value_);
             last_report_time_ = current_time;
             last_report_value_ = value_;
@@ -149,6 +150,73 @@ private:
     uint64_t last_report_value_ ABSL_GUARDED_BY(mu_);
 
     DISALLOW_COPY_AND_ASSIGN(Counter);
+};
+
+class CategoryCounter {
+public:
+    static constexpr absl::Duration kDefaultReportInterval = absl::Seconds(10);
+
+    typedef std::function<void(absl::Duration /* duration */,
+                               const absl::flat_hash_map<int, uint64_t>& /* values */)> ReportCallback;
+    static ReportCallback StandardReportCallback(absl::string_view counter_name) {
+        std::string counter_name_copy = std::string(counter_name);
+        return [counter_name_copy] (absl::Duration duration, const absl::flat_hash_map<int, uint64_t>& values) {
+            uint64_t sum = 0;
+            for (const auto& entry : values) {
+                sum += entry.second;
+            }
+            std::ostringstream stream;
+            bool first = true;
+            for (const auto& entry : values) {
+                if (entry.second == 0) continue;
+                double percentage = static_cast<double>(entry.second) / sum * 100;
+                if (!first) {
+                    stream << ", ";
+                } else {
+                    first = false;
+                }
+                stream << entry.first << "=" << entry.second << "(" << percentage << "%)";
+            }
+            LOG(INFO) << counter_name_copy << " counter: " << stream.str();
+        };
+    }
+
+    explicit CategoryCounter(ReportCallback report_callback)
+        : report_interval_(kDefaultReportInterval),
+          report_callback_(report_callback),
+          last_report_time_(absl::InfinitePast()),
+          sum_(0) {}
+    
+    ~CategoryCounter() {}
+
+    void Tick(int category, uint32_t delta = 1) {
+        absl::MutexLock lk(&mu_);
+        if (last_report_time_ == absl::InfinitePast()) {
+            last_report_time_ = absl::Now();
+        }
+        values_[category] += delta;
+        sum_ += delta;
+        absl::Time current_time = absl::Now();
+        if (sum_ > 0 && current_time >= last_report_time_ + report_interval_) {
+            report_callback_(current_time - last_report_time_, values_);
+            last_report_time_ = current_time;
+            for (auto& entry : values_) {
+                entry.second = 0;
+            }
+            sum_ = 0;
+        }
+    }
+
+private:
+    absl::Duration report_interval_;
+    ReportCallback report_callback_;
+
+    absl::Mutex mu_;
+    absl::Time last_report_time_ ABSL_GUARDED_BY(mu_);
+    absl::flat_hash_map<int, uint64_t> values_ ABSL_GUARDED_BY(mu_);
+    uint64_t sum_ ABSL_GUARDED_BY(mu_);
+
+    DISALLOW_COPY_AND_ASSIGN(CategoryCounter);
 };
 
 }  // namespace stat

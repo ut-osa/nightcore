@@ -30,7 +30,15 @@ Watchdog::Watchdog()
       gateway_message_delay_stat_(
           stat::StatisticsCollector<uint32_t>::StandardReportCallback("gateway_message_delay")),
       func_worker_message_delay_stat_(
-          stat::StatisticsCollector<uint32_t>::StandardReportCallback("func_worker_message_delay")) {
+          stat::StatisticsCollector<uint32_t>::StandardReportCallback("func_worker_message_delay")),
+      processing_delay_stat_(
+          stat::StatisticsCollector<uint32_t>::StandardReportCallback("processing_delay")),
+      func_worker_decision_counter_(
+          stat::CategoryCounter::StandardReportCallback("func_worker_decision")),
+      func_worker_load_counter_(
+          stat::CategoryCounter::StandardReportCallback("func_worker_load")),
+      incoming_requests_counter_(
+          stat::Counter::StandardReportCallback("incoming_requests")) {
     UV_DCHECK_OK(uv_loop_init(&uv_loop_));
     uv_loop_.data = &event_loop_thread_;
     UV_DCHECK_OK(uv_async_init(&uv_loop_, &stop_event_, &Watchdog::StopCallback));
@@ -137,6 +145,7 @@ void Watchdog::OnRecvMessage(const protocol::Message& message) {
             HLOG(ERROR) << "I am not running func_id " << func_call.func_id;
             return;
         }
+        incoming_requests_counter_.Tick();
         FuncRunner* func_runner;
         switch (run_mode_) {
         case RunMode::SERIALIZING:
@@ -178,6 +187,7 @@ void Watchdog::OnFuncRunnerComplete(FuncRunner* func_runner, FuncRunner::Status 
                 .processing_time = processing_time
             });
         }
+        processing_delay_stat_.AddSample(processing_time);
     } else {
         gateway_connection_.WriteMessage({
             .message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_FAILED),
@@ -214,13 +224,16 @@ FuncWorker* Watchdog::PickFuncWorker() {
             func_worker = idle_func_workers_.back();
             idle_func_workers_.pop_back();
             DCHECK(func_worker->is_idle());
+            func_worker_decision_counter_.Tick(0);
         } else {
             int idx = absl::Uniform<int>(random_bit_gen_, 0, func_workers_.size());
             func_worker = func_workers_[idx].get();
+            func_worker_decision_counter_.Tick(1);
         }
     } else {
         HLOG(FATAL) << "Should not reach here!";
     }
+    func_worker_load_counter_.Tick(func_worker->id());
     return func_worker;
 }
 

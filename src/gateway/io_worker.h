@@ -1,6 +1,7 @@
 #pragma once
 
 #include "base/common.h"
+#include "common/stat.h"
 #include "utils/uv_utils.h"
 #include "utils/buffer_pool.h"
 #include "gateway/connection.h"
@@ -34,6 +35,13 @@ public:
     void NewWriteBuffer(uv_buf_t* buf);
     void ReturnWriteBuffer(char* buf);
 
+    stat::StatisticsCollector<uint32_t>* bytes_per_read_stat() {
+        return &bytes_per_read_stat_;
+    }
+    stat::StatisticsCollector<uint32_t>* write_size_stat() {
+        return &write_size_stat_;
+    }
+
 private:
     enum State { kCreated, kRunning, kStopping, kStopped };
 
@@ -51,6 +59,9 @@ private:
     absl::flat_hash_set<Connection*> connections_;
     utils::BufferPool read_buffer_pool_;
     utils::BufferPool write_buffer_pool_;
+
+    stat::StatisticsCollector<uint32_t> bytes_per_read_stat_;
+    stat::StatisticsCollector<uint32_t> write_size_stat_;
 
     void EventLoopThreadMain();
 

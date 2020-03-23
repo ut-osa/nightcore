@@ -17,9 +17,7 @@ using protocol::HandshakeResponse;
 MessageConnection::MessageConnection(Server* server)
     : Connection(Connection::Type::Message, server), io_worker_(nullptr), state_(kCreated),
       role_(Role::INVALID), func_id_(0), client_id_(0),
-      log_header_("MessageConnection[Handshaking]: "),
-      bytes_per_read_stat_(
-          stat::StatisticsCollector<uint32_t>::StandardReportCallback("bytes_per_read")) {
+      log_header_("MessageConnection[Handshaking]: ") {
 }
 
 MessageConnection::~MessageConnection() {
@@ -153,7 +151,7 @@ UV_READ_CB_FOR_CLASS(MessageConnection, ReadMessage) {
         }
         ScheduleClose();
     } else if (nread > 0) {
-        bytes_per_read_stat_.AddSample(nread);
+        io_worker_->bytes_per_read_stat()->AddSample(nread);
         utils::ReadMessages<Message>(
             &message_buffer_, buf->base, nread,
             [this] (Message* message) {
@@ -196,6 +194,7 @@ UV_ASYNC_CB_FOR_CLASS(MessageConnection, NewMessageForWrite) {
     if (write_size == 0) {
         return;
     }
+    io_worker_->write_size_stat()->AddSample(write_size);
     char* ptr = write_message_buffer_.data();
     while (write_size > 0) {
         uv_buf_t buf;
