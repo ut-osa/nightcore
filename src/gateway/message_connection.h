@@ -2,6 +2,7 @@
 
 #include "base/common.h"
 #include "common/protocol.h"
+#include "common/stat.h"
 #include "utils/uv_utils.h"
 #include "utils/appendable_buffer.h"
 #include "utils/buffer_pool.h"
@@ -52,6 +53,8 @@ private:
     absl::Mutex write_message_mu_;
     absl::InlinedVector<protocol::Message, 16>
         pending_messages_ ABSL_GUARDED_BY(write_message_mu_);
+
+    stat::StatisticsCollector<uint32_t> bytes_per_read_stat_;
 
     void RecvHandshakeMessage();
 

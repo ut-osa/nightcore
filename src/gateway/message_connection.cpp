@@ -17,7 +17,9 @@ using protocol::HandshakeResponse;
 MessageConnection::MessageConnection(Server* server)
     : Connection(Connection::Type::Message, server), io_worker_(nullptr), state_(kCreated),
       role_(Role::INVALID), func_id_(0), client_id_(0),
-      log_header_("MessageConnection[Handshaking]: ") {
+      log_header_("MessageConnection[Handshaking]: "),
+      bytes_per_read_stat_(
+          stat::StatisticsCollector<uint32_t>::StandardReportCallback("bytes_per_read")) {
 }
 
 MessageConnection::~MessageConnection() {
@@ -151,6 +153,7 @@ UV_READ_CB_FOR_CLASS(MessageConnection, ReadMessage) {
         }
         ScheduleClose();
     } else if (nread > 0) {
+        bytes_per_read_stat_.AddSample(nread);
         utils::ReadMessages<Message>(
             &message_buffer_, buf->base, nread,
             [this] (Message* message) {
