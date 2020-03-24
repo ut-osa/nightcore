@@ -3,6 +3,7 @@
 #include "common/time.h"
 #include "utils/fs.h"
 
+#include <absl/time/clock.h>
 #include <absl/random/distributions.h>
 
 #define HLOG(l) LOG(l) << "Watchdog: "
@@ -82,6 +83,7 @@ void Watchdog::Start() {
             func_worker->Start(&uv_loop_, buffer_pool_for_subprocess_pipes_.get());
             func_workers_.push_back(std::move(func_worker));
         }
+        last_func_worker_creation_time_ = absl::Now();
         HLOG(INFO) << "Initial number of FuncWorker: " << initial_num_func_workers_;
     } else {
         HLOG(FATAL) << "Unknown run mode";
@@ -137,8 +139,10 @@ bool Watchdog::OnRecvHandshakeResponse(const HandshakeResponse& response) {
 void Watchdog::OnRecvMessage(const protocol::Message& message) {
     DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
     MessageType type = static_cast<MessageType>(message.message_type);
+#ifdef __FAAS_ENABLE_PROFILING
     gateway_message_delay_stat_.AddSample(
         GetMonotonicMicroTimestamp() - message.send_timestamp);
+#endif
     if (type == MessageType::INVOKE_FUNC) {
         FuncCall func_call = message.func_call;
         if (func_call.func_id != func_id_) {
@@ -181,19 +185,23 @@ void Watchdog::OnFuncRunnerComplete(FuncRunner* func_runner, FuncRunner::Status 
     if (status == FuncRunner::kSuccess) {
         if (run_mode_ == RunMode::SERIALIZING) {
             gateway_connection_.WriteMessage({
-                .message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_COMPLETE),
-                .func_call = func_call,
+#ifdef __FAAS_ENABLE_PROFILING
                 .send_timestamp = GetMonotonicMicroTimestamp(),
-                .processing_time = processing_time
+                .processing_time = processing_time,
+#endif
+                .message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_COMPLETE),
+                .func_call = func_call
             });
         }
         processing_delay_stat_.AddSample(processing_time);
     } else {
         gateway_connection_.WriteMessage({
-            .message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_FAILED),
-            .func_call = func_call,
+#ifdef __FAAS_ENABLE_PROFILING
             .send_timestamp = GetMonotonicMicroTimestamp(),
-            .processing_time = processing_time
+            .processing_time = processing_time,
+#endif
+            .message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_FAILED),
+            .func_call = func_call
         });
     }
 }
@@ -213,12 +221,14 @@ FuncWorker* Watchdog::PickFuncWorker() {
         next_func_worker_id_ = (next_func_worker_id_ + 1) % func_workers_.size();
     } else if (run_mode_ == RunMode::FUNC_WORKER_ON_DEMAND) {
         if (idle_func_workers_.empty()
-                && static_cast<int>(func_workers_.size()) < max_num_func_workers_) {
+                && static_cast<int>(func_workers_.size()) < max_num_func_workers_
+                && absl::Now() >= last_func_worker_creation_time_ + kMinFuncWorkerCreationInterval) {
             auto new_func_worker = absl::make_unique<FuncWorker>(this, func_workers_.size());
             new_func_worker->Start(&uv_loop_, buffer_pool_for_subprocess_pipes_.get());
             func_workers_.push_back(std::move(new_func_worker));
             HLOG(INFO) << "Create new FuncWorker, current count is " << func_workers_.size();
             DCHECK(!idle_func_workers_.empty());
+            last_func_worker_creation_time_ = absl::Now();
         }
         if (!idle_func_workers_.empty()) {
             func_worker = idle_func_workers_.back();

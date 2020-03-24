@@ -41,6 +41,9 @@ public:
     stat::StatisticsCollector<uint32_t>* write_size_stat() {
         return &write_size_stat_;
     }
+    stat::StatisticsCollector<uint32_t>* uv_async_delay_stat() {
+        return &uv_async_delay_stat_;
+    }
 
 private:
     enum State { kCreated, kRunning, kStopping, kStopped };
@@ -62,6 +65,7 @@ private:
 
     stat::StatisticsCollector<uint32_t> bytes_per_read_stat_;
     stat::StatisticsCollector<uint32_t> write_size_stat_;
+    stat::StatisticsCollector<uint32_t> uv_async_delay_stat_;
 
     void EventLoopThreadMain();
 

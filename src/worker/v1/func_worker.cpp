@@ -92,8 +92,10 @@ void FuncWorker::MainServingLoop() {
                 PLOG(FATAL) << "Failed to read from watchdog pipe";
             }
         }
+#ifdef __FAAS_ENABLE_PROFILING
         watchdog_message_delay_stat_.AddSample(
             GetMonotonicMicroTimestamp() - message.send_timestamp);
+#endif
         MessageType type = static_cast<MessageType>(message.message_type);
         if (type == MessageType::INVOKE_FUNC) {
             incoming_requests_counter_.Tick();
@@ -108,8 +110,10 @@ void FuncWorker::MainServingLoop() {
             } else {
                 response.message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_FAILED);
             }
+#ifdef __FAAS_ENABLE_PROFILING
             response.send_timestamp = GetMonotonicMicroTimestamp();
             response.processing_time = processing_time;
+#endif
             if (success) {
                 PCHECK(io_utils::SendMessage(gateway_sock_fd_, response));
             }
@@ -158,8 +162,10 @@ void FuncWorker::GatewayIpcThreadMain() {
                 PLOG(FATAL) << "Failed to read from gateway socket";
             }
         }
+#ifdef __FAAS_ENABLE_PROFILING
         gateway_message_delay_stat_.AddSample(
             GetMonotonicMicroTimestamp() - message.send_timestamp);
+#endif
         MessageType type = static_cast<MessageType>(message.message_type);
         if (type == MessageType::FUNC_CALL_COMPLETE || type == MessageType::FUNC_CALL_FAILED) {
             uint64_t call_id = message.func_call.full_call_id;
@@ -172,7 +178,9 @@ void FuncWorker::GatewayIpcThreadMain() {
                     } else {
                         context->success = false;
                     }
+#ifdef __FAAS_ENABLE_PROFILING
                     context->processing_time = message.processing_time;
+#endif
                     context->finished.Notify();
                 } else {
                     LOG(ERROR) << "Cannot find InvokeContext for call_id " << call_id;
@@ -225,10 +233,12 @@ bool FuncWorker::InvokeFunc(const char* func_name, const char* input_data, size_
     if (func_entry == nullptr) {
         return false;
     }
-    uint64_t start_timestamp = GetMonotonicMicroTimestamp();
     FuncInvokeContext* context = new FuncInvokeContext;
     context->success = false;
+#ifdef __FAAS_ENABLE_PROFILING
+    uint64_t start_timestamp = GetMonotonicMicroTimestamp();
     context->processing_time = 0;
+#endif
     context->output_region = nullptr;
     FuncCall func_call;
     func_call.func_id = static_cast<uint16_t>(func_entry->func_id);
@@ -238,9 +248,12 @@ bool FuncWorker::InvokeFunc(const char* func_name, const char* input_data, size_
         absl::StrCat(func_call.full_call_id, ".i"), input_length);
     memcpy(context->input_region->base(), input_data, input_length);
     Message message = {
+#ifdef __FAAS_ENABLE_PROFILING
+        .send_timestamp = GetMonotonicMicroTimestamp(),
+        .processing_time = 0,
+#endif
         .message_type = static_cast<uint16_t>(MessageType::INVOKE_FUNC),
-        .func_call = func_call,
-        .send_timestamp = GetMonotonicMicroTimestamp()
+        .func_call = func_call
     };
     {
         absl::MutexLock lk(&invoke_func_mu_);
@@ -253,8 +266,10 @@ bool FuncWorker::InvokeFunc(const char* func_name, const char* input_data, size_
             absl::StrCat(func_call.full_call_id, ".o"));
         *output_data = context->output_region->base();
         *output_length = context->output_region->size();
+#ifdef __FAAS_ENABLE_PROFILING
         uint32_t end2end_time = GetMonotonicMicroTimestamp() - start_timestamp;
         system_protocol_overhead_stat_.AddSample(end2end_time - context->processing_time);
+#endif
         return true;
     } else {
         return false;

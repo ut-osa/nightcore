@@ -63,6 +63,7 @@ private:
     bool within_async_request_;
     std::shared_ptr<HttpAsyncRequestContext> async_request_context_;
     uv_async_t async_request_finished_event_;
+    std::atomic<uint64_t> finished_event_recv_timestamp_;
 
     friend class HttpAsyncRequestContext;
 

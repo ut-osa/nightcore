@@ -1,5 +1,6 @@
 #include "gateway/message_connection.h"
 
+#include "common/time.h"
 #include "utils/uv_utils.h"
 #include "gateway/server.h"
 
@@ -17,7 +18,8 @@ using protocol::HandshakeResponse;
 MessageConnection::MessageConnection(Server* server)
     : Connection(Connection::Type::Message, server), io_worker_(nullptr), state_(kCreated),
       role_(Role::INVALID), func_id_(0), client_id_(0),
-      log_header_("MessageConnection[Handshaking]: ") {
+      log_header_("MessageConnection[Handshaking]: "),
+      write_message_event_recv_timestamp_(0) {
 }
 
 MessageConnection::~MessageConnection() {
@@ -96,10 +98,18 @@ void MessageConnection::WriteMessage(const Message& message) {
         }
         pending_messages_.push_back(message);
         if (!within_my_event_loop) {
+#ifdef __FAAS_ENABLE_PROFILING
+            uint64_t empty = 0;
+            write_message_event_recv_timestamp_.compare_exchange_strong(
+                empty, GetMonotonicMicroTimestamp());
+#endif
             UV_DCHECK_OK(uv_async_send(&write_message_event_));
         }
     }
     if (within_my_event_loop) {
+#ifdef __FAAS_ENABLE_PROFILING
+        write_message_event_recv_timestamp_.store(0);
+#endif
         OnNewMessageForWrite();
     }
 }
@@ -179,6 +189,13 @@ UV_ASYNC_CB_FOR_CLASS(MessageConnection, NewMessageForWrite) {
         HLOG(WARNING) << "MessageConnection is closing or has closed, will not write pending messages";
         return;
     }
+#ifdef __FAAS_ENABLE_PROFILING
+    uint64_t write_message_event_recv_timestamp = write_message_event_recv_timestamp_.fetch_and(0);
+    if (write_message_event_recv_timestamp != 0) {
+        io_worker_->uv_async_delay_stat()->AddSample(
+            GetMonotonicMicroTimestamp() - write_message_event_recv_timestamp);
+    }
+#endif
     size_t write_size = 0;
     {
         absl::MutexLock lk(&write_message_mu_);

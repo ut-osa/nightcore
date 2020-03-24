@@ -332,8 +332,10 @@ private:
 };
 
 void Server::OnRecvMessage(MessageConnection* connection, const Message& message) {
+#ifdef __FAAS_ENABLE_PROFILING
     message_delay_stat_.AddSample(
         GetMonotonicMicroTimestamp() - message.send_timestamp);
+#endif
     MessageType type = static_cast<MessageType>(message.message_type);
     if (type == MessageType::INVOKE_FUNC) {
         uint16_t func_id = message.func_call.func_id;
@@ -341,9 +343,12 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
         if (watchdog_connections_by_func_id_.contains(func_id)) {
             MessageConnection* connection = watchdog_connections_by_func_id_[func_id];
             connection->WriteMessage({
+#ifdef __FAAS_ENABLE_PROFILING
+                .send_timestamp = GetMonotonicMicroTimestamp(),
+                .processing_time = 0,
+#endif
                 .message_type = static_cast<uint16_t>(MessageType::INVOKE_FUNC),
-                .func_call = message.func_call,
-                .send_timestamp = GetMonotonicMicroTimestamp()
+                .func_call = message.func_call
             });
         } else {
             HLOG(ERROR) << "Cannot find message connection of watchdog with func_id " << func_id;
@@ -355,10 +360,12 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
             if (message_connections_by_client_id_.contains(client_id)) {
                 MessageConnection* connection = message_connections_by_client_id_[client_id];
                 connection->WriteMessage({
-                    .message_type = static_cast<uint16_t>(type),
-                    .func_call = message.func_call,
+#ifdef __FAAS_ENABLE_PROFILING
                     .send_timestamp = GetMonotonicMicroTimestamp(),
-                    .processing_time = message.processing_time
+                    .processing_time = message.processing_time,
+#endif
+                    .message_type = static_cast<uint16_t>(type),
+                    .func_call = message.func_call
                 });
             } else {
                 HLOG(ERROR) << "Cannot find message connection with client_id " << client_id;
@@ -405,9 +412,12 @@ void Server::OnExternalFuncCall(uint16_t func_id, std::shared_ptr<HttpAsyncReque
         if (watchdog_connections_by_func_id_.contains(func_id)) {
             MessageConnection* connection = watchdog_connections_by_func_id_[func_id];
             connection->WriteMessage({
+#ifdef __FAAS_ENABLE_PROFILING
+                .send_timestamp = GetMonotonicMicroTimestamp(),
+                .processing_time = 0,
+#endif
                 .message_type = static_cast<uint16_t>(MessageType::INVOKE_FUNC),
-                .func_call = call,
-                .send_timestamp = GetMonotonicMicroTimestamp()
+                .func_call = call
             });
         } else {
             http_context->AppendToResponseBody(

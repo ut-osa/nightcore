@@ -12,6 +12,7 @@
 #include "watchdog/func_runner.h"
 #include "watchdog/func_worker.h"
 
+#include <absl/time/time.h>
 #include <absl/random/random.h>
 
 namespace faas {
@@ -21,6 +22,7 @@ class Watchdog : public uv::Base {
 public:
     static constexpr size_t kSubprocessPipeBufferSizeForSerializingMode = 65536;
     static constexpr size_t kSubprocessPipeBufferSizeForFuncWorkerMode = 256;
+    static constexpr absl::Duration kMinFuncWorkerCreationInterval = absl::Milliseconds(500);
 
     Watchdog();
     ~Watchdog();
@@ -110,6 +112,7 @@ private:
     absl::InlinedVector<FuncWorker*, 16> idle_func_workers_;
     int next_func_worker_id_;
     absl::BitGen random_bit_gen_;
+    absl::Time last_func_worker_creation_time_;
 
     stat::StatisticsCollector<uint32_t> gateway_message_delay_stat_;
     stat::StatisticsCollector<uint32_t> func_worker_message_delay_stat_;

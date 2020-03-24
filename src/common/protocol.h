@@ -45,10 +45,12 @@ enum class MessageType {
 };
 
 struct Message {
-    uint16_t message_type;
-    FuncCall func_call;
+#ifdef __FAAS_ENABLE_PROFILING
     uint64_t send_timestamp;
     uint32_t processing_time;
+#endif
+    uint16_t message_type;
+    FuncCall func_call;
 } __attribute__((packed));
 
 }  // namespace protocol

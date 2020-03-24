@@ -68,7 +68,9 @@ private:
     struct FuncInvokeContext {
         absl::Notification finished;
         bool success;
+#ifdef __FAAS_ENABLE_PROFILING
         uint32_t processing_time;
+#endif
         utils::SharedMemory::Region* input_region;
         utils::SharedMemory::Region* output_region;
     };

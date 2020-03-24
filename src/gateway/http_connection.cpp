@@ -1,5 +1,6 @@
 #include "gateway/http_connection.h"
 
+#include "common/time.h"
 #include "gateway/server.h"
 #include "gateway/io_worker.h"
 
@@ -18,7 +19,8 @@ HttpConnection::HttpConnection(Server* server, int connection_id)
     : Connection(Connection::Type::Http, server),
       connection_id_(connection_id), io_worker_(nullptr),
       state_(kCreated), log_header_(absl::StrFormat("HttpConnection[%d]: ", connection_id)),
-      within_async_request_(false) {
+      within_async_request_(false),
+      finished_event_recv_timestamp_(0) {
     http_parser_init(&http_parser_, HTTP_REQUEST);
     http_parser_.data = this;
     http_parser_settings_init(&http_parser_settings_);
@@ -144,6 +146,13 @@ UV_ALLOC_CB_FOR_CLASS(HttpConnection, BufferAlloc) {
 }
 
 UV_ASYNC_CB_FOR_CLASS(HttpConnection, AsyncRequestFinish) {
+#ifdef __FAAS_ENABLE_PROFILING
+    uint64_t finished_event_recv_timestamp = finished_event_recv_timestamp_.load();
+    if (finished_event_recv_timestamp != 0) {
+        io_worker_->uv_async_delay_stat()->AddSample(
+            GetMonotonicMicroTimestamp() - finished_event_recv_timestamp);
+    }
+#endif
     HttpAsyncRequestContext* context = async_request_context_.get();
     DCHECK(context != nullptr);
     if (!within_async_request_) {
@@ -304,8 +313,14 @@ void HttpConnection::OnNewHttpRequest(absl::string_view method, absl::string_vie
 
 void HttpConnection::AsyncRequestFinish(HttpAsyncRequestContext* context) {
     if (uv::WithinEventLoop(uv_tcp_handle_.loop)) {
+#ifdef __FAAS_ENABLE_PROFILING
+        finished_event_recv_timestamp_.store(0);
+#endif
         OnAsyncRequestFinish();
     } else {
+#ifdef __FAAS_ENABLE_PROFILING
+        finished_event_recv_timestamp_.store(GetMonotonicMicroTimestamp());
+#endif
         UV_DCHECK_OK(uv_async_send(&async_request_finished_event_));
     }
 }

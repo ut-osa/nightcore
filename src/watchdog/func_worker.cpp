@@ -107,15 +107,21 @@ void FuncWorker::OnSubprocessExit(int exit_status, absl::Span<const char> stdout
 
 void FuncWorker::OnRecvMessage(const Message& message) {
     DCHECK_IN_EVENT_LOOP_THREAD(uv_loop_);
+#ifdef __FAAS_ENABLE_PROFILING
     watchdog_->func_worker_message_delay_stat()->AddSample(
         GetMonotonicMicroTimestamp() - message.send_timestamp);
+#endif
     MessageType type = static_cast<MessageType>(message.message_type);
     uint64_t call_id = message.func_call.full_call_id;
     if (type == MessageType::FUNC_CALL_COMPLETE || type == MessageType::FUNC_CALL_FAILED) {
         if (func_runners_.contains(call_id)) {
             WorkerFuncRunner* func_runner = func_runners_[call_id];
             if (type == MessageType::FUNC_CALL_COMPLETE) {
+#ifdef __FAAS_ENABLE_PROFILING
                 func_runner->Complete(FuncRunner::kSuccess, message.processing_time);
+#else
+                func_runner->Complete(FuncRunner::kSuccess);
+#endif
             } else {
                 func_runner->Complete(FuncRunner::kFailedWithoutReason);
             }
@@ -153,7 +159,9 @@ void FuncWorker::DispatchFuncCall(uint64_t call_id) {
     }
     message_to_send_.message_type = static_cast<uint16_t>(MessageType::INVOKE_FUNC);
     message_to_send_.func_call.full_call_id = call_id;
+#ifdef __FAAS_ENABLE_PROFILING
     message_to_send_.send_timestamp = GetMonotonicMicroTimestamp();
+#endif
     uv_buf_t buf = {
         .base = reinterpret_cast<char*>(&message_to_send_),
         .len = sizeof(Message)

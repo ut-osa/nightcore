@@ -26,13 +26,17 @@ RLINK_FLAGS = -Wl,-Bstatic -lglog -Wl,-Bdynamic
 DLINK_FLAGS = -Wl,-Bstatic -lglogd -Wl,-Bdynamic
 #### END PROJECT SETTINGS ####
 
+# Optionally you may move the section above to a separate config.mk file, and
+# uncomment the line below
+include config.mk
+
 ifeq ($(CXX),clang++)
 	COMPILE_FLAGS += -Wthread-safety -Wno-unused-private-field
 endif
 
-# Optionally you may move the section above to a separate config.mk file, and
-# uncomment the line below
-# include config.mk
+ifeq ($(ENABLE_PROFILING),1)
+	COMPILE_FLAGS += -D__FAAS_ENABLE_PROFILING
+endif
 
 # Function used to check variables. Use on the command line:
 # make print-VARNAME

@@ -53,6 +53,8 @@ private:
     absl::Mutex write_message_mu_;
     absl::InlinedVector<protocol::Message, 16>
         pending_messages_ ABSL_GUARDED_BY(write_message_mu_);
+    
+    std::atomic<uint64_t> write_message_event_recv_timestamp_;
 
     void RecvHandshakeMessage();
 
