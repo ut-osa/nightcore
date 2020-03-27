@@ -18,6 +18,14 @@ done
 rm -rf ${DEPS_INSTALL_PATH}
 mkdir -p ${DEPS_INSTALL_PATH}
 
+# Build flatbuffers
+cd $BASE_DIR/deps/flatbuffers && rm -rf build && mkdir -p build && cd build && \
+  cmake -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DFLATBUFFERS_BUILD_TESTS=OFF -DCMAKE_CXX_STANDARD=11 \
+        -DFLATBUFFERS_STATIC_FLATC=OFF -DFLATBUFFERS_BUILD_FLATHASH=OFF \
+        -DCMAKE_INSTALL_PREFIX=${DEPS_INSTALL_PATH} .. && \
+  make -j$(nproc) install && \
+  rm -rf $BASE_DIR/deps/flatbuffers/build
+
 # Build yaml-cpp
 cd $BASE_DIR/deps/yaml-cpp && rm -rf build && mkdir -p build && cd build && \
   cmake -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DYAML_CPP_BUILD_TESTS=OFF -DCMAKE_CXX_STANDARD=11 \
