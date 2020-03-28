@@ -18,7 +18,7 @@ public:
         int func_id;
     };
 
-    bool Load(absl::string_view yaml_path);
+    bool Load(absl::string_view json_path);
 
     const Entry* find_by_func_name(absl::string_view func_name) const {
         if (entires_by_func_name_.contains(func_name)) {
@@ -41,8 +41,8 @@ private:
     absl::flat_hash_map<std::string, Entry*> entires_by_func_name_;
     absl::flat_hash_map<int, Entry*> entries_by_func_id_;
 
-    static bool is_valid_func_id(int func_id);
-    static bool is_valid_func_name(absl::string_view func_name);
+    static bool ValidateFuncId(int func_id);
+    static bool ValidateFuncName(absl::string_view func_name);
 
     DISALLOW_COPY_AND_ASSIGN(FuncConfig);
 };

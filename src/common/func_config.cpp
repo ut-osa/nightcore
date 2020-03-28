@@ -1,16 +1,20 @@
 #include "common/func_config.h"
 
-#include <yaml-cpp/yaml.h>
+#include "utils/fs.h"
+
+#include <nlohmann/json.hpp>
+
+using json = nlohmann::json;
 
 namespace faas {
 
 constexpr int FuncConfig::kMaxFuncId;
 
-bool FuncConfig::is_valid_func_id(int func_id) {
+bool FuncConfig::ValidateFuncId(int func_id) {
     return 0 < func_id && func_id <= kMaxFuncId;
 }
 
-bool FuncConfig::is_valid_func_name(absl::string_view func_name) {
+bool FuncConfig::ValidateFuncName(absl::string_view func_name) {
     for (const char& ch : func_name) {
         if (!(('0' <= ch && ch <= '9') ||
               ('a' <= ch && ch <= 'z') ||
@@ -21,29 +25,33 @@ bool FuncConfig::is_valid_func_name(absl::string_view func_name) {
     return true;
 }
 
-bool FuncConfig::Load(absl::string_view yaml_path) {
-    YAML::Node config;
-    try {
-        config = YAML::LoadFile(std::string(yaml_path));
-    } catch (const YAML::Exception& e) {
-        LOG(ERROR) << "Failed to load YAML from file " << yaml_path << ": "
-                   << e.msg;
+bool FuncConfig::Load(absl::string_view json_path) {
+    std::string json_contents;
+    if (!fs_utils::ReadContents(json_path, &json_contents)) {
+        LOG(ERROR) << "Failed to read from file " << json_path;
         return false;
     }
-    if (config.Type() != YAML::NodeType::Map) {
-        LOG(ERROR) << "Invalid config file";
+    json config;
+    try {
+        config = json::parse(json_contents);
+    } catch (const json::parse_error& e) {
+        LOG(ERROR) << "Failed to parse json: " << e.what();
         return false;
     }
     try {
-        for (const auto& item : config) {
-            std::string func_name = item.first.as<std::string>();
-            if (!is_valid_func_name(func_name)) {
+        if (!config.is_object()) {
+            LOG(ERROR) << "Invalid config file";
+            return false;
+        }
+        for (const auto& item : config.items()) {
+            std::string func_name = item.key();
+            if (!ValidateFuncName(func_name)) {
                 LOG(ERROR) << "Invalid func_name: " << func_name;
                 return false;
             }
-            const YAML::Node& func_config = item.second;
-            int func_id = func_config["func_id"].as<int>();
-            if (!is_valid_func_id(func_id)) {
+            const json& func_config = item.value();
+            int func_id = func_config.at("func_id").get<int>();
+            if (!ValidateFuncId(func_id)) {
                 LOG(ERROR) << "Invalid func_id: " << func_id;
                 return false;
             }
@@ -56,8 +64,8 @@ bool FuncConfig::Load(absl::string_view yaml_path) {
             entries_by_func_id_[func_id] = entry.get();
             entries_.push_back(std::move(entry));
         }
-    } catch (const YAML::Exception& e) {
-        LOG(ERROR) << "Invalid config file: " << e.msg;
+    } catch (const json::exception& e) {
+        LOG(ERROR) << "Invalid config file: " << e.what();
         return false;
     }
     return true;

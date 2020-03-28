@@ -50,5 +50,22 @@ bool RemoveDirectoryRecursively(absl::string_view path) {
                 FTW_DEPTH|FTW_MOUNT|FTW_PHYS) == 0;
 }
 
+bool ReadContents(absl::string_view path, std::string* contents) {
+    FILE* fin = fopen(std::string(path).c_str(), "rb");
+    if (fin == nullptr) {
+        return false;
+    }
+    struct stat statbuf;
+    if (!Stat(path, &statbuf)) {
+        fclose(fin);
+        return false;
+    }
+    size_t size = static_cast<size_t>(statbuf.st_size);
+    contents->resize(size);
+    size_t nread = fread(const_cast<char*>(contents->data()), 1, size, fin);
+    fclose(fin);
+    return nread == size;
+}
+
 }  // namespace fs_utils
 }  // namespace faas
