@@ -10,12 +10,6 @@
 [submodule "deps/abseil-cpp"]
 	path = deps/abseil-cpp
 	url = https://github.com/abseil/abseil-cpp.git
-[submodule "deps/yaml-cpp"]
-	path = deps/yaml-cpp
-	url = https://github.com/jbeder/yaml-cpp.git
 [submodule "deps/json"]
 	path = deps/json
 	url = https://github.com/nlohmann/json.git
-[submodule "deps/flatbuffers"]
-	path = deps/flatbuffers
-	url = https://github.com/google/flatbuffers.git
