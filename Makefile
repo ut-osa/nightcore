@@ -15,27 +15,30 @@ DCOMPILE_FLAGS = -DDEBUG -g
 INCLUDES = -I$(SRC_PATH) -I./include -I./deps/out/include
 # General linker settings
 ABSL_LIBRARIES = $(shell find deps/out/lib/libabsl_*.a -printf '%f\n' \
-	| sed -e 's/libabsl_\([a-z0-9_]\+\)\.a/-labsl_\1/g')
+                   | sed -e 's/libabsl_\([a-z0-9_]\+\)\.a/-labsl_\1/g')
 LINK_FLAGS = -Ldeps/out/lib \
-	-Wl,-Bstatic -luv_a -lhttp_parser \
-	-Wl,--start-group $(ABSL_LIBRARIES) -Wl,--end-group \
-	-Wl,-Bdynamic -lpthread -ldl
+    -Wl,-Bstatic -luv_a -lhttp_parser \
+    -Wl,--start-group $(ABSL_LIBRARIES) -Wl,--end-group \
+    -Wl,-Bdynamic -lpthread -ldl
 # Additional release-specific linker settings
 RLINK_FLAGS = -Wl,-Bstatic -lglog -Wl,-Bdynamic
 # Additional debug-specific linker settings
 DLINK_FLAGS = -Wl,-Bstatic -lglogd -Wl,-Bdynamic
 #### END PROJECT SETTINGS ####
 
-# Optionally you may move the section above to a separate config.mk file, and
-# uncomment the line below
-include config.mk
+# These options can be overridden in config.mk
+ENABLE_PROFILING = 0
+
+ifneq ("$(wildcard config.mk)","")
+    include config.mk
+endif
 
 ifeq ($(CXX),clang++)
-	COMPILE_FLAGS += -Wthread-safety -Wno-unused-private-field
+    COMPILE_FLAGS += -Wthread-safety -Wno-unused-private-field
 endif
 
 ifeq ($(ENABLE_PROFILING),1)
-	COMPILE_FLAGS += -D__FAAS_ENABLE_PROFILING
+    COMPILE_FLAGS += -D__FAAS_ENABLE_PROFILING
 endif
 
 # Function used to check variables. Use on the command line:
@@ -53,7 +56,7 @@ SHELL = /bin/bash
 export V := 0
 export CMD_PREFIX := @
 ifeq ($(V),1)
-	CMD_PREFIX :=
+    CMD_PREFIX :=
 endif
 
 # Combine compiler and linker flags
@@ -71,9 +74,9 @@ debug: export BIN_PATH := bin/debug
 # Find all source files in the source directory, sorted by most
 # recently modified
 SOURCES = $(shell find $(SRC_PATH) -name '*.$(SRC_EXT)' -printf '%T@\t%p\n' \
-				| sort -k 1nr | cut -f2-)
+            | sort -k 1nr | cut -f2-)
 BIN_SOURCES = $(shell find $(SRC_PATH)/bin -name '*.$(SRC_EXT)' -printf '%T@\t%p\n' \
-				| sort -k 1nr | cut -f2-)
+                | sort -k 1nr | cut -f2-)
 
 # Set the object file names, with the source directory stripped
 # from the path, and the build path prepended in its place
@@ -115,7 +118,6 @@ debug: dirs
 # Create the directories used in the build
 .PHONY: dirs
 dirs:
-	@echo "Creating directories"
 	@mkdir -p $(dir $(OBJECTS))
 	@mkdir -p $(BIN_PATH)
 
