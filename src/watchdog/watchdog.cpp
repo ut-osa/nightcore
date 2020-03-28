@@ -22,6 +22,7 @@ using protocol::Message;
 
 constexpr size_t Watchdog::kSubprocessPipeBufferSizeForSerializingMode;
 constexpr size_t Watchdog::kSubprocessPipeBufferSizeForFuncWorkerMode;
+constexpr absl::Duration Watchdog::kMinFuncWorkerCreationInterval;
 
 Watchdog::Watchdog()
     : state_(kCreated), func_id_(-1), client_id_(0),
