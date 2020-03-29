@@ -72,10 +72,13 @@ func (w *Worker) handshakeWithGateway() error {
 	return w.gateway.handshake()
 }
 
+// Implement types.FuncInvoker
+func (w *Worker) Invoke(funcName string, input []byte) ([]byte, error) {
+	return w.invokeFunc(funcName, input)
+}
+
 func (w *Worker) serve() {
-	w.funcLibrary.init(func(funcName string, input []byte) ([]byte, error) {
-		return w.invokeFunc(funcName, input)
-	})
+	w.funcLibrary.init(w)
 	w.gateway.startRoutines()
 	w.watchdog.startRoutines()
 }

@@ -26,7 +26,7 @@ inline bool WithinEventLoop(uv_loop_t* uv_loop) {
 
 #define UV_DCHECK_INSTANCE_OF(ptr, ClassName)                               \
     static_assert(std::is_convertible<ClassName*, faas::uv::Base*>::value,  \
-                 #ClassName " is not inherited from fass::uv::Base");       \
+                  #ClassName " is not inherited from fass::uv::Base");      \
     do {                                                                    \
         faas::uv::Base* t_ptr = reinterpret_cast<faas::uv::Base*>(ptr);     \
         try {                                                               \
