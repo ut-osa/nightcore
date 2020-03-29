@@ -39,20 +39,27 @@ bool FuncConfig::Load(absl::string_view json_path) {
         return false;
     }
     try {
-        if (!config.is_object()) {
+        if (!config.is_array()) {
             LOG(ERROR) << "Invalid config file";
             return false;
         }
-        for (const auto& item : config.items()) {
-            std::string func_name = item.key();
+        for (const auto& item : config) {
+            std::string func_name = item.at("funcName").get<std::string>();
             if (!ValidateFuncName(func_name)) {
                 LOG(ERROR) << "Invalid func_name: " << func_name;
                 return false;
             }
-            const json& func_config = item.value();
-            int func_id = func_config.at("func_id").get<int>();
+            if (entires_by_func_name_.contains(func_name)) {
+                LOG(ERROR) << "Duplicate func_name: " << func_name;
+                return false;
+            }
+            int func_id = item.at("funcId").get<int>();
             if (!ValidateFuncId(func_id)) {
                 LOG(ERROR) << "Invalid func_id: " << func_id;
+                return false;
+            }
+            if (entries_by_func_id_.contains(func_id)) {
+                LOG(ERROR) << "Duplicate func_id: " << func_id;
                 return false;
             }
             LOG(INFO) << "Load configuration for function " << func_name

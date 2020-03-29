@@ -15,8 +15,6 @@ void InitMain(int argc, char* argv[],
     absl::FailureSignalHandlerOptions options;
     absl::InstallFailureSignalHandler(options);
 
-    Thread::RegisterMainThread();
-
     std::vector<char*> unparsed_args = absl::ParseCommandLine(argc, argv);
     InitGoogleLogging(argv[0]);
 
@@ -29,6 +27,8 @@ void InitMain(int argc, char* argv[],
             positional_args->push_back(unparsed_args[i]);
         }
     }
+
+    Thread::RegisterMainThread();
 }
 
 }  // namespace base
