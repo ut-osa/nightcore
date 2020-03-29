@@ -1,13 +1,13 @@
 package main
 
 import (
-	"plugin"
 	"cs.utexas.edu/zjia/faas/types"
+	"plugin"
 )
 
 type FuncLibrary struct {
-	p          *plugin.Plugin
-	handler    types.FuncHandler
+	p       *plugin.Plugin
+	handler types.FuncHandler
 }
 
 func newFuncLibrary(libraryPath string) (*FuncLibrary, error) {
@@ -20,8 +20,8 @@ func newFuncLibrary(libraryPath string) (*FuncLibrary, error) {
 		return nil, err
 	}
 	return &FuncLibrary{
-		p:          p,
-		handler:    handler.(types.FuncHandler),
+		p:       p,
+		handler: handler.(types.FuncHandler),
 	}, nil
 }
 
