@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"cs.utexas.edu/zjia/faas/types"
 	"plugin"
 )
@@ -25,10 +26,10 @@ func newFuncLibrary(libraryPath string) (*FuncLibrary, error) {
 	}, nil
 }
 
-func (fl *FuncLibrary) init(invoker types.FuncInvoker) error {
-	return fl.handler.Init(invoker)
+func (fl *FuncLibrary) init(environment types.Environment) error {
+	return fl.handler.Init(environment)
 }
 
-func (fl *FuncLibrary) funcCall(input []byte) ([]byte, error) {
-	return fl.handler.Call(input)
+func (fl *FuncLibrary) funcCall(ctx context.Context, input []byte) ([]byte, error) {
+	return fl.handler.Call(ctx, input)
 }

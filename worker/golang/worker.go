@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"sync"
@@ -18,18 +19,19 @@ type WorkerConfig struct {
 }
 
 type Worker struct {
-	funcLibrary        *FuncLibrary
-	funcId             uint16
-	funcConfig         *FuncConfig
-	shm                *SharedMemory
-	gateway            *GatewayEndpoint
-	watchdog           *WatchdogEndpoint
-	wg                 sync.WaitGroup
-	nextCallId         uint32
-	funcInvokeContexts sync.Map
+	funcLibrary     *FuncLibrary
+	funcId          uint16
+	funcConfig      *FuncConfig
+	shm             *SharedMemory
+	gateway         *GatewayEndpoint
+	watchdog        *WatchdogEndpoint
+	wg              sync.WaitGroup
+	nextCallId      uint32
+	funcInvocations sync.Map
 }
 
-type FuncInvokeContext struct {
+type FuncInvocation struct {
+	ctx        context.Context
 	resultChan chan bool
 }
 
@@ -72,9 +74,9 @@ func (w *Worker) handshakeWithGateway() error {
 	return w.gateway.handshake()
 }
 
-// Implement types.FuncInvoker
-func (w *Worker) Invoke(funcName string, input []byte) ([]byte, error) {
-	return w.invokeFunc(funcName, input)
+// Implement types.Environment
+func (w *Worker) InvokeFunc(ctx context.Context, funcName string, input []byte) ([]byte, error) {
+	return w.invokeFunc(ctx, funcName, input)
 }
 
 func (w *Worker) serve() {
@@ -98,7 +100,7 @@ func (w *Worker) runFuncHandler(funcCall FuncCall) bool {
 		log.Fatal("[FATAL] Failed to copy input from shared memory")
 	}
 	w.shm.close(inputShm)
-	output, err := w.funcLibrary.funcCall(input)
+	output, err := w.funcLibrary.funcCall(context.Background(), input)
 	if err != nil {
 		return false
 	}
@@ -114,7 +116,7 @@ func (w *Worker) runFuncHandler(funcCall FuncCall) bool {
 	return true
 }
 
-func (w *Worker) invokeFunc(funcName string, input []byte) ([]byte, error) {
+func (w *Worker) invokeFunc(ctx context.Context, funcName string, input []byte) ([]byte, error) {
 	funcConfigEntry := w.funcConfig.findByFuncName(funcName)
 	if funcConfigEntry == nil {
 		return nil, fmt.Errorf("Cannot find function with name %s", funcName)
@@ -136,16 +138,24 @@ func (w *Worker) invokeFunc(funcName string, input []byte) ([]byte, error) {
 		log.Fatal("[FATAL] Failed to copy input to shared memory")
 	}
 	w.shm.close(inputShm)
-	context := new(FuncInvokeContext)
-	context.resultChan = make(chan bool)
-	w.funcInvokeContexts.Store(fullFuncCallId(funcCall), context)
+	fi := FuncInvocation{
+		ctx:        ctx,
+		resultChan: make(chan bool),
+	}
+	defer close(fi.resultChan)
+	w.funcInvocations.Store(fullFuncCallId(funcCall), &fi)
 	w.gateway.writeMessage(Message{
 		messageType: MessageType_INVOKE_FUNC,
 		funcCall:    funcCall,
 	})
-	success := <-context.resultChan
-	close(context.resultChan)
-	w.funcInvokeContexts.Delete(fullFuncCallId(funcCall))
+	var success bool
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case success = <-fi.resultChan:
+		break
+	}
+	w.funcInvocations.Delete(fullFuncCallId(funcCall))
 	w.shm.remove(fmt.Sprintf("%d.i", fullFuncCallId(funcCall)))
 	if !success {
 		return nil, fmt.Errorf("Function call failed")
@@ -190,16 +200,16 @@ func (w *Worker) onWatchdogMessage(message Message) {
 
 func (w *Worker) onGatewayMessage(message Message) {
 	if message.messageType == MessageType_FUNC_CALL_COMPLETE || message.messageType == MessageType_FUNC_CALL_FAILED {
-		value, exist := w.funcInvokeContexts.Load(fullFuncCallId(message.funcCall))
+		value, exist := w.funcInvocations.Load(fullFuncCallId(message.funcCall))
 		if !exist {
 			log.Printf("[ERROR] Cannot find InvokeContext for call_id %d", fullFuncCallId(message.funcCall))
 			return
 		}
-		context := value.(*FuncInvokeContext)
+		fi := value.(*FuncInvocation)
 		if message.messageType == MessageType_FUNC_CALL_COMPLETE {
-			context.resultChan <- true
+			fi.resultChan <- true
 		} else {
-			context.resultChan <- false
+			fi.resultChan <- false
 		}
 	} else {
 		log.Print("[ERROR] Unknown message type")
