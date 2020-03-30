@@ -23,9 +23,10 @@ using protocol::Message;
 constexpr size_t Watchdog::kSubprocessPipeBufferSizeForSerializingMode;
 constexpr size_t Watchdog::kSubprocessPipeBufferSizeForFuncWorkerMode;
 constexpr absl::Duration Watchdog::kMinFuncWorkerCreationInterval;
+constexpr int Watchdog::kDefaultGoMaxProcs;
 
 Watchdog::Watchdog()
-    : state_(kCreated), func_id_(-1), client_id_(0),
+    : state_(kCreated), func_id_(-1), go_max_procs_(kDefaultGoMaxProcs), client_id_(0),
       event_loop_thread_("Watchdog_EventLoop",
                          std::bind(&Watchdog::EventLoopThreadMain, this)),
       gateway_connection_(this), next_func_worker_id_(0),
@@ -67,26 +68,34 @@ void Watchdog::Start() {
     CHECK(func_id_ != -1);
     CHECK(func_config_.find_by_func_id(func_id_) != nullptr);
     CHECK(!fprocess_.empty());
-    if (run_mode_ == RunMode::SERIALIZING) {
+    CHECK_GT(go_max_procs_, 0);
+    switch (run_mode_) {
+    case RunMode::SERIALIZING:
         buffer_pool_for_subprocess_pipes_ = absl::make_unique<utils::BufferPool>(
             "SubprocessPipe", kSubprocessPipeBufferSizeForSerializingMode);
-    } else if (run_mode_ == RunMode::FUNC_WORKER_FIXED || run_mode_ == RunMode::FUNC_WORKER_ON_DEMAND) {
+        break;
+    case RunMode::FUNC_WORKER_FIXED:
+    case RunMode::FUNC_WORKER_ON_DEMAND:
+    case RunMode::FUNC_WORKER_ASYNC: {
         if (!func_worker_output_dir_.empty() && !fs_utils::Exists(func_worker_output_dir_)) {
             CHECK(fs_utils::MakeDirectory(func_worker_output_dir_));
         }
         buffer_pool_for_subprocess_pipes_ = absl::make_unique<utils::BufferPool>(
             "SubprocessPipe", kSubprocessPipeBufferSizeForFuncWorkerMode);
-        int initial_num_func_workers_ = run_mode_ == RunMode::FUNC_WORKER_FIXED
-            ? max_num_func_workers_
-            : min_num_func_workers_;
+        int initial_num_func_workers_ = max_num_func_workers_;
+        if (run_mode_ == RunMode::FUNC_WORKER_ON_DEMAND) {
+            initial_num_func_workers_ = min_num_func_workers_;
+        }
         for (int i = 0; i < initial_num_func_workers_; i++) {
-            auto func_worker = absl::make_unique<FuncWorker>(this, i);
+            auto func_worker = absl::make_unique<FuncWorker>(this, i, run_mode_ == RunMode::FUNC_WORKER_ASYNC);
             func_worker->Start(&uv_loop_, buffer_pool_for_subprocess_pipes_.get());
             func_workers_.push_back(std::move(func_worker));
         }
         last_func_worker_creation_time_ = absl::Now();
         HLOG(INFO) << "Initial number of FuncWorker: " << initial_num_func_workers_;
-    } else {
+        break;
+    }
+    default:
         HLOG(FATAL) << "Unknown run mode";
     }
     // Create shared memory pool
@@ -160,6 +169,7 @@ void Watchdog::OnRecvMessage(const protocol::Message& message) {
             break;
         case RunMode::FUNC_WORKER_FIXED:
         case RunMode::FUNC_WORKER_ON_DEMAND:
+        case RunMode::FUNC_WORKER_ASYNC:
             func_runner = new WorkerFuncRunner(
                 this, func_call.full_call_id, PickFuncWorker());
             break;
@@ -212,12 +222,15 @@ void Watchdog::OnFuncWorkerClose(FuncWorker* func_worker) {
 }
 
 void Watchdog::OnFuncWorkerIdle(FuncWorker* func_worker) {
-    idle_func_workers_.push_back(func_worker);
+    DCHECK(run_mode_ != RunMode::FUNC_WORKER_ASYNC);
+    if (run_mode_ == RunMode::FUNC_WORKER_ON_DEMAND) {
+        idle_func_workers_.push_back(func_worker);
+    }
 }
 
 FuncWorker* Watchdog::PickFuncWorker() {
     FuncWorker* func_worker;
-    if (run_mode_ == RunMode::FUNC_WORKER_FIXED) {
+    if (run_mode_ == RunMode::FUNC_WORKER_FIXED || run_mode_ == RunMode::FUNC_WORKER_ASYNC) {
         func_worker = func_workers_[next_func_worker_id_].get();
         next_func_worker_id_ = (next_func_worker_id_ + 1) % func_workers_.size();
     } else if (run_mode_ == RunMode::FUNC_WORKER_ON_DEMAND) {

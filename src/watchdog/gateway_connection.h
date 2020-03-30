@@ -14,7 +14,9 @@ class Watchdog;
 
 class GatewayConnection : public uv::Base {
 public:
-    static constexpr size_t kBufferSize = 256;
+    static constexpr size_t kBufferSize = 64;
+    static_assert(sizeof(protocol::Message) <= kBufferSize,
+                  "kBufferSize is too small");
 
     explicit GatewayConnection(Watchdog* watchdog);
     ~GatewayConnection();

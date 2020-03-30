@@ -12,6 +12,8 @@ using protocol::Message;
 using protocol::HandshakeMessage;
 using protocol::HandshakeResponse;
 
+constexpr size_t GatewayConnection::kBufferSize;
+
 GatewayConnection::GatewayConnection(Watchdog* watchdog)
     : watchdog_(watchdog), state_(kCreated),
       buffer_pool_("GatewayConnection", kBufferSize) {}

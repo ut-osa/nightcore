@@ -21,7 +21,11 @@ enum class RunMode {
     // workers (set by min_num_func_workers), and will start new
     // workers based on load, while the maximum number is bound by
     // max_num_func_workers.
-    FUNC_WORKER_ON_DEMAND = 3
+    FUNC_WORKER_ON_DEMAND = 3,
+    // In ASYNC mode, watchdog creates a fixed number of function
+    // workers (which is same as FIXED mode). Dispatch of function
+    // calls will be asynchronous.
+    FUNC_WORKER_ASYNC = 4
 };
 
 }  // namespace watchdog

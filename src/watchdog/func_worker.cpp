@@ -15,10 +15,12 @@ namespace watchdog {
 using protocol::MessageType;
 using protocol::Message;
 
-FuncWorker::FuncWorker(Watchdog* watchdog, int worker_id)
-    : state_(kCreated), watchdog_(watchdog), worker_id_(worker_id),
+constexpr size_t FuncWorker::kWriteBufferSize;
+
+FuncWorker::FuncWorker(Watchdog* watchdog, int worker_id, bool async)
+    : state_(kCreated), watchdog_(watchdog), worker_id_(worker_id), async_(async),
       log_header_(absl::StrFormat("FuncWorker[%d]: ", worker_id)),
-      subprocess_(watchdog->fprocess()) {}
+      subprocess_(watchdog->fprocess()), inflight_requests_(0) {}
 
 FuncWorker::~FuncWorker() {
     DCHECK(state_ == kCreated || state_ == kClosed);
@@ -37,6 +39,7 @@ void FuncWorker::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool) 
     subprocess_.AddEnvVariable("SHARED_MEMORY_PATH", watchdog_->shared_mem_path());
     subprocess_.AddEnvVariable("FUNC_CONFIG_FILE", watchdog_->func_config_file());
     subprocess_.AddEnvVariable("WORKER_ID", worker_id_);
+    subprocess_.AddEnvVariable("GOMAXPROCS", watchdog_->go_max_procs());
     if (!watchdog_->func_worker_output_dir().empty()) {
         absl::string_view output_dir = watchdog_->func_worker_output_dir();
         absl::string_view func_name = watchdog_->func_name();
@@ -54,8 +57,19 @@ void FuncWorker::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool) 
     uv_input_pipe_handle_->data = this;
     uv_output_pipe_handle_ = subprocess_.GetPipe(output_pipe_fd_);
     uv_output_pipe_handle_->data = this;
-    state_ = kIdle;
-    watchdog_->OnFuncWorkerIdle(this);
+    if (async_) {
+        HLOG(INFO) << "Enable async mode";
+        state_ = kAsync;
+        write_buffer_pool_ = absl::make_unique<utils::BufferPool>(
+            absl::StrFormat("FuncWorker[%d]", worker_id_), kWriteBufferSize);
+        write_req_pool_ = absl::make_unique<utils::SimpleObjectPool<uv_write_t>>();
+        UV_DCHECK_OK(uv_read_start(UV_AS_STREAM(uv_output_pipe_handle_),
+                                   &FuncWorker::BufferAllocCallback,
+                                   &FuncWorker::ReadMessageCallback));
+    } else {
+        state_ = kIdle;
+        watchdog_->OnFuncWorkerIdle(this);
+    }
 }
 
 void FuncWorker::ScheduleClose() {
@@ -78,7 +92,7 @@ bool FuncWorker::ScheduleFuncCall(WorkerFuncRunner* func_runner, uint64_t call_i
         return false;
     }
     func_runners_[call_id] = func_runner;
-    if (state_ == kIdle) {
+    if (state_ == kAsync || state_ == kIdle) {
         DispatchFuncCall(call_id);
     } else {
         pending_func_calls_.push(call_id);
@@ -134,14 +148,18 @@ void FuncWorker::OnRecvMessage(const Message& message) {
         HLOG(WARNING) << "This FuncWorker is scheduled to close or already closed";
         return;
     }
-    DCHECK(state_ == kReceiving);
-    state_ = kIdle;
-    if (!pending_func_calls_.empty()) {
-        uint64_t call_id = pending_func_calls_.front();
-        pending_func_calls_.pop();
-        DispatchFuncCall(call_id);
+    if (state_ != kAsync) {
+        DCHECK(state_ == kReceiving);
+        state_ = kIdle;
+        if (!pending_func_calls_.empty()) {
+            uint64_t call_id = pending_func_calls_.front();
+            pending_func_calls_.pop();
+            DispatchFuncCall(call_id);
+        } else {
+            watchdog_->OnFuncWorkerIdle(this);
+        }
     } else {
-        watchdog_->OnFuncWorkerIdle(this);
+        inflight_requests_--;
     }
 }
 
@@ -152,22 +170,39 @@ void FuncWorker::DispatchFuncCall(uint64_t call_id) {
                       << "cannot dispatch function call further";
         return;
     }
-    DCHECK(state_ == kIdle);
+    DCHECK(state_ == kAsync || state_ == kIdle);
     if (subprocess_.PipeClosed(input_pipe_fd_)) {
         HLOG(WARNING) << "Input pipe closed, cannot send data further";
         return;
     }
-    message_to_send_.message_type = static_cast<uint16_t>(MessageType::INVOKE_FUNC);
-    message_to_send_.func_call.full_call_id = call_id;
+    Message* message;
+    uv_write_t* write_req;
+    if (state_ == kAsync) {
+        char* buf;
+        size_t size;
+        write_buffer_pool_->Get(&buf, &size);
+        message = reinterpret_cast<Message*>(buf);
+        write_req = write_req_pool_->Get();
+        write_req->data = buf;
+    } else {
+        message = &message_to_send_;
+        write_req = &write_req_;
+    }
+    message->message_type = static_cast<uint16_t>(MessageType::INVOKE_FUNC);
+    message->func_call.full_call_id = call_id;
 #ifdef __FAAS_ENABLE_PROFILING
-    message_to_send_.send_timestamp = GetMonotonicMicroTimestamp();
+    message->send_timestamp = GetMonotonicMicroTimestamp();
 #endif
     uv_buf_t buf = {
-        .base = reinterpret_cast<char*>(&message_to_send_),
+        .base = reinterpret_cast<char*>(message),
         .len = sizeof(Message)
     };
-    state_ = kSending;
-    UV_DCHECK_OK(uv_write(&write_req_, UV_AS_STREAM(uv_input_pipe_handle_),
+    if (state_ == kIdle) {
+        state_ = kSending;
+    } else {
+        inflight_requests_++;
+    }
+    UV_DCHECK_OK(uv_write(write_req, UV_AS_STREAM(uv_input_pipe_handle_),
                           &buf, 1, &FuncWorker::WriteMessageCallback));
 }
 
@@ -181,16 +216,25 @@ UV_READ_CB_FOR_CLASS(FuncWorker, ReadMessage) {
                       << uv_strerror(nread);
         ScheduleClose();
     } else if (nread > 0) {
-        recv_buffer_.AppendData(buf->base, nread);
-        if (recv_buffer_.length() == sizeof(Message)) {
-            if (!subprocess_.PipeClosed(output_pipe_fd_)) {
-                UV_DCHECK_OK(uv_read_stop(UV_AS_STREAM(uv_output_pipe_handle_)));
+        if (state_ == kAsync) {
+            utils::ReadMessages<Message>(
+                &recv_buffer_, buf->base, nread,
+                [this] (Message* message) {
+                    OnRecvMessage(*message);
+                });
+        } else {
+            DCHECK(state_ == kReceiving);
+            recv_buffer_.AppendData(buf->base, nread);
+            if (recv_buffer_.length() == sizeof(Message)) {
+                if (!subprocess_.PipeClosed(output_pipe_fd_)) {
+                    UV_DCHECK_OK(uv_read_stop(UV_AS_STREAM(uv_output_pipe_handle_)));
+                }
+                Message* message = reinterpret_cast<Message*>(recv_buffer_.data());
+                OnRecvMessage(*message);
+            } else if (recv_buffer_.length() > sizeof(Message)) {
+                HLOG(ERROR) << "Read more data than expected, will close this FuncWorker";
+                ScheduleClose();
             }
-            Message* message = reinterpret_cast<Message*>(recv_buffer_.data());
-            OnRecvMessage(*message);
-        } else if (recv_buffer_.length() > sizeof(Message)) {
-            HLOG(ERROR) << "Read more data than expected, will close this FuncWorker";
-            ScheduleClose();
         }
     }
     if (buf->base != 0) {
@@ -209,11 +253,16 @@ UV_WRITE_CB_FOR_CLASS(FuncWorker, WriteMessage) {
         HLOG(WARNING) << "Output pipe closed, cannot read response further";
         return;
     }
-    state_ = kReceiving;
-    recv_buffer_.Reset();
-    UV_DCHECK_OK(uv_read_start(UV_AS_STREAM(uv_output_pipe_handle_),
-                               &FuncWorker::BufferAllocCallback,
-                               &FuncWorker::ReadMessageCallback));
+    if (state_ == kAsync) {
+        write_buffer_pool_->Return(reinterpret_cast<char*>(req->data));
+        write_req_pool_->Return(req);
+    } else {
+        state_ = kReceiving;
+        recv_buffer_.Reset();
+        UV_DCHECK_OK(uv_read_start(UV_AS_STREAM(uv_output_pipe_handle_),
+                                   &FuncWorker::BufferAllocCallback,
+                                   &FuncWorker::ReadMessageCallback));
+    }
 }
 
 }  // namespace watchdog
