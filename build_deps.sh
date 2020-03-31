@@ -51,3 +51,11 @@ cd $BASE_DIR/deps/libuv && rm -rf build && mkdir -p build && cd build && \
         -DCMAKE_INSTALL_PREFIX=${DEPS_INSTALL_PATH} .. && \
   make -j$(nproc) install && \
   rm -rf $BASE_DIR/deps/libuv/build
+
+# Build nghttp2
+cd $BASE_DIR/deps/nghttp2 && rm -rf build && mkdir -p build && cd build && \
+  cmake -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DENABLE_LIB_ONLY=ON \
+        -DENABLE_ASIO_LIB=OFF -DENABLE_STATIC_LIB=ON -DWITH_JEMALLOC=OFF \
+        -DCMAKE_INSTALL_PREFIX=${DEPS_INSTALL_PATH} .. && \
+  make -j$(nproc) install && \
+  rm -rf $BASE_DIR/deps/nghttp2/build
