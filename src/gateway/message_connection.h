@@ -46,7 +46,6 @@ private:
 
     utils::AppendableBuffer message_buffer_;
     protocol::HandshakeResponse handshake_response_;
-    utils::SimpleObjectPool<uv_write_t> write_req_pool_;
     utils::AppendableBuffer write_message_buffer_;
 
     absl::Mutex write_message_mu_;

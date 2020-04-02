@@ -184,7 +184,7 @@ UV_WRITE_CB_FOR_CLASS(GrpcConnection, DataWritten) {
     bool req_is_for_mem_send = req == &write_req_for_mem_send_;
     if (!req_is_for_mem_send) {
         io_worker_->ReturnWriteBuffer(reinterpret_cast<char*>(req->data));
-        write_req_pool_.Return(req);
+        io_worker_->ReturnWriteRequest(req);
     }
     if (status != 0) {
         HLOG(ERROR) << "Failed to write data, will close this connection: "
@@ -395,7 +395,7 @@ int GrpcConnection::H2SendData(H2StreamContext* stream_context, nghttp2_frame* f
         { .base = const_cast<char*>(data), .len = length }
     };
     stream_context->response_body_write_pos_ += length;
-    uv_write_t* write_req = write_req_pool_.Get();
+    uv_write_t* write_req = io_worker_->NewWriteRequest();
     write_req->data = hd_buf.base;
     UV_DCHECK_OK(uv_write(write_req, UV_AS_STREAM(&uv_tcp_handle_),
                           bufs, 2, &GrpcConnection::DataWrittenCallback));

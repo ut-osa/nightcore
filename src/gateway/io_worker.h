@@ -4,6 +4,7 @@
 #include "common/stat.h"
 #include "utils/uv_utils.h"
 #include "utils/buffer_pool.h"
+#include "utils/object_pool.h"
 #include "gateway/connection.h"
 
 namespace faas {
@@ -34,6 +35,8 @@ public:
     void ReturnReadBuffer(const uv_buf_t* buf);
     void NewWriteBuffer(uv_buf_t* buf);
     void ReturnWriteBuffer(char* buf);
+    uv_write_t* NewWriteRequest();
+    void ReturnWriteRequest(uv_write_t* write_req);
 
     stat::StatisticsCollector<uint32_t>* bytes_per_read_stat() {
         return &bytes_per_read_stat_;
@@ -62,6 +65,7 @@ private:
     absl::flat_hash_set<Connection*> connections_;
     utils::BufferPool read_buffer_pool_;
     utils::BufferPool write_buffer_pool_;
+    utils::SimpleObjectPool<uv_write_t> write_req_pool_;
 
     stat::StatisticsCollector<uint32_t> bytes_per_read_stat_;
     stat::StatisticsCollector<uint32_t> write_size_stat_;

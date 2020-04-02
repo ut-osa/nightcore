@@ -83,7 +83,7 @@ void MessageConnection::RecvHandshakeMessage() {
         .base = reinterpret_cast<char*>(&handshake_response_),
         .len = sizeof(HandshakeResponse)
     };
-    UV_DCHECK_OK(uv_write(write_req_pool_.Get(), UV_AS_STREAM(&uv_pipe_handle_),
+    UV_DCHECK_OK(uv_write(io_worker_->NewWriteRequest(), UV_AS_STREAM(&uv_pipe_handle_),
                           &buf, 1, &MessageConnection::WriteHandshakeResponseCallback));
     state_.store(kRunning);
 }
@@ -175,7 +175,7 @@ UV_READ_CB_FOR_CLASS(MessageConnection, ReadMessage) {
 
 UV_WRITE_CB_FOR_CLASS(MessageConnection, WriteMessage) {
     io_worker_->ReturnWriteBuffer(reinterpret_cast<char*>(req->data));
-    write_req_pool_.Return(req);
+    io_worker_->ReturnWriteRequest(req);
     if (status != 0) {
         HLOG(ERROR) << "Failed to write response, will close this connection: "
                     << uv_strerror(status);
@@ -218,7 +218,7 @@ UV_ASYNC_CB_FOR_CLASS(MessageConnection, NewMessageForWrite) {
         size_t copy_size = std::min(buf.len, write_size);
         memcpy(buf.base, ptr, copy_size);
         buf.len = copy_size;
-        uv_write_t* write_req = write_req_pool_.Get();
+        uv_write_t* write_req = io_worker_->NewWriteRequest();
         write_req->data = buf.base;
         UV_DCHECK_OK(uv_write(write_req, UV_AS_STREAM(&uv_pipe_handle_),
                               &buf, 1, &MessageConnection::WriteMessageCallback));

@@ -85,6 +85,16 @@ void IOWorker::ReturnWriteBuffer(char* buf) {
     write_buffer_pool_.Return(buf);
 }
 
+uv_write_t* IOWorker::NewWriteRequest() {
+    DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
+    return write_req_pool_.Get();
+}
+
+void IOWorker::ReturnWriteRequest(uv_write_t* write_req) {
+    DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
+    write_req_pool_.Return(write_req);
+}
+
 void IOWorker::OnConnectionClose(Connection* connection) {
     DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
     DCHECK(pipe_to_server_.loop == &uv_loop_);

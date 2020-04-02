@@ -40,7 +40,6 @@ private:
     std::string log_header_;
 
     nghttp2_session* h2_session_;
-    utils::SimpleObjectPool<uv_write_t> write_req_pool_;
     bool uv_write_for_mem_send_ongoing_;
     uv_write_t write_req_for_mem_send_;
 
