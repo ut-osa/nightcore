@@ -1,12 +1,19 @@
 #pragma once
 
 #include "base/common.h"
+#include "common/http_status.h"
 #include "utils/appendable_buffer.h"
 
 namespace faas {
 namespace gateway {
 
 class GrpcConnection;
+
+enum class GrpcStatus {
+    OK = 0,
+    CANCELLED = 1,
+    UNKNOWN = 2
+};
 
 class GrpcCallContext {
 public:
@@ -18,8 +25,8 @@ public:
         return request_body_buffer_.to_span();
     }
 
-    void set_http_status(int value) { http_status_ = value; }
-    void set_grpc_status(int value) { grpc_status_ = value; }
+    void set_http_status(HttpStatus value) { http_status_ = value; }
+    void set_grpc_status(GrpcStatus value) { grpc_status_ = value; }
 
     void AppendToResponseBody(absl::Span<const char> data) {
         response_body_buffer_.AppendData(data);
@@ -29,8 +36,8 @@ public:
 private:
     GrpcConnection* connection_;
     int32_t h2_stream_id_;
-    int http_status_;
-    int grpc_status_;
+    HttpStatus http_status_;
+    GrpcStatus grpc_status_;
 
     std::string service_name_;
     std::string method_name_;
@@ -40,7 +47,8 @@ private:
     absl::Mutex mu_;
 
     friend class GrpcConnection;
-    GrpcCallContext() : http_status_(200), grpc_status_(0) {}
+    GrpcCallContext()
+        : http_status_(HttpStatus::OK), grpc_status_(GrpcStatus::OK) {}
     void OnStreamClose();
     DISALLOW_COPY_AND_ASSIGN(GrpcCallContext);
 };

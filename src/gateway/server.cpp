@@ -405,7 +405,7 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
 
 bool Server::OnNewGrpcCall(GrpcConnection* connection,
                            std::shared_ptr<GrpcCallContext> call_context) {
-    call_context->set_grpc_status(1 /* STATUS_CANCELLED */);
+    call_context->set_grpc_status(GrpcStatus::CANCELLED);
     return false;
 }
 

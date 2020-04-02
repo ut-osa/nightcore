@@ -1,6 +1,7 @@
 #include "gateway/grpc_connection.h"
 
 #include "common/time.h"
+#include "common/http_status.h"
 #include "gateway/server.h"
 #include "gateway/io_worker.h"
 
@@ -44,8 +45,8 @@ struct GrpcConnection::H2StreamContext {
     utils::AppendableBuffer body_buffer;
 
     // For response
-    int http_status;
-    int grpc_status;
+    HttpStatus http_status;
+    GrpcStatus grpc_status;
     utils::AppendableBuffer response_body_buffer;
     size_t response_body_write_pos;
 
@@ -57,8 +58,8 @@ struct GrpcConnection::H2StreamContext {
         this->method_name.clear();
         this->headers.clear();
         this->body_buffer.Reset();
-        this->http_status = 200;
-        this->grpc_status = 0;
+        this->http_status = HttpStatus::OK;
+        this->grpc_status = GrpcStatus::OK;
         this->response_body_buffer.Reset();
     }
 };
@@ -335,7 +336,7 @@ nghttp2_nv make_h2_nv(absl::string_view name, absl::string_view value) {
 
 void GrpcConnection::H2SendResponse(H2StreamContext* context) {
     DCHECK(context->state == H2StreamContext::kSendResponse);
-    if (context->http_status == 200) {
+    if (context->http_status == HttpStatus::OK) {
         // HTTP OK
         std::vector<nghttp2_nv> headers = {
             make_h2_nv(":status", "200"),
@@ -356,11 +357,11 @@ void GrpcConnection::H2SendResponse(H2StreamContext* context) {
 }
 
 bool GrpcConnection::H2HasTrailersToSend(H2StreamContext* context) {
-    return context->http_status == 200 && context->grpc_status >= 0;
+    return context->http_status == HttpStatus::OK;
 }
 
 void GrpcConnection::H2SendTrailers(H2StreamContext* context) {
-    DCHECK(context->http_status == 200 && context->grpc_status >= 0);
+    DCHECK(context->http_status == HttpStatus::OK);
     std::string status_str = absl::StrCat(context->grpc_status);
     nghttp2_nv trailer = make_h2_nv("grpc-status", status_str);
     H2_CHECK_OK(nghttp2_submit_trailer(h2_session_, context->stream_id, &trailer, 1));
