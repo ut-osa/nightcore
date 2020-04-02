@@ -243,6 +243,10 @@ UV_READ_CB_FOR_CLASS(FuncWorker, ReadMessage) {
 }
 
 UV_WRITE_CB_FOR_CLASS(FuncWorker, WriteMessage) {
+    if (state_ == kAsync) {
+        write_buffer_pool_->Return(reinterpret_cast<char*>(req->data));
+        write_req_pool_->Return(req);
+    }
     if (status != 0) {
         HLOG(WARNING) << "Failed to write request, will close this FuncWorker: "
                       << uv_strerror(status);
@@ -253,10 +257,7 @@ UV_WRITE_CB_FOR_CLASS(FuncWorker, WriteMessage) {
         HLOG(WARNING) << "Output pipe closed, cannot read response further";
         return;
     }
-    if (state_ == kAsync) {
-        write_buffer_pool_->Return(reinterpret_cast<char*>(req->data));
-        write_req_pool_->Return(req);
-    } else {
+    if (state_ != kAsync) {
         state_ = kReceiving;
         recv_buffer_.Reset();
         UV_DCHECK_OK(uv_read_start(UV_AS_STREAM(uv_output_pipe_handle_),

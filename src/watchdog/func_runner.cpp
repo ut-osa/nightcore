@@ -76,14 +76,15 @@ void SerializingFuncRunner::ScheduleStop() {
 }
 
 UV_WRITE_CB_FOR_CLASS(SerializingFuncRunner, WriteSubprocessStdin) {
-    if (status != 0) {
-        HLOG(ERROR) << "Failed to write input data";
-        subprocess_.Kill();
-    }
     DCHECK(input_region_ != nullptr);
     input_region_->Close();
     input_region_ = nullptr;
-    subprocess_.ClosePipe(Subprocess::kStdin);
+    if (status == 0) {
+        subprocess_.ClosePipe(Subprocess::kStdin);
+    } else {
+        HLOG(ERROR) << "Failed to write input data";
+        subprocess_.Kill();
+    }
 }
 
 WorkerFuncRunner::WorkerFuncRunner(Watchdog* watchdog, uint64_t call_id,

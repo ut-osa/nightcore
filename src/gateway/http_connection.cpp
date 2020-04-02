@@ -56,14 +56,6 @@ void HttpConnection::Start(IOWorker* io_worker) {
     StartRecvData();
 }
 
-void HttpConnection::Reset(int connection_id) {
-    DCHECK(state_ == kClosed);
-    connection_id_ = connection_id;
-    log_header_ = absl::StrFormat("HttpConnection[%d]: ", connection_id);
-    ResetHttpParser();
-    state_ = kCreated;
-}
-
 void HttpConnection::ScheduleClose() {
     DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
     if (state_ == kClosing) {
@@ -116,7 +108,6 @@ UV_READ_CB_FOR_CLASS(HttpConnection, RecvData) {
                           << ",  will close the connection";
             ScheduleClose();
         }
-
     } else if (nread < 0) {
         if (nread == UV_EOF || nread == UV_ECONNRESET) {
             HLOG(INFO) << "HttpConnection closed by client";

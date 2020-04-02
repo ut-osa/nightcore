@@ -174,14 +174,13 @@ UV_READ_CB_FOR_CLASS(MessageConnection, ReadMessage) {
 }
 
 UV_WRITE_CB_FOR_CLASS(MessageConnection, WriteMessage) {
+    io_worker_->ReturnWriteBuffer(reinterpret_cast<char*>(req->data));
+    write_req_pool_.Return(req);
     if (status != 0) {
         HLOG(ERROR) << "Failed to write response, will close this connection: "
                     << uv_strerror(status);
         ScheduleClose();
-        return;
     }
-    io_worker_->ReturnWriteBuffer(reinterpret_cast<char*>(req->data));
-    write_req_pool_.Return(req);
 }
 
 UV_ASYNC_CB_FOR_CLASS(MessageConnection, NewMessageForWrite) {

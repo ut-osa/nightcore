@@ -10,7 +10,7 @@ class IOWorker;
 
 class Connection : public uv::Base {
 public:
-    enum class Type { Http, Message };
+    enum class Type { Http, Grpc, Message };
 
     Connection(Type type, Server* server) : type_(type), server_(server) {}
     virtual ~Connection() {}

@@ -28,17 +28,21 @@ constexpr size_t Server::kHttpConnectionBufferSize;
 constexpr size_t Server::kMessageConnectionBufferSize;
 
 Server::Server()
-    : state_(kCreated), port_(-1), listen_backlog_(kDefaultListenBackLog),
+    : state_(kCreated), port_(-1), grpc_port_(-1), listen_backlog_(kDefaultListenBackLog),
       num_http_workers_(kDefaultNumHttpWorkers), num_ipc_workers_(kDefaultNumIpcWorkers),
       event_loop_thread_("Server_EventLoop", std::bind(&Server::EventLoopThreadMain, this)),
-      next_http_connection_id_(0), next_http_worker_id_(0), next_ipc_worker_id_(0),
-      next_client_id_(1), next_call_id_(0),
+      next_http_connection_id_(0), next_grpc_connection_id_(0),
+      next_http_worker_id_(0), next_ipc_worker_id_(0), next_client_id_(1), next_call_id_(0),
       message_delay_stat_(
           stat::StatisticsCollector<uint32_t>::StandardReportCallback("message_delay")) {
     UV_DCHECK_OK(uv_loop_init(&uv_loop_));
     uv_loop_.data = &event_loop_thread_;
-    UV_DCHECK_OK(uv_tcp_init(&uv_loop_, &uv_tcp_handle_));
-    uv_tcp_handle_.data = this;
+    UV_DCHECK_OK(uv_tcp_init(&uv_loop_, &uv_http_handle_));
+    uv_http_handle_.data = this;
+    UV_DCHECK_OK(uv_tcp_init(&uv_loop_, &uv_grpc_handle_));
+    uv_grpc_handle_.data = this;
+    UV_DCHECK_OK(uv_pipe_init(&uv_loop_, &uv_ipc_handle_, 0));
+    uv_ipc_handle_.data = this;
     UV_DCHECK_OK(uv_async_init(&uv_loop_, &stop_event_, &Server::StopCallback));
     stop_event_.data = this;
 }
@@ -110,19 +114,25 @@ void Server::Start() {
         ipc_workers_.push_back(io_worker.get());
         io_workers_.push_back(std::move(io_worker));
     }
-    // Listen on address:port
+    // Listen on address:port for HTTP requests
     struct sockaddr_in bind_addr;
     CHECK(!address_.empty());
     CHECK_NE(port_, -1);
     UV_DCHECK_OK(uv_ip4_addr(address_.c_str(), port_, &bind_addr));
-    UV_DCHECK_OK(uv_tcp_bind(&uv_tcp_handle_, (const struct sockaddr *)&bind_addr, 0));
-    HLOG(INFO) << "Listen on " << address_ << ":" << port_;
+    UV_DCHECK_OK(uv_tcp_bind(&uv_http_handle_, (const struct sockaddr *)&bind_addr, 0));
+    HLOG(INFO) << "Listen on " << address_ << ":" << port_ << " for HTTP requests";
     UV_DCHECK_OK(uv_listen(
-        UV_AS_STREAM(&uv_tcp_handle_), listen_backlog_,
+        UV_AS_STREAM(&uv_http_handle_), listen_backlog_,
         &Server::HttpConnectionCallback));
+    // Listen on address:grpc_port for gRPC requests
+    CHECK_NE(grpc_port_, -1);
+    UV_DCHECK_OK(uv_ip4_addr(address_.c_str(), grpc_port_, &bind_addr));
+    UV_DCHECK_OK(uv_tcp_bind(&uv_grpc_handle_, (const struct sockaddr *)&bind_addr, 0));
+    HLOG(INFO) << "Listen on " << address_ << ":" << grpc_port_ << " for gRPC requests";
+    UV_DCHECK_OK(uv_listen(
+        UV_AS_STREAM(&uv_grpc_handle_), listen_backlog_,
+        &Server::GrpcConnectionCallback));
     // Listen on ipc_path
-    UV_DCHECK_OK(uv_pipe_init(&uv_loop_, &uv_ipc_handle_, 0));
-    uv_ipc_handle_.data = this;
     if (fs_utils::Exists(ipc_path_)) {
         PCHECK(fs_utils::Remove(ipc_path_));
     }
@@ -243,11 +253,11 @@ void Server::ReturnConnection(Connection* connection) {
     if (connection->type() == Connection::Type::Http) {
         HttpConnection* http_connection = static_cast<HttpConnection*>(connection);
         DCHECK(http_connections_.contains(http_connection));
-        free_http_connections_.push_back(http_connection);
-        active_http_connections_.erase(http_connection);
-        HLOG(INFO) << "HttpConnection with ID " << http_connection->id() << " is returned, "
-                   << "free connection count is " << free_http_connections_.size() << ", "
-                   << "active connection is " << active_http_connections_.size();
+        http_connections_.erase(http_connection);
+    } else if (connection->type() == Connection::Type::Grpc) {
+        GrpcConnection* grpc_connection = static_cast<GrpcConnection*>(connection);
+        DCHECK(grpc_connections_.contains(grpc_connection));
+        grpc_connections_.erase(grpc_connection);
     } else if (connection->type() == Connection::Type::Message) {
         MessageConnection* message_connection = static_cast<MessageConnection*>(connection);
         {
@@ -438,26 +448,34 @@ UV_CONNECTION_CB_FOR_CLASS(Server, HttpConnection) {
         HLOG(WARNING) << "Failed to open HTTP connection: " << uv_strerror(status);
         return;
     }
-    HttpConnection* connection;
-    if (!free_http_connections_.empty()) {
-        connection = free_http_connections_.back();
-        free_http_connections_.pop_back();
-        connection->Reset(next_http_connection_id_++);
-    } else {
-        auto new_connection = absl::make_unique<HttpConnection>(this, next_http_connection_id_++);
-        connection = new_connection.get();
-        http_connections_.insert(std::move(new_connection));
-        HLOG(INFO) << "Allocate new HttpConnection object, current count is " << http_connections_.size();
-    }
+    std::unique_ptr<HttpConnection> connection = absl::make_unique<HttpConnection>(
+        this, next_http_connection_id_++);
     uv_tcp_t* client = reinterpret_cast<uv_tcp_t*>(malloc(sizeof(uv_tcp_t)));
     UV_DCHECK_OK(uv_tcp_init(&uv_loop_, client));
-    if (uv_accept(UV_AS_STREAM(&uv_tcp_handle_), UV_AS_STREAM(client)) == 0) {
-        TransferConnectionToWorker(PickHttpWorker(), connection, UV_AS_STREAM(client));
-        active_http_connections_.insert(connection);
+    if (uv_accept(UV_AS_STREAM(&uv_http_handle_), UV_AS_STREAM(client)) == 0) {
+        TransferConnectionToWorker(PickHttpWorker(), connection.get(), UV_AS_STREAM(client));
+        http_connections_.insert(std::move(connection));
     } else {
         LOG(ERROR) << "Failed to accept new HTTP connection";
         free(client);
-        free_http_connections_.push_back(connection);
+    }
+}
+
+UV_CONNECTION_CB_FOR_CLASS(Server, GrpcConnection) {
+    if (status != 0) {
+        HLOG(WARNING) << "Failed to open gRPC connection: " << uv_strerror(status);
+        return;
+    }
+    std::unique_ptr<GrpcConnection> connection = absl::make_unique<GrpcConnection>(
+        this, next_grpc_connection_id_++);
+    uv_tcp_t* client = reinterpret_cast<uv_tcp_t*>(malloc(sizeof(uv_tcp_t)));
+    UV_DCHECK_OK(uv_tcp_init(&uv_loop_, client));
+    if (uv_accept(UV_AS_STREAM(&uv_grpc_handle_), UV_AS_STREAM(client)) == 0) {
+        TransferConnectionToWorker(PickHttpWorker(), connection.get(), UV_AS_STREAM(client));
+        grpc_connections_.insert(std::move(connection));
+    } else {
+        LOG(ERROR) << "Failed to accept new gRPC connection";
+        free(client);
     }
 }
 
@@ -509,7 +527,8 @@ UV_ASYNC_CB_FOR_CLASS(Server, Stop) {
         UV_DCHECK_OK(uv_read_stop(UV_AS_STREAM(pipe)));
         uv_close(UV_AS_HANDLE(pipe), nullptr);
     }
-    uv_close(UV_AS_HANDLE(&uv_tcp_handle_), nullptr);
+    uv_close(UV_AS_HANDLE(&uv_http_handle_), nullptr);
+    uv_close(UV_AS_HANDLE(&uv_grpc_handle_), nullptr);
     uv_close(UV_AS_HANDLE(&uv_ipc_handle_), nullptr);
     uv_close(UV_AS_HANDLE(&stop_event_), nullptr);
     state_.store(kStopping);
@@ -523,8 +542,7 @@ void HandleFreeCallback(uv_handle_t* handle) {
 
 UV_WRITE_CB_FOR_CLASS(Server, PipeWrite2) {
     DCHECK(status == 0) << "Failed to write to pipe: " << uv_strerror(status);
-    uv_handle_t* send_handle = reinterpret_cast<uv_handle_t*>(req->data);
-    uv_close(send_handle, HandleFreeCallback);
+    uv_close(UV_AS_HANDLE(req->data), HandleFreeCallback);
 }
 
 }  // namespace gateway

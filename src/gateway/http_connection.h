@@ -27,8 +27,6 @@ public:
     void Start(IOWorker* io_worker) override;
     void ScheduleClose() override;
 
-    void Reset(int connection_id);
-
 private:
     enum State { kCreated, kRunning, kClosing, kClosed };
 

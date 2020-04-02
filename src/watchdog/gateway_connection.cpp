@@ -137,14 +137,13 @@ UV_READ_CB_FOR_CLASS(GatewayConnection, ReadMessage) {
 }
 
 UV_WRITE_CB_FOR_CLASS(GatewayConnection, WriteMessage) {
+    buffer_pool_.Return(reinterpret_cast<char*>(req->data));
+    write_req_pool_.Return(req);
     if (status != 0) {
         HLOG(WARNING) << "Failed to write response, will close the connection: "
                       << uv_strerror(status);
         ScheduleClose();
-        return;
     }
-    buffer_pool_.Return(reinterpret_cast<char*>(req->data));
-    write_req_pool_.Return(req);
 }
 
 UV_CLOSE_CB_FOR_CLASS(GatewayConnection, Close) {

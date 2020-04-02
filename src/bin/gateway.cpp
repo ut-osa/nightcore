@@ -7,6 +7,7 @@
 
 ABSL_FLAG(std::string, listen_addr, "0.0.0.0", "Address to listen");
 ABSL_FLAG(int, listen_port, 8080, "Port to listen");
+ABSL_FLAG(int, grpc_port, 50051, "Port for gRPC services");
 ABSL_FLAG(int, num_http_workers, 1, "Number of HTTP workers");
 ABSL_FLAG(int, num_ipc_workers, 1, "Number of IPC workers");
 ABSL_FLAG(std::string, ipc_path, "/tmp/faas_gateway",
@@ -31,6 +32,7 @@ int main(int argc, char* argv[]) {
     server->set_address(absl::GetFlag(FLAGS_listen_addr));
     server->set_ipc_path(absl::GetFlag(FLAGS_ipc_path));
     server->set_port(absl::GetFlag(FLAGS_listen_port));
+    server->set_grpc_port(absl::GetFlag(FLAGS_grpc_port));
     server->set_num_http_workers(absl::GetFlag(FLAGS_num_http_workers));
     server->set_num_ipc_workers(absl::GetFlag(FLAGS_num_ipc_workers));
     server->set_shared_mem_path(absl::GetFlag(FLAGS_shared_mem_path));

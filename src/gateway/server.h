@@ -11,6 +11,7 @@
 #include "gateway/io_worker.h"
 #include "gateway/http_request_context.h"
 #include "gateway/http_connection.h"
+#include "gateway/grpc_connection.h"
 #include "gateway/message_connection.h"
 
 namespace faas {
@@ -29,6 +30,7 @@ public:
 
     void set_address(absl::string_view address) { address_ = std::string(address); }
     void set_port(int port) { port_ = port; }
+    void set_grpc_port(int port) { grpc_port_ = port; }
     void set_ipc_path(absl::string_view address) { ipc_path_ = std::string(address); }
     void set_listen_backlog(int value) { listen_backlog_ = value; }
     void set_num_http_workers(int value) { num_http_workers_ = value; }
@@ -99,6 +101,7 @@ private:
 
     std::string address_;
     int port_;
+    int grpc_port_;
     std::string ipc_path_;
     int listen_backlog_;
     int num_http_workers_;
@@ -107,7 +110,8 @@ private:
     std::string func_config_file_;
 
     uv_loop_t uv_loop_;
-    uv_tcp_t uv_tcp_handle_;
+    uv_tcp_t uv_http_handle_;
+    uv_tcp_t uv_grpc_handle_;
     uv_pipe_t uv_ipc_handle_;
     uv_async_t stop_event_;
     base::Thread event_loop_thread_;
@@ -116,13 +120,13 @@ private:
     std::vector<IOWorker*> http_workers_;
     std::vector<IOWorker*> ipc_workers_;
     absl::flat_hash_map<IOWorker*, std::unique_ptr<uv_pipe_t>> pipes_to_io_worker_;
-
-    absl::flat_hash_set<HttpConnection*> active_http_connections_;
-    absl::InlinedVector<HttpConnection*, 32> free_http_connections_;
-    absl::flat_hash_set<std::unique_ptr<HttpConnection>> http_connections_;
     utils::AppendableBuffer return_connection_read_buffer_;
 
+    absl::flat_hash_set<std::unique_ptr<HttpConnection>> http_connections_;
+    absl::flat_hash_set<std::unique_ptr<GrpcConnection>> grpc_connections_;
+
     int next_http_connection_id_;
+    int next_grpc_connection_id_;
     int next_http_worker_id_;
     int next_ipc_worker_id_;
 
@@ -161,6 +165,7 @@ private:
 
     DECLARE_UV_ASYNC_CB_FOR_CLASS(Stop);
     DECLARE_UV_CONNECTION_CB_FOR_CLASS(HttpConnection);
+    DECLARE_UV_CONNECTION_CB_FOR_CLASS(GrpcConnection);
     DECLARE_UV_CONNECTION_CB_FOR_CLASS(MessageConnection);
     DECLARE_UV_READ_CB_FOR_CLASS(ReturnConnection);
     DECLARE_UV_WRITE_CB_FOR_CLASS(PipeWrite2);
