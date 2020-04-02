@@ -34,14 +34,12 @@ public:
     ~H2StreamContext() {}
 
     int32_t stream_id() const { return stream_id_; }
-    absl::string_view method() const { return method_; }
     absl::string_view path() const { return path_; }
     absl::string_view header(absl::string_view field) const {
         return headers_.contains(field) ? headers_.at(field) : "";
     }
     absl::Span<const char> body() const { return body_buffer_.to_span(); }
 
-    void set_method(absl::string_view value) { method_ = std::string(value); }
     void set_path(absl::string_view value) { path_ = std::string(value); }
     void set_header(absl::string_view field, absl::string_view value) {
         headers_[std::string(field)] = std::string(value);
@@ -49,7 +47,6 @@ public:
 
     void Reset(int32_t stream_id) {
         stream_id_ = stream_id;
-        method_.clear();
         path_.clear();
         headers_.clear();
         body_buffer_.Reset();
@@ -74,7 +71,6 @@ public:
 
 private:
     int32_t stream_id_;
-    std::string method_;
     std::string path_;
     absl::flat_hash_map<std::string, std::string> headers_;
     utils::AppendableBuffer body_buffer_;
@@ -150,8 +146,12 @@ UV_READ_CB_FOR_CLASS(GrpcConnection, RecvData) {
         size_t length = static_cast<size_t>(nread);
         ssize_t ret = nghttp2_session_mem_recv(h2_session_, data, length);
         if (ret >= 0) {
-            CHECK_EQ(ret, length) << "nghttp2_session_mem_recv does not consume all input data";
+            if (ret != length) {
+                HLOG(FATAL) << "nghttp2_session_mem_recv does not consume all input data";
+            }
+            H2SendPendingDataIfNecessary();
         } else {
+            // ret < 0
             switch (ret) {
             case NGHTTP2_ERR_CALLBACK_FAILURE:
                 break;
@@ -165,7 +165,6 @@ UV_READ_CB_FOR_CLASS(GrpcConnection, RecvData) {
                 HLOG(FATAL) << "nghttp2 call returns with error: " << nghttp2_strerror(ret);
             }
         }
-        H2SendPendingDataIfNecessary();
     } else if (nread < 0) {
         if (nread == UV_EOF || nread == UV_ECONNRESET) {
             HLOG(INFO) << "gRPC connection closed by client";
@@ -211,6 +210,10 @@ UV_CLOSE_CB_FOR_CLASS(GrpcConnection, Close) {
 
 void GrpcConnection::H2SendPendingDataIfNecessary() {
     DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
+    if (state_ != kRunning) {
+        HLOG(WARNING) << "GrpcConnection is closing or has closed, will not write pending messages";
+        return;
+    }
     if (uv_write_for_mem_send_ongoing_) {
         return;
     }
@@ -242,9 +245,49 @@ void GrpcConnection::H2SendSettingsFrame() {
     H2SendPendingDataIfNecessary();
 }
 
-void GrpcConnection::OnNewH2Request(H2StreamContext* context) {
-    HVLOG(1) << "New request on stream with stream_id " << context->stream_id();
-    HVLOG(1) << "Method = " << context->method();
+bool GrpcConnection::ValidateAndPopulateH2Header(H2StreamContext* context,
+                                                 absl::string_view name, absl::string_view value) {
+    if (absl::StartsWith(name, ":")) {
+        // Reserved header
+        if (name == ":scheme") {
+            return value == "http";
+        } else if (name == ":method") {
+            return value == "POST";
+        } else if (name == ":path") {
+            context->set_path(value);
+            return true;
+        } else if (name == ":authority") {
+            // :authority is ignored
+            return true;
+        } else {
+            return false;
+        }
+    } else {
+        // Normal header
+        if (name == "content-type") {
+            // return value == "application/grpc";
+            return true;
+        } else if (name == "user-agent") {
+            // user-agent is ignored
+            return true;
+        } else if (name == "grpc-encoding") {
+            return value == "identity";
+        } else if (name == "grpc-accept-encoding") {
+            // grpc-accept-encoding is ignored
+            return true;
+        } else if (name == "grpc-message-type") {
+            // grpc-message-type is ignored
+            return true;
+        } else {
+            HLOG(WARNING) << "Non-standard header: " << name << " = " << value;
+            context->set_header(name, value);
+            return true;
+        }
+    }
+}
+
+void GrpcConnection::OnNewGrpcRequest(H2StreamContext* context) {
+    HVLOG(1) << "New request on stream with stream " << context->stream_id();
     HVLOG(1) << "Path = " << context->path();
 
     context->AppendToResponseBody("Hello, HTTP/2 client, your body is:\n");
@@ -272,9 +315,9 @@ int GrpcConnection::H2OnFrameRecv(const nghttp2_frame* frame) {
             H2StreamContext* context = reinterpret_cast<H2StreamContext*>(
                 nghttp2_session_get_stream_user_data(h2_session_, stream_id));
             if (context != nullptr) {
-                OnNewH2Request(context);
+                OnNewGrpcRequest(context);
             } else {
-                HLOG(WARNING) << "Cannot find H2StreamContext for stream_id " << stream_id;
+                HLOG(WARNING) << "Cannot find H2StreamContext for stream " << stream_id;
             }
         }
     default:
@@ -287,12 +330,12 @@ int GrpcConnection::H2OnStreamClose(int32_t stream_id, uint32_t error_code) {
     H2StreamContext* context = reinterpret_cast<H2StreamContext*>(
         nghttp2_session_get_stream_user_data(h2_session_, stream_id));
     if (context == nullptr) {
-        HLOG(WARNING) << "Cannot find stream context for stream_id " << stream_id
+        HLOG(WARNING) << "Cannot find stream context for stream " << stream_id
                       << ", will close the connection";
         ScheduleClose();
         return -1;
     }
-    HVLOG(1) << "HTTP/2 stream of stream_id " << stream_id << " closed";
+    HVLOG(1) << "HTTP/2 stream " << stream_id << " closed";
     h2_stream_context_pool_.Return(context);
     return 0;
 }
@@ -304,35 +347,20 @@ int GrpcConnection::H2OnHeader(const nghttp2_frame* frame, absl::string_view nam
         H2StreamContext* context = reinterpret_cast<H2StreamContext*>(
             nghttp2_session_get_stream_user_data(h2_session_, stream_id));
         if (context == nullptr) {
-            HLOG(WARNING) << "Cannot find stream context for stream_id " << stream_id
+            HLOG(WARNING) << "Cannot find stream context for stream " << stream_id
                           << ", will close the connection";
             ScheduleClose();
             return -1;
         }
-        if (absl::StartsWith(name, ":")) {
-            // Reserved header
-            if (name == ":scheme") {
-                if (value != "http") {
-                    HLOG(WARNING) << "Unrecognized :scheme header '" << value << "' for stream_id "
-                                  << stream_id << ", will close the connection";
-                    ScheduleClose();
-                    return -1;
-                }
-            } else if (name == ":method") {
-                context->set_method(value);
-            } else if (name == ":path") {
-                context->set_path(value);
-            } else if (name == ":authority") {
-                // :authority is ignored
-            } else {
-                HLOG(WARNING) << "Unrecognized reserved header: " << name << " = " << value;
-            }
-        } else {
-            // Normal header
-            context->set_header(name, value);
+        if (!ValidateAndPopulateH2Header(context, name, value)) {
+            HLOG(WARNING) << "Unrecognized " << name << " header '" << value << "' for stream "
+                          << stream_id << ", will close the connection";
+            ScheduleClose();
+            return -1;
         }
+
     } else {
-        HLOG(WARNING) << "Unexpected HTTP/2 frame witin H2OnHeader";
+        HLOG(WARNING) << "Unexpected HTTP/2 frame within H2OnHeader";
     }
     return 0;
 }
@@ -345,7 +373,7 @@ int GrpcConnection::H2OnBeginHeaders(const nghttp2_frame* frame) {
         context->Reset(stream_id);
         H2_CHECK_OK(nghttp2_session_set_stream_user_data(h2_session_, stream_id, context));
     } else {
-        HLOG(WARNING) << "Unexpected HTTP/2 frame witin H2OnBeginHeaders";
+        HLOG(WARNING) << "Unexpected HTTP/2 frame within H2OnBeginHeaders";
     }
     return 0;
 }
@@ -355,7 +383,7 @@ int GrpcConnection::H2OnDataChunkRecv(uint8_t flags, int32_t stream_id,
     H2StreamContext* context = reinterpret_cast<H2StreamContext*>(
         nghttp2_session_get_stream_user_data(h2_session_, stream_id));
     if (context == nullptr) {
-        HLOG(WARNING) << "Cannot find stream context for stream_id " << stream_id
+        HLOG(WARNING) << "Cannot find stream context for stream " << stream_id
                       << ", will close the connection";
         ScheduleClose();
         return -1;

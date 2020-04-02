@@ -53,7 +53,9 @@ private:
 
     void H2SendPendingDataIfNecessary();
     void H2SendSettingsFrame();
-    void OnNewH2Request(H2StreamContext* context);
+    bool ValidateAndPopulateH2Header(H2StreamContext* context, absl::string_view name, absl::string_view value);
+    void OnNewGrpcRequest(H2StreamContext* context);
+    
 
     int H2OnFrameRecv(const nghttp2_frame* frame);
     int H2OnStreamClose(int32_t stream_id, uint32_t error_code);
