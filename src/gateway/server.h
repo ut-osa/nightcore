@@ -93,6 +93,8 @@ public:
                         const protocol::HandshakeMessage& message,
                         protocol::HandshakeResponse* response);
     void OnRecvMessage(MessageConnection* connection, const protocol::Message& message);
+    bool OnNewGrpcCall(GrpcConnection* connection,
+                       std::shared_ptr<GrpcCallContext> call_context);
 
 private:
     class ExternalFuncCallContext;

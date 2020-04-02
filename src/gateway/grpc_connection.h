@@ -5,6 +5,7 @@
 #include "utils/appendable_buffer.h"
 #include "utils/object_pool.h"
 #include "gateway/connection.h"
+#include "gateway/grpc_call_context.h"
 
 #include <nghttp2/nghttp2.h>
 
@@ -40,22 +41,37 @@ private:
     std::string log_header_;
 
     nghttp2_session* h2_session_;
+    nghttp2_error_code h2_error_code_;
     bool uv_write_for_mem_send_ongoing_;
     uv_write_t write_req_for_mem_send_;
 
-    class H2StreamContext;
+    struct H2StreamContext;
     utils::SimpleObjectPool<H2StreamContext> h2_stream_context_pool_;
+    absl::flat_hash_map<int32_t /* stream_id */, std::shared_ptr<GrpcCallContext>> grpc_calls_;
+
+    friend class GrpcCallContext;
 
     DECLARE_UV_READ_CB_FOR_CLASS(RecvData);
     DECLARE_UV_WRITE_CB_FOR_CLASS(DataWritten);
     DECLARE_UV_ALLOC_CB_FOR_CLASS(BufferAlloc);
     DECLARE_UV_CLOSE_CB_FOR_CLASS(Close);
 
+    H2StreamContext* H2NewStreamContext(int stream_id);
+    H2StreamContext* H2GetStreamContext(int stream_id);
+    void H2ReclaimStreamContext(H2StreamContext* stream_context);
+
+    void H2TerminateWithError(nghttp2_error_code error_code);
+    bool H2SessionTerminated();
     void H2SendPendingDataIfNecessary();
     void H2SendSettingsFrame();
-    bool ValidateAndPopulateH2Header(H2StreamContext* context, absl::string_view name, absl::string_view value);
-    void OnNewGrpcRequest(H2StreamContext* context);
-    
+    bool H2ValidateAndPopulateHeader(H2StreamContext* stream_context, absl::string_view name, absl::string_view value);
+    void H2SendResponse(H2StreamContext* stream_context);
+    bool H2HasTrailersToSend(H2StreamContext* stream_context);
+    void H2SendTrailers(H2StreamContext* stream_context);
+
+    void OnNewGrpcCall(H2StreamContext* stream_context);
+    void OnGrpcCallFinish(int32_t stream_id);
+    void GrpcCallFinish(GrpcCallContext* call_context);
 
     int H2OnFrameRecv(const nghttp2_frame* frame);
     int H2OnStreamClose(int32_t stream_id, uint32_t error_code);
@@ -65,6 +81,8 @@ private:
     ssize_t H2DataSourceRead(H2StreamContext* stream_context, uint8_t* buf, size_t length, uint32_t* data_flags);
     int H2SendData(H2StreamContext* stream_context, nghttp2_frame* frame, const uint8_t* framehd, size_t length);
 
+    static int H2ErrorCallback(nghttp2_session* session, int lib_error_code, const char* msg,
+                               size_t len, void* user_data);
     static int H2OnFrameRecvCallback(nghttp2_session* session, const nghttp2_frame* frame,
                                      void* user_data);
     static int H2OnStreamCloseCallback(nghttp2_session* session, int32_t stream_id,

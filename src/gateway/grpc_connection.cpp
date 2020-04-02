@@ -5,6 +5,7 @@
 #include "gateway/io_worker.h"
 
 #include <absl/strings/match.h>
+#include <absl/strings/str_split.h>
 
 #define HLOG(l) LOG(l) << log_header_
 #define HVLOG(l) VLOG(l) << log_header_
@@ -16,79 +17,62 @@
                                 << nghttp2_strerror(ret);  \
     } while (0)
 
-#define H2_MAKE_NV(NAME, VALUE) { \
-    (uint8_t*)(NAME),             \
-    (uint8_t*)(VALUE),            \
-    sizeof(NAME) - 1,             \
-    sizeof(VALUE) - 1,            \
-    NGHTTP2_NV_FLAG_NONE }
-
 namespace faas {
 namespace gateway {
 
 constexpr size_t GrpcConnection::kH2FrameHeaderByteSize;
 
-class GrpcConnection::H2StreamContext {
-public:
-    H2StreamContext() {}
-    ~H2StreamContext() {}
+struct GrpcConnection::H2StreamContext {
+    enum State {
+        kCreated         = 0,
+        kRecvHeaders     = 1,
+        kRecvRequestBody = 2,
+        kProcessing      = 3,
+        kSendResponse    = 4,
+        kError           = 5,
+        kFinished        = 6
+    };
 
-    int32_t stream_id() const { return stream_id_; }
-    absl::string_view path() const { return path_; }
-    absl::string_view header(absl::string_view field) const {
-        return headers_.contains(field) ? headers_.at(field) : "";
+    State state;
+    int stream_id;
+    std::shared_ptr<GrpcCallContext> call_context;
+
+    // For request
+    std::string service_name;
+    std::string method_name;
+    absl::flat_hash_map<std::string, std::string> headers;
+    utils::AppendableBuffer body_buffer;
+
+    // For response
+    int http_status;
+    int grpc_status;
+    utils::AppendableBuffer response_body_buffer;
+    size_t response_body_write_pos;
+
+    void Init(int stream_id) {
+        this->state = kCreated;
+        this->stream_id = stream_id;
+        this->call_context = nullptr;
+        this->service_name.clear();
+        this->method_name.clear();
+        this->headers.clear();
+        this->body_buffer.Reset();
+        this->http_status = 200;
+        this->grpc_status = 0;
+        this->response_body_buffer.Reset();
     }
-    absl::Span<const char> body() const { return body_buffer_.to_span(); }
-
-    void set_path(absl::string_view value) { path_ = std::string(value); }
-    void set_header(absl::string_view field, absl::string_view value) {
-        headers_[std::string(field)] = std::string(value);
-    }
-
-    void Reset(int32_t stream_id) {
-        stream_id_ = stream_id;
-        path_.clear();
-        headers_.clear();
-        body_buffer_.Reset();
-        response_body_buffer_.Reset();
-        response_body_write_pos_ = 0;
-    }
-
-    void AppendToBody(absl::Span<const char> data) {
-        body_buffer_.AppendData(data);
-    }
-
-    void AppendToResponseBody(absl::Span<const char> data) {
-        response_body_buffer_.AppendData(data);
-    }
-
-    // Append a null-terminated C string. Implicit conversion from
-    // `const char*` to `absl::Span<const char>` will include the last
-    // '\0' character, which we usually do not want.
-    void AppendToResponseBody(const char* str) {
-        response_body_buffer_.AppendData(str, strlen(str));
-    }
-
-private:
-    int32_t stream_id_;
-    std::string path_;
-    absl::flat_hash_map<std::string, std::string> headers_;
-    utils::AppendableBuffer body_buffer_;
-    utils::AppendableBuffer response_body_buffer_;
-
-    size_t response_body_write_pos_;
-
-    friend class GrpcConnection;
-    DISALLOW_COPY_AND_ASSIGN(H2StreamContext);
 };
 
 GrpcConnection::GrpcConnection(Server* server, int connection_id)
     : Connection(Connection::Type::Grpc, server),
       connection_id_(connection_id), io_worker_(nullptr),
       state_(kCreated), log_header_(absl::StrFormat("GrpcConnection[%d]: ", connection_id)),
-      h2_session_(nullptr), uv_write_for_mem_send_ongoing_(false) {
+      h2_session_(nullptr), h2_error_code_(NGHTTP2_NO_ERROR),
+      uv_write_for_mem_send_ongoing_(false) {
     nghttp2_session_callbacks* callbacks;
     H2_CHECK_OK(nghttp2_session_callbacks_new(&callbacks));
+    nghttp2_session_callbacks_set_error_callback2(
+        callbacks, &GrpcConnection::H2ErrorCallback);
     nghttp2_session_callbacks_set_on_frame_recv_callback(
         callbacks, &GrpcConnection::H2OnFrameRecvCallback);
     nghttp2_session_callbacks_set_on_stream_close_callback(
@@ -134,6 +118,11 @@ void GrpcConnection::ScheduleClose() {
         return;
     }
     DCHECK(state_ == kRunning);
+    for (const auto& entry : grpc_calls_) {
+        GrpcCallContext* call_context = entry.second.get();
+        call_context->OnStreamClose();
+    }
+    grpc_calls_.clear();
     closed_uv_handles_ = 0;
     total_uv_handles_ = 1;
     uv_close(UV_AS_HANDLE(&uv_tcp_handle_), &GrpcConnection::CloseCallback);
@@ -208,6 +197,35 @@ UV_CLOSE_CB_FOR_CLASS(GrpcConnection, Close) {
     }
 }
 
+GrpcConnection::H2StreamContext* GrpcConnection::H2NewStreamContext(int stream_id) {
+    H2StreamContext* context = h2_stream_context_pool_.Get();
+    context->Init(stream_id);
+    H2_CHECK_OK(nghttp2_session_set_stream_user_data(h2_session_, stream_id, context));
+    return context;
+}
+
+GrpcConnection::H2StreamContext* GrpcConnection::H2GetStreamContext(int stream_id) {
+    H2StreamContext* context = reinterpret_cast<H2StreamContext*>(
+        nghttp2_session_get_stream_user_data(h2_session_, stream_id));
+    CHECK(context != nullptr);
+    return context;
+}
+
+void GrpcConnection::H2ReclaimStreamContext(H2StreamContext* stream_context) {
+    h2_stream_context_pool_.Return(stream_context);
+}
+
+void GrpcConnection::H2TerminateWithError(nghttp2_error_code error_code) {
+    DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
+    H2_CHECK_OK(nghttp2_session_terminate_session(h2_session_, error_code));
+    H2SendPendingDataIfNecessary();
+}
+
+bool GrpcConnection::H2SessionTerminated() {
+    return nghttp2_session_want_write(h2_session_) == 0
+           && nghttp2_session_want_write(h2_session_) == 0;
+}
+
 void GrpcConnection::H2SendPendingDataIfNecessary() {
     DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
     if (state_ != kRunning) {
@@ -215,6 +233,13 @@ void GrpcConnection::H2SendPendingDataIfNecessary() {
         return;
     }
     if (uv_write_for_mem_send_ongoing_) {
+        return;
+    }
+    if (H2SessionTerminated()) {
+        ScheduleClose();
+        return;
+    }
+    if (nghttp2_session_want_write(h2_session_) == 0) {
         return;
     }
     const uint8_t* data;
@@ -245,7 +270,7 @@ void GrpcConnection::H2SendSettingsFrame() {
     H2SendPendingDataIfNecessary();
 }
 
-bool GrpcConnection::ValidateAndPopulateH2Header(H2StreamContext* context,
+bool GrpcConnection::H2ValidateAndPopulateHeader(H2StreamContext* context,
                                                  absl::string_view name, absl::string_view value) {
     if (absl::StartsWith(name, ":")) {
         // Reserved header
@@ -254,7 +279,12 @@ bool GrpcConnection::ValidateAndPopulateH2Header(H2StreamContext* context,
         } else if (name == ":method") {
             return value == "POST";
         } else if (name == ":path") {
-            context->set_path(value);
+            std::vector<absl::string_view> parts = absl::StrSplit(value, '/', absl::SkipEmpty());
+            if (parts.size() != 2) {
+                return false;
+            }
+            context->service_name = std::string(parts[0]);
+            context->method_name = std::string(parts[1]);
             return true;
         } else if (name == ":authority") {
             // :authority is ignored
@@ -270,8 +300,13 @@ bool GrpcConnection::ValidateAndPopulateH2Header(H2StreamContext* context,
         } else if (name == "user-agent") {
             // user-agent is ignored
             return true;
+        } else if (name == "te") {
+            return value == "trailers";
         } else if (name == "grpc-encoding") {
             return value == "identity";
+        } else if (name == "accept-encoding") {
+            // accept-encoding is ignored
+            return true;
         } else if (name == "grpc-accept-encoding") {
             // grpc-accept-encoding is ignored
             return true;
@@ -280,30 +315,101 @@ bool GrpcConnection::ValidateAndPopulateH2Header(H2StreamContext* context,
             return true;
         } else {
             HLOG(WARNING) << "Non-standard header: " << name << " = " << value;
-            context->set_header(name, value);
+            context->headers[std::string(name)] = std::string(value);
             return true;
         }
     }
 }
 
-void GrpcConnection::OnNewGrpcRequest(H2StreamContext* context) {
-    HVLOG(1) << "New request on stream with stream " << context->stream_id();
-    HVLOG(1) << "Path = " << context->path();
-
-    context->AppendToResponseBody("Hello, HTTP/2 client, your body is:\n");
-    context->AppendToResponseBody(context->body());
-    context->AppendToResponseBody("\n");
-
-    nghttp2_nv hdrs[] = {
-        H2_MAKE_NV(":status", "404"),
-        H2_MAKE_NV("content-type", "text/plain")
+namespace {
+nghttp2_nv make_h2_nv(absl::string_view name, absl::string_view value) {
+    return {
+        .name = (uint8_t*) name.data(),
+        .value = (uint8_t*) value.data(),
+        .namelen = name.length(),
+        .valuelen = value.length(),
+        .flags = NGHTTP2_NV_FLAG_NONE
     };
+}
+}
 
-    nghttp2_data_provider data_provider;
-    data_provider.source.ptr = context;
-    data_provider.read_callback = &GrpcConnection::H2DataSourceReadCallback;
-    H2_CHECK_OK(nghttp2_submit_response(h2_session_, context->stream_id(),
-                                        hdrs, 2, &data_provider));
+void GrpcConnection::H2SendResponse(H2StreamContext* context) {
+    DCHECK(context->state == H2StreamContext::kSendResponse);
+    if (context->http_status == 200) {
+        // HTTP OK
+        std::vector<nghttp2_nv> headers = {
+            make_h2_nv(":status", "200"),
+            make_h2_nv("content-type", "application/grpc")
+        };
+        nghttp2_data_provider data_provider;
+        data_provider.source.ptr = context;
+        data_provider.read_callback = &GrpcConnection::H2DataSourceReadCallback;
+        H2_CHECK_OK(nghttp2_submit_response(
+            h2_session_, context->stream_id, headers.data(), headers.size(), &data_provider));
+    } else {
+        // HTTP non-OK, will not send response body and trailers
+        std::string status_str = absl::StrCat(context->http_status);
+        nghttp2_nv header = make_h2_nv(":status", status_str);
+        H2_CHECK_OK(nghttp2_submit_response(
+            h2_session_, context->stream_id, &header, 1, nullptr));
+    }
+}
+
+bool GrpcConnection::H2HasTrailersToSend(H2StreamContext* context) {
+    return context->http_status == 200 && context->grpc_status >= 0;
+}
+
+void GrpcConnection::H2SendTrailers(H2StreamContext* context) {
+    DCHECK(context->http_status == 200 && context->grpc_status >= 0);
+    std::string status_str = absl::StrCat(context->grpc_status);
+    nghttp2_nv trailer = make_h2_nv("grpc-status", status_str);
+    H2_CHECK_OK(nghttp2_submit_trailer(h2_session_, context->stream_id, &trailer, 1));
+}
+
+void GrpcConnection::OnNewGrpcCall(H2StreamContext* context) {
+    DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
+    DCHECK(context->state == H2StreamContext::kProcessing);
+
+    HVLOG(1) << "New request on stream with stream " << context->stream_id;
+    HVLOG(1) << "Service name = " << context->service_name;
+    HVLOG(1) << "Method name = " << context->method_name;
+
+    std::shared_ptr<GrpcCallContext> call_context(new GrpcCallContext());
+    call_context->connection_ = this;
+    call_context->h2_stream_id_ = context->stream_id;
+    call_context->service_name_ = std::move(context->service_name);
+    call_context->method_name_ = std::move(context->method_name);
+    call_context->request_body_buffer_.Swap(context->body_buffer);
+    grpc_calls_[context->stream_id] = call_context;
+
+    if (!server_->OnNewGrpcCall(this, call_context)) {
+        OnGrpcCallFinish(context->stream_id);
+    }
+}
+
+void GrpcConnection::OnGrpcCallFinish(int32_t stream_id) {
+    DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
+    if (!grpc_calls_.contains(stream_id)) {
+        HLOG(WARNING) << "Cannot find gRPC call associated with stream " << stream_id << ", "
+                      << "maybe stream " << stream_id << " has already closed";
+        return;
+    }
+    H2StreamContext* stream_context = H2GetStreamContext(stream_id);
+    DCHECK(stream_context->state == H2StreamContext::kProcessing);
+    std::shared_ptr<GrpcCallContext> call_context = grpc_calls_[stream_id];
+    grpc_calls_.erase(stream_id);
+    stream_context->http_status = call_context->http_status_;
+    stream_context->grpc_status = call_context->grpc_status_;
+    stream_context->response_body_buffer.Swap(call_context->response_body_buffer_);
+    stream_context->state = H2StreamContext::kSendResponse;
+    H2SendResponse(stream_context);
+}
+
+void GrpcConnection::GrpcCallFinish(GrpcCallContext* call_context) {
+    io_worker_->ScheduleFunction(
+        this, absl::bind_front(
+            &GrpcConnection::OnGrpcCallFinish,
+            this, call_context->h2_stream_id_));
 }
 
 int GrpcConnection::H2OnFrameRecv(const nghttp2_frame* frame) {
@@ -311,14 +417,11 @@ int GrpcConnection::H2OnFrameRecv(const nghttp2_frame* frame) {
     case NGHTTP2_DATA:
     case NGHTTP2_HEADERS:
         if (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) {
-            int32_t stream_id = frame->hd.stream_id;
-            H2StreamContext* context = reinterpret_cast<H2StreamContext*>(
-                nghttp2_session_get_stream_user_data(h2_session_, stream_id));
-            if (context != nullptr) {
-                OnNewGrpcRequest(context);
-            } else {
-                HLOG(WARNING) << "Cannot find H2StreamContext for stream " << stream_id;
-            }
+            H2StreamContext* context = H2GetStreamContext(frame->hd.stream_id);
+            DCHECK(context->state == H2StreamContext::kRecvHeaders
+                   || context->state == H2StreamContext::kRecvRequestBody);
+            context->state = H2StreamContext::kProcessing;
+            OnNewGrpcCall(context);
         }
     default:
         break;
@@ -327,38 +430,40 @@ int GrpcConnection::H2OnFrameRecv(const nghttp2_frame* frame) {
 }
 
 int GrpcConnection::H2OnStreamClose(int32_t stream_id, uint32_t error_code) {
-    H2StreamContext* context = reinterpret_cast<H2StreamContext*>(
-        nghttp2_session_get_stream_user_data(h2_session_, stream_id));
-    if (context == nullptr) {
-        HLOG(WARNING) << "Cannot find stream context for stream " << stream_id
-                      << ", will close the connection";
-        ScheduleClose();
-        return -1;
+    H2StreamContext* context = H2GetStreamContext(stream_id);
+    if (context->state == H2StreamContext::kSendResponse
+          && context->response_body_write_pos == context->response_body_buffer.length()) {
+        context->state = H2StreamContext::kFinished;
+    }
+    if (grpc_calls_.contains(stream_id)) {
+        grpc_calls_[stream_id]->OnStreamClose();
+        grpc_calls_.erase(stream_id);
     }
     HVLOG(1) << "HTTP/2 stream " << stream_id << " closed";
-    h2_stream_context_pool_.Return(context);
+    if (context->state != H2StreamContext::kFinished
+          && context->state != H2StreamContext::kError) {
+        HLOG(WARNING) << "Stream " << stream_id << " closed with non-finished state: "
+                      << context->state;
+        if (context->state == H2StreamContext::kSendResponse) {
+            HLOG(WARNING) << "response_body_write_pos=" << context->response_body_write_pos << ", "
+                          << "response_body_buffer_len=" << context->response_body_buffer.length();
+        }
+    }
+    H2ReclaimStreamContext(context);
     return 0;
 }
 
 int GrpcConnection::H2OnHeader(const nghttp2_frame* frame, absl::string_view name,
                                absl::string_view value, uint8_t flags) {
     if (frame->hd.type == NGHTTP2_HEADERS && frame->headers.cat == NGHTTP2_HCAT_REQUEST) {
-        int32_t stream_id = frame->hd.stream_id;
-        H2StreamContext* context = reinterpret_cast<H2StreamContext*>(
-            nghttp2_session_get_stream_user_data(h2_session_, stream_id));
-        if (context == nullptr) {
-            HLOG(WARNING) << "Cannot find stream context for stream " << stream_id
-                          << ", will close the connection";
-            ScheduleClose();
-            return -1;
+        H2StreamContext* context = H2GetStreamContext(frame->hd.stream_id);
+        DCHECK(context->state == H2StreamContext::kRecvHeaders);
+        if (!H2ValidateAndPopulateHeader(context, name, value)) {
+            context->state = H2StreamContext::kError;
+            H2_CHECK_OK(nghttp2_submit_goaway(
+                h2_session_, NGHTTP2_FLAG_NONE, context->stream_id,
+                NGHTTP2_PROTOCOL_ERROR, nullptr, 0));
         }
-        if (!ValidateAndPopulateH2Header(context, name, value)) {
-            HLOG(WARNING) << "Unrecognized " << name << " header '" << value << "' for stream "
-                          << stream_id << ", will close the connection";
-            ScheduleClose();
-            return -1;
-        }
-
     } else {
         HLOG(WARNING) << "Unexpected HTTP/2 frame within H2OnHeader";
     }
@@ -368,10 +473,9 @@ int GrpcConnection::H2OnHeader(const nghttp2_frame* frame, absl::string_view nam
 int GrpcConnection::H2OnBeginHeaders(const nghttp2_frame* frame) {
     if (frame->hd.type == NGHTTP2_HEADERS && frame->headers.cat == NGHTTP2_HCAT_REQUEST) {
         // New HTTP/2 stream
-        int32_t stream_id = frame->hd.stream_id;
-        H2StreamContext* context = h2_stream_context_pool_.Get();
-        context->Reset(stream_id);
-        H2_CHECK_OK(nghttp2_session_set_stream_user_data(h2_session_, stream_id, context));
+        H2StreamContext* context = H2NewStreamContext(frame->hd.stream_id);
+        DCHECK(context->state == H2StreamContext::kCreated);
+        context->state = H2StreamContext::kRecvHeaders;
     } else {
         HLOG(WARNING) << "Unexpected HTTP/2 frame within H2OnBeginHeaders";
     }
@@ -380,25 +484,27 @@ int GrpcConnection::H2OnBeginHeaders(const nghttp2_frame* frame) {
 
 int GrpcConnection::H2OnDataChunkRecv(uint8_t flags, int32_t stream_id,
                                       const uint8_t* data, size_t len) {
-    H2StreamContext* context = reinterpret_cast<H2StreamContext*>(
-        nghttp2_session_get_stream_user_data(h2_session_, stream_id));
-    if (context == nullptr) {
-        HLOG(WARNING) << "Cannot find stream context for stream " << stream_id
-                      << ", will close the connection";
-        ScheduleClose();
-        return -1;
+    H2StreamContext* context = H2GetStreamContext(stream_id);
+    if (context->state == H2StreamContext::kRecvHeaders) {
+        context->state = H2StreamContext::kRecvRequestBody;
     }
-    context->AppendToBody(absl::Span<const char>(
-        reinterpret_cast<const char*>(data), len));
+    DCHECK(context->state == H2StreamContext::kRecvRequestBody);
+    context->body_buffer.AppendData(reinterpret_cast<const char*>(data), len);
     return 0;
 }
 
 ssize_t GrpcConnection::H2DataSourceRead(H2StreamContext* stream_context, uint8_t* buf,
                                          size_t length, uint32_t* data_flags) {
-    size_t remaining_size = stream_context->response_body_buffer_.length()
-                          - stream_context->response_body_write_pos_;
+    DCHECK(stream_context->state == H2StreamContext::kSendResponse);
+    size_t remaining_size = stream_context->response_body_buffer.length()
+                          - stream_context->response_body_write_pos;
     if (remaining_size == 0) {
         *data_flags |= NGHTTP2_DATA_FLAG_EOF;
+        if (H2HasTrailersToSend(stream_context)) {
+            *data_flags |= NGHTTP2_DATA_FLAG_NO_END_STREAM;
+            H2SendTrailers(stream_context);
+        }
+        stream_context->state = H2StreamContext::kFinished;
         return 0;
     }
     *data_flags |= NGHTTP2_DATA_FLAG_NO_COPY;
@@ -407,14 +513,16 @@ ssize_t GrpcConnection::H2DataSourceRead(H2StreamContext* stream_context, uint8_
 
 int GrpcConnection::H2SendData(H2StreamContext* stream_context, nghttp2_frame* frame,
                                const uint8_t* framehd, size_t length) {
-    DCHECK_EQ(frame->hd.stream_id, stream_context->stream_id());
-    DCHECK_LE(stream_context->response_body_write_pos_ + length,
-              stream_context->response_body_buffer_.length());
+    DCHECK_GT(length, 0);
+    DCHECK_EQ(frame->hd.stream_id, stream_context->stream_id);
+    DCHECK_LE(stream_context->response_body_write_pos + length,
+              stream_context->response_body_buffer.length());
+    DCHECK(stream_context->state == H2StreamContext::kSendResponse);
     if (frame->data.padlen > 0) {
         HLOG(FATAL) << "Frame padding is not implemented yet";
     }
-    const char* data = stream_context->response_body_buffer_.data()
-                     + stream_context->response_body_write_pos_;
+    const char* data = stream_context->response_body_buffer.data()
+                     + stream_context->response_body_write_pos;
     uv_buf_t hd_buf;
     io_worker_->NewWriteBuffer(&hd_buf);
     memcpy(hd_buf.base, framehd, kH2FrameHeaderByteSize);
@@ -422,11 +530,18 @@ int GrpcConnection::H2SendData(H2StreamContext* stream_context, nghttp2_frame* f
         { .base = hd_buf.base, .len = kH2FrameHeaderByteSize },
         { .base = const_cast<char*>(data), .len = length }
     };
-    stream_context->response_body_write_pos_ += length;
+    stream_context->response_body_write_pos += length;
     uv_write_t* write_req = io_worker_->NewWriteRequest();
     write_req->data = hd_buf.base;
     UV_DCHECK_OK(uv_write(write_req, UV_AS_STREAM(&uv_tcp_handle_),
                           bufs, 2, &GrpcConnection::DataWrittenCallback));
+    return 0;
+}
+
+int GrpcConnection::H2ErrorCallback(nghttp2_session* session, int lib_error_code, const char* msg,
+                                    size_t len, void* user_data) {
+    GrpcConnection* self = reinterpret_cast<GrpcConnection*>(user_data);
+    LOG(WARNING) << self->log_header_ << "nghttp2 error: " << absl::string_view(msg, len);
     return 0;
 }
 
@@ -469,7 +584,7 @@ ssize_t GrpcConnection::H2DataSourceReadCallback(nghttp2_session* session, int32
                                                  nghttp2_data_source* source, void* user_data) {
     GrpcConnection* self = reinterpret_cast<GrpcConnection*>(user_data);
     H2StreamContext* stream_context = reinterpret_cast<H2StreamContext*>(source->ptr);
-    DCHECK_EQ(stream_context->stream_id(), stream_id);
+    DCHECK_EQ(stream_context->stream_id, stream_id);
     return self->H2DataSourceRead(stream_context, buf, length, data_flags);
 }
 

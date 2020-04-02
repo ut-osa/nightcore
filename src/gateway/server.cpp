@@ -403,6 +403,12 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
     }
 }
 
+bool Server::OnNewGrpcCall(GrpcConnection* connection,
+                           std::shared_ptr<GrpcCallContext> call_context) {
+    call_context->set_grpc_status(1 /* STATUS_CANCELLED */);
+    return false;
+}
+
 void Server::OnExternalFuncCall(uint16_t func_id, std::shared_ptr<HttpAsyncRequestContext> http_context) {
     if (http_context->body().length() == 0) {
         http_context->AppendToResponseBody("Request body cannot be empty!\n");
