@@ -18,50 +18,78 @@ using protocol::HandshakeResponse;
 MessageConnection::MessageConnection(Server* server)
     : Connection(Connection::Type::Message, server), io_worker_(nullptr), state_(kCreated),
       role_(Role::INVALID), func_id_(0), client_id_(0),
-      log_header_("MessageConnection[Handshaking]: "),
-      write_message_event_recv_timestamp_(0) {
+      log_header_("MessageConnection[Handshaking]: ") {
 }
 
 MessageConnection::~MessageConnection() {
-    State state = state_.load();
-    DCHECK(state == kCreated || state == kClosed);
+    DCHECK(state_ == kCreated || state_ == kClosed);
 }
 
 uv_stream_t* MessageConnection::InitUVHandle(uv_loop_t* uv_loop) {
-    write_message_event_.data = this;
-    UV_DCHECK_OK(uv_async_init(uv_loop, &write_message_event_,
-                               &MessageConnection::NewMessageForWriteCallback));
     UV_DCHECK_OK(uv_pipe_init(uv_loop, &uv_pipe_handle_, 0));
     return UV_AS_STREAM(&uv_pipe_handle_);
 }
 
 void MessageConnection::Start(IOWorker* io_worker) {
-    DCHECK(state_.load() == kCreated);
+    DCHECK(state_ == kCreated);
     DCHECK_IN_EVENT_LOOP_THREAD(uv_pipe_handle_.loop);
     io_worker_ = io_worker;
     uv_pipe_handle_.data = this;
     UV_DCHECK_OK(uv_read_start(UV_AS_STREAM(&uv_pipe_handle_),
                                &MessageConnection::BufferAllocCallback,
                                &MessageConnection::ReadHandshakeCallback));
-    state_.store(kHandshake);
+    state_ = kHandshake;
 }
 
 void MessageConnection::ScheduleClose() {
     DCHECK_IN_EVENT_LOOP_THREAD(uv_pipe_handle_.loop);
-    State state = state_.load();
-    if (state == kClosing) {
+    if (state_ == kClosing) {
         HLOG(WARNING) << "Already scheduled for closing";
         return;
     }
-    DCHECK(state == kHandshake || state == kRunning);
+    DCHECK(state_ == kHandshake || state_ == kRunning);
     closed_uv_handles_ = 0;
-    total_uv_handles_ = 2;
-    uv_close(UV_AS_HANDLE(&uv_pipe_handle_),
-             &MessageConnection::CloseCallback);
-    absl::MutexLock lk(&write_message_mu_);
-    uv_close(UV_AS_HANDLE(&write_message_event_),
-             &MessageConnection::CloseCallback);
-    state_.store(kClosing);
+    total_uv_handles_ = 1;
+    uv_close(UV_AS_HANDLE(&uv_pipe_handle_), &MessageConnection::CloseCallback);
+    state_ = kClosing;
+}
+
+void MessageConnection::SendPendingMessages() {
+    DCHECK_IN_EVENT_LOOP_THREAD(uv_pipe_handle_.loop);
+    if (state_ != kRunning) {
+        HLOG(WARNING) << "MessageConnection is closing or has closed, will not send pending messages";
+        return;
+    }
+    size_t write_size = 0;
+    {
+        absl::MutexLock lk(&write_message_mu_);
+        write_size = pending_messages_.size() * sizeof(Message);
+        if (write_size > 0) {
+            write_message_buffer_.Reset();
+            write_message_buffer_.AppendData(
+                reinterpret_cast<char*>(pending_messages_.data()),
+                write_size);
+            pending_messages_.clear();
+        }
+    }
+    if (write_size == 0) {
+        return;
+    }
+    io_worker_->write_size_stat()->AddSample(write_size);
+    char* ptr = write_message_buffer_.data();
+    while (write_size > 0) {
+        uv_buf_t buf;
+        io_worker_->NewWriteBuffer(&buf);
+        size_t copy_size = std::min(buf.len, write_size);
+        memcpy(buf.base, ptr, copy_size);
+        buf.len = copy_size;
+        uv_write_t* write_req = io_worker_->NewWriteRequest();
+        write_req->data = buf.base;
+        UV_DCHECK_OK(uv_write(write_req, UV_AS_STREAM(&uv_pipe_handle_),
+                              &buf, 1, &MessageConnection::WriteMessageCallback));
+        write_size -= copy_size;
+        ptr += copy_size;
+    }
 }
 
 void MessageConnection::RecvHandshakeMessage() {
@@ -85,33 +113,16 @@ void MessageConnection::RecvHandshakeMessage() {
     };
     UV_DCHECK_OK(uv_write(io_worker_->NewWriteRequest(), UV_AS_STREAM(&uv_pipe_handle_),
                           &buf, 1, &MessageConnection::WriteHandshakeResponseCallback));
-    state_.store(kRunning);
+    state_ = kRunning;
 }
 
 void MessageConnection::WriteMessage(const Message& message) {
-    bool within_my_event_loop = uv::WithinEventLoop(uv_pipe_handle_.loop);
     {
         absl::MutexLock lk(&write_message_mu_);
-        if (state_.load() != kRunning) {
-            HLOG(WARNING) << "MessageConnection is not in running state, cannot write message";
-            return;
-        }
         pending_messages_.push_back(message);
-        if (!within_my_event_loop) {
-#ifdef __FAAS_ENABLE_PROFILING
-            uint64_t empty = 0;
-            write_message_event_recv_timestamp_.compare_exchange_strong(
-                empty, GetMonotonicMicroTimestamp());
-#endif
-            UV_DCHECK_OK(uv_async_send(&write_message_event_));
-        }
     }
-    if (within_my_event_loop) {
-#ifdef __FAAS_ENABLE_PROFILING
-        write_message_event_recv_timestamp_.store(0);
-#endif
-        OnNewMessageForWrite();
-    }
+    io_worker_->ScheduleFunction(
+        this, absl::bind_front(&MessageConnection::SendPendingMessages, this));
 }
 
 UV_ALLOC_CB_FOR_CLASS(MessageConnection, BufferAlloc) {
@@ -183,55 +194,11 @@ UV_WRITE_CB_FOR_CLASS(MessageConnection, WriteMessage) {
     }
 }
 
-UV_ASYNC_CB_FOR_CLASS(MessageConnection, NewMessageForWrite) {
-    if (state_.load() != kRunning) {
-        HLOG(WARNING) << "MessageConnection is closing or has closed, will not write pending messages";
-        return;
-    }
-#ifdef __FAAS_ENABLE_PROFILING
-    uint64_t write_message_event_recv_timestamp = write_message_event_recv_timestamp_.fetch_and(0);
-    if (write_message_event_recv_timestamp != 0) {
-        io_worker_->uv_async_delay_stat()->AddSample(
-            GetMonotonicMicroTimestamp() - write_message_event_recv_timestamp);
-    }
-#endif
-    size_t write_size = 0;
-    {
-        absl::MutexLock lk(&write_message_mu_);
-        write_size = pending_messages_.size() * sizeof(Message);
-        if (write_size > 0) {
-            write_message_buffer_.Reset();
-            write_message_buffer_.AppendData(
-                reinterpret_cast<char*>(pending_messages_.data()),
-                write_size);
-            pending_messages_.clear();
-        }
-    }
-    if (write_size == 0) {
-        return;
-    }
-    io_worker_->write_size_stat()->AddSample(write_size);
-    char* ptr = write_message_buffer_.data();
-    while (write_size > 0) {
-        uv_buf_t buf;
-        io_worker_->NewWriteBuffer(&buf);
-        size_t copy_size = std::min(buf.len, write_size);
-        memcpy(buf.base, ptr, copy_size);
-        buf.len = copy_size;
-        uv_write_t* write_req = io_worker_->NewWriteRequest();
-        write_req->data = buf.base;
-        UV_DCHECK_OK(uv_write(write_req, UV_AS_STREAM(&uv_pipe_handle_),
-                              &buf, 1, &MessageConnection::WriteMessageCallback));
-        write_size -= copy_size;
-        ptr += copy_size;
-    }
-}
-
 UV_CLOSE_CB_FOR_CLASS(MessageConnection, Close) {
     DCHECK_LT(closed_uv_handles_, total_uv_handles_);
     closed_uv_handles_++;
     if (closed_uv_handles_ == total_uv_handles_) {
-        state_.store(kClosed);
+        state_ = kClosed;
         io_worker_->OnConnectionClose(this);
     }
 }

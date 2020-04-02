@@ -48,10 +48,6 @@ void HttpConnection::Start(IOWorker* io_worker) {
     io_worker_ = io_worker;
     uv_tcp_handle_.data = this;
     response_write_req_.data = this;
-    UV_DCHECK_OK(uv_async_init(uv_tcp_handle_.loop,
-                              &async_request_finished_event_,
-                              &HttpConnection::AsyncRequestFinishCallback));
-    async_request_finished_event_.data = this;
     state_ = kRunning;
     StartRecvData();
 }
@@ -69,11 +65,8 @@ void HttpConnection::ScheduleClose() {
         within_async_request_ = false;
     }
     closed_uv_handles_ = 0;
-    total_uv_handles_ = 2;
-    uv_close(UV_AS_HANDLE(&uv_tcp_handle_),
-             &HttpConnection::CloseCallback);
-    uv_close(UV_AS_HANDLE(&async_request_finished_event_),
-             &HttpConnection::CloseCallback);
+    total_uv_handles_ = 1;
+    uv_close(UV_AS_HANDLE(&uv_tcp_handle_), &HttpConnection::CloseCallback);
     state_ = kClosing;
 }
 
@@ -134,32 +127,6 @@ UV_WRITE_CB_FOR_CLASS(HttpConnection, DataWritten) {
 
 UV_ALLOC_CB_FOR_CLASS(HttpConnection, BufferAlloc) {
     io_worker_->NewReadBuffer(suggested_size, buf);
-}
-
-UV_ASYNC_CB_FOR_CLASS(HttpConnection, AsyncRequestFinish) {
-#ifdef __FAAS_ENABLE_PROFILING
-    uint64_t finished_event_recv_timestamp = finished_event_recv_timestamp_.load();
-    if (finished_event_recv_timestamp != 0) {
-        io_worker_->uv_async_delay_stat()->AddSample(
-            GetMonotonicMicroTimestamp() - finished_event_recv_timestamp);
-    }
-#endif
-    HttpAsyncRequestContext* context = async_request_context_.get();
-    DCHECK(context != nullptr);
-    if (!within_async_request_) {
-        HLOG(WARNING) << "HttpConnection is closing or has closed, will not handle the finish of async request";
-        return;
-    }
-    context->body_buffer_.Swap(body_buffer_);
-    response_status_ = context->status_;
-    response_content_type_ = context->content_type_;
-    context->response_body_buffer_.Swap(response_body_buffer_);
-    within_async_request_ = false;
-    if (state_ != kRunning) {
-        HLOG(WARNING) << "HttpConnection is closing or has closed, will not send response";
-        return;
-    }
-    SendHttpResponse();
 }
 
 UV_CLOSE_CB_FOR_CLASS(HttpConnection, Close) {
@@ -302,18 +269,28 @@ void HttpConnection::OnNewHttpRequest(absl::string_view method, absl::string_vie
     }
 }
 
-void HttpConnection::AsyncRequestFinish(HttpAsyncRequestContext* context) {
-    if (uv::WithinEventLoop(uv_tcp_handle_.loop)) {
-#ifdef __FAAS_ENABLE_PROFILING
-        finished_event_recv_timestamp_.store(0);
-#endif
-        OnAsyncRequestFinish();
-    } else {
-#ifdef __FAAS_ENABLE_PROFILING
-        finished_event_recv_timestamp_.store(GetMonotonicMicroTimestamp());
-#endif
-        UV_DCHECK_OK(uv_async_send(&async_request_finished_event_));
+void HttpConnection::OnAsyncRequestFinish() {
+    HttpAsyncRequestContext* context = async_request_context_.get();
+    DCHECK(context != nullptr);
+    if (!within_async_request_) {
+        HLOG(WARNING) << "HttpConnection is closing or has closed, will not handle the finish of async request";
+        return;
     }
+    context->body_buffer_.Swap(body_buffer_);
+    response_status_ = context->status_;
+    response_content_type_ = context->content_type_;
+    context->response_body_buffer_.Swap(response_body_buffer_);
+    within_async_request_ = false;
+    if (state_ != kRunning) {
+        HLOG(WARNING) << "HttpConnection is closing or has closed, will not send response";
+        return;
+    }
+    SendHttpResponse();
+}
+
+void HttpConnection::AsyncRequestFinish(HttpAsyncRequestContext* context) {
+    io_worker_->ScheduleFunction(
+        this, absl::bind_front(&HttpConnection::OnAsyncRequestFinish, this));
 }
 
 void HttpConnection::SendHttpResponse() {

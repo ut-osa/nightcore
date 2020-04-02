@@ -26,6 +26,7 @@
 #include <absl/container/inlined_vector.h>
 #include <absl/synchronization/mutex.h>
 #include <absl/synchronization/notification.h>
+#include <absl/functional/bind_front.h>
 #include <uv.h>
 
 #include "base/macro.h"

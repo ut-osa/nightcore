@@ -33,12 +33,11 @@ private:
     enum State { kCreated, kHandshake, kRunning, kClosing, kClosed };
 
     IOWorker* io_worker_;
-    std::atomic<State> state_;
+    State state_;
     protocol::Role role_;
     uint16_t func_id_;
     uint16_t client_id_;
     uv_pipe_t uv_pipe_handle_;
-    uv_async_t write_message_event_;
     int closed_uv_handles_;
     int total_uv_handles_;
 
@@ -51,10 +50,9 @@ private:
     absl::Mutex write_message_mu_;
     absl::InlinedVector<protocol::Message, 16>
         pending_messages_ ABSL_GUARDED_BY(write_message_mu_);
-    
-    std::atomic<uint64_t> write_message_event_recv_timestamp_;
 
     void RecvHandshakeMessage();
+    void SendPendingMessages();
 
     DECLARE_UV_ALLOC_CB_FOR_CLASS(BufferAlloc);
     DECLARE_UV_READ_CB_FOR_CLASS(ReadHandshake);

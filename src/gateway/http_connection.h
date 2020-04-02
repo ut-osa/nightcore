@@ -60,7 +60,6 @@ private:
     uv_write_t response_write_req_;
     bool within_async_request_;
     std::shared_ptr<HttpAsyncRequestContext> async_request_context_;
-    uv_async_t async_request_finished_event_;
     std::atomic<uint64_t> finished_event_recv_timestamp_;
 
     friend class HttpAsyncRequestContext;
@@ -71,7 +70,6 @@ private:
     DECLARE_UV_READ_CB_FOR_CLASS(RecvData);
     DECLARE_UV_WRITE_CB_FOR_CLASS(DataWritten);
     DECLARE_UV_ALLOC_CB_FOR_CLASS(BufferAlloc);
-    DECLARE_UV_ASYNC_CB_FOR_CLASS(AsyncRequestFinish);
     DECLARE_UV_CLOSE_CB_FOR_CLASS(Close);
 
     void HttpParserOnMessageBegin();
@@ -85,6 +83,7 @@ private:
     void HttpParserOnNewHeader();
     void ResetHttpParser();
     void OnNewHttpRequest(absl::string_view method, absl::string_view path);
+    void OnAsyncRequestFinish();
     void AsyncRequestFinish(HttpAsyncRequestContext* context);
     void SendHttpResponse();
 

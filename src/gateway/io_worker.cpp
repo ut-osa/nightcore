@@ -16,6 +16,7 @@ IOWorker::IOWorker(Server* server, absl::string_view worker_name,
                          std::bind(&IOWorker::EventLoopThreadMain, this)),
       read_buffer_pool_(absl::StrFormat("%s_Read", worker_name), read_buffer_size),
       write_buffer_pool_(absl::StrFormat("%s_Write", worker_name), write_buffer_size),
+      async_event_recv_timestamp_(0),
       bytes_per_read_stat_(stat::StatisticsCollector<uint32_t>::StandardReportCallback(
           absl::StrFormat("[%s] bytes_per_read", worker_name))),
       write_size_stat_(stat::StatisticsCollector<uint32_t>::StandardReportCallback(
@@ -26,6 +27,9 @@ IOWorker::IOWorker(Server* server, absl::string_view worker_name,
     uv_loop_.data = &event_loop_thread_;
     UV_DCHECK_OK(uv_async_init(&uv_loop_, &stop_event_, &IOWorker::StopCallback));
     stop_event_.data = this;
+    UV_DCHECK_OK(uv_async_init(&uv_loop_, &run_fn_event_,
+                               &IOWorker::RunScheduledFunctionsCallback));
+    run_fn_event_.data = this;
 }
 
 IOWorker::~IOWorker() {
@@ -95,6 +99,32 @@ void IOWorker::ReturnWriteRequest(uv_write_t* write_req) {
     write_req_pool_.Return(write_req);
 }
 
+void IOWorker::ScheduleFunction(Connection* owner, std::function<void()> fn) {
+    if (state_.load(std::memory_order_consume) != kRunning) {
+        HLOG(WARNING) << "Cannot schedule function in non-running state, will ignore it";
+        return;
+    }
+    bool within_my_event_loop = uv::WithinEventLoop(&uv_loop_);
+    std::unique_ptr<ScheduledFunction> function = absl::make_unique<ScheduledFunction>();
+    function->owner = owner;
+    function->fn = fn;
+    {
+        absl::MutexLock lk(&scheduled_function_mu_);
+        scheduled_functions_.push_back(std::move(function));
+        if (!within_my_event_loop) {
+#ifdef __FAAS_ENABLE_PROFILING
+            uint64_t empty = 0;
+            async_event_recv_timestamp_.compare_exchange_strong(
+                empty, GetMonotonicMicroTimestamp());
+#endif
+            UV_DCHECK_OK(uv_async_send(&run_fn_event_));
+        }
+    }
+    if (within_my_event_loop) {
+        OnRunScheduledFunctions();
+    }
+}
+
 void IOWorker::OnConnectionClose(Connection* connection) {
     DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
     DCHECK(pipe_to_server_.loop == &uv_loop_);
@@ -136,6 +166,7 @@ UV_ASYNC_CB_FOR_CLASS(IOWorker, Stop) {
         }
     }
     uv_close(UV_AS_HANDLE(&stop_event_), nullptr);
+    uv_close(UV_AS_HANDLE(&run_fn_event_), nullptr);
     state_.store(kStopping);
 }
 
@@ -149,7 +180,7 @@ UV_READ_CB_FOR_CLASS(IOWorker, NewConnection) {
     connection->Start(this);
     connections_.insert(connection);
     if (state_.load(std::memory_order_consume) == kStopping) {
-        LOG(WARNING) << "Receive new connection in stopping state, will close it directly";
+        HLOG(WARNING) << "Receive new connection in stopping state, will close it directly";
         connection->ScheduleClose();
     }
 }
@@ -163,6 +194,31 @@ UV_WRITE_CB_FOR_CLASS(IOWorker, PipeWrite) {
         // We have returned all Connection objects to Server
         HLOG(INFO) << "Close pipe to Server";
         uv_close(UV_AS_HANDLE(&pipe_to_server_), nullptr);
+    }
+}
+
+UV_ASYNC_CB_FOR_CLASS(IOWorker, RunScheduledFunctions) {
+    if (state_.load(std::memory_order_consume) != kRunning) {
+        return;
+    }
+#ifdef __FAAS_ENABLE_PROFILING
+    uint64_t async_event_recv_timestamp = async_event_recv_timestamp_.fetch_and(0);
+    if (async_event_recv_timestamp != 0) {
+        uv_async_delay_stat_.AddSample(GetMonotonicMicroTimestamp() - async_event_recv_timestamp);
+    }
+#endif
+    absl::InlinedVector<std::unique_ptr<ScheduledFunction>, 32> functions;
+    {
+        absl::MutexLock lk(&scheduled_function_mu_);
+        functions = std::move(scheduled_functions_);
+        scheduled_functions_.clear();
+    }
+    for (const auto& function : functions) {
+        if (connections_.contains(function->owner)) {
+            function->fn();
+        } else {
+            HLOG(WARNING) << "Owner connection has closed";
+        }
     }
 }
 
