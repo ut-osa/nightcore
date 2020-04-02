@@ -6,14 +6,14 @@ namespace faas {
 namespace protocol {
 
 enum class Status {
-    INVALID = 0,
-    OK = 1,
+    INVALID         = 0,
+    OK              = 1,
     WATCHDOG_EXISTS = 2
 };
 
 enum class Role {
-    INVALID = 0,
-    WATCHDOG = 1,
+    INVALID     = 0,
+    WATCHDOG    = 1,
     FUNC_WORKER = 2
 };
 
@@ -38,10 +38,10 @@ union FuncCall {
 static_assert(sizeof(FuncCall) == 8, "Unexpected FuncCall size");
 
 enum class MessageType {
-    INVALID = 0,
-    INVOKE_FUNC = 1,
+    INVALID            = 0,
+    INVOKE_FUNC        = 1,
     FUNC_CALL_COMPLETE = 2,
-    FUNC_CALL_FAILED = 3
+    FUNC_CALL_FAILED   = 3
 };
 
 struct Message {
