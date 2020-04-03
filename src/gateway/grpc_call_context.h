@@ -10,9 +10,11 @@ namespace gateway {
 class GrpcConnection;
 
 enum class GrpcStatus {
-    OK        = 0,
-    CANCELLED = 1,
-    UNKNOWN   = 2
+    OK            = 0,
+    CANCELLED     = 1,
+    UNKNOWN       = 2,
+    NOT_FOUND     = 5,
+    UNIMPLEMENTED = 12
 };
 
 class GrpcCallContext {

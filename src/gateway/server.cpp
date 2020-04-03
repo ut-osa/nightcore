@@ -389,7 +389,7 @@ public:
             http_context_->SetStatus(404);
         }
         if (grpc_context_ != nullptr) {
-            grpc_context_->set_http_status(HttpStatus::NOT_FOUND);
+            grpc_context_->set_grpc_status(GrpcStatus::UNIMPLEMENTED);
         }
         Finish();
     }
@@ -478,7 +478,7 @@ void Server::OnNewGrpcCall(std::shared_ptr<GrpcCallContext> call_context) {
     const FuncConfig::Entry* func_entry = func_config_.find_by_func_name(
         absl::StrFormat("grpc:%s", call_context->service_name()));
     if (func_entry == nullptr || !func_entry->grpc_methods.contains(call_context->method_name())) {
-        call_context->set_http_status(HttpStatus::NOT_FOUND);
+        call_context->set_grpc_status(GrpcStatus::NOT_FOUND);
         call_context->Finish();
         return;
     }

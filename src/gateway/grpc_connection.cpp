@@ -233,7 +233,7 @@ void GrpcConnection::H2TerminateWithError(nghttp2_error_code error_code) {
 }
 
 bool GrpcConnection::H2SessionTerminated() {
-    return nghttp2_session_want_write(h2_session_) == 0
+    return nghttp2_session_want_read(h2_session_) == 0
            && nghttp2_session_want_write(h2_session_) == 0;
 }
 
@@ -247,6 +247,8 @@ void GrpcConnection::H2SendPendingDataIfNecessary() {
         return;
     }
     if (H2SessionTerminated()) {
+        LOG(INFO) << "nghttp2_session_want_read() and nghttp2_session_want_write() both return 0, "
+                  << "will close the connection";
         ScheduleClose();
         return;
     }
@@ -323,6 +325,9 @@ bool GrpcConnection::H2ValidateAndPopulateHeader(H2StreamContext* context,
         } else if (name == "grpc-message-type") {
             // grpc-message-type is ignored
             return true;
+        } else if (name == "grpc-timeout") {
+            // grpc-timeout is ignored
+            return true;
         } else {
             HLOG(WARNING) << "Non-standard header: " << name << " = " << value;
             context->headers[std::string(name)] = std::string(value);
@@ -345,6 +350,7 @@ nghttp2_nv make_h2_nv(absl::string_view name, absl::string_view value) {
 
 void GrpcConnection::H2SendResponse(H2StreamContext* context) {
     DCHECK(context->state == H2StreamContext::kSendResponse);
+    HVLOG(1) << "Send response for stream " << context->stream_id;
     if (context->http_status == HttpStatus::OK) {
         // HTTP OK
         std::vector<nghttp2_nv> headers = {
@@ -359,9 +365,12 @@ void GrpcConnection::H2SendResponse(H2StreamContext* context) {
     } else {
         // HTTP non-OK, will not send response body and trailers
         std::string status_str = absl::StrCat(context->http_status);
-        nghttp2_nv header = make_h2_nv(":status", status_str);
+        std::vector<nghttp2_nv> headers = {
+            make_h2_nv(":status", status_str),
+            make_h2_nv("content-type", "application/grpc")
+        };
         H2_CHECK_OK(nghttp2_submit_response(
-            h2_session_, context->stream_id, &header, 1, nullptr));
+            h2_session_, context->stream_id, headers.data(), headers.size(), nullptr));
     }
     H2SendPendingDataIfNecessary();
 }
@@ -478,6 +487,7 @@ int GrpcConnection::H2OnHeader(const nghttp2_frame* frame, absl::string_view nam
         }
         DCHECK(context->state == H2StreamContext::kRecvHeaders);
         if (!H2ValidateAndPopulateHeader(context, name, value)) {
+            HVLOG(1) << "Validation fails on header " << name << " = " << value;
             context->http_status = HttpStatus::BAD_REQUEST;
             context->state = H2StreamContext::kError;
         }
@@ -490,6 +500,7 @@ int GrpcConnection::H2OnHeader(const nghttp2_frame* frame, absl::string_view nam
 int GrpcConnection::H2OnBeginHeaders(const nghttp2_frame* frame) {
     if (frame->hd.type == NGHTTP2_HEADERS && frame->headers.cat == NGHTTP2_HCAT_REQUEST) {
         // New HTTP/2 stream
+        HVLOG(1) << "New HTTP/2 stream " << frame->hd.stream_id;
         H2StreamContext* context = H2NewStreamContext(frame->hd.stream_id);
         DCHECK(context->state == H2StreamContext::kCreated);
         context->state = H2StreamContext::kRecvHeaders;
