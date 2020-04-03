@@ -31,12 +31,16 @@ func (s *SharedMemory) create(path string, size int) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ftruncate failed: %v", err)
 	}
-	data, err := syscall.Mmap(
-		fd, 0, size, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_SHARED)
-	if err != nil {
-		return nil, fmt.Errorf("mmap failed: %v", err)
+	if size > 0 {
+		data, err := syscall.Mmap(
+			fd, 0, size, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_SHARED)
+		if err != nil {
+			return nil, fmt.Errorf("mmap failed: %v", err)
+		}
+		return data, nil
+	} else {
+		return []byte{}, nil
 	}
-	return data, nil
 }
 
 func (s *SharedMemory) openReadOnly(path string) ([]byte, error) {
@@ -50,15 +54,22 @@ func (s *SharedMemory) openReadOnly(path string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("fstat failed: %v", err)
 	}
-	data, err := syscall.Mmap(
-		fd, 0, int(stat.Size), syscall.PROT_READ, syscall.MAP_SHARED)
-	if err != nil {
-		return nil, fmt.Errorf("mmap failed: %v", err)
+	if stat.Size > 0 {
+		data, err := syscall.Mmap(
+			fd, 0, int(stat.Size), syscall.PROT_READ, syscall.MAP_SHARED)
+		if err != nil {
+			return nil, fmt.Errorf("mmap failed: %v", err)
+		}
+		return data, nil
+	} else {
+		return []byte{}, nil
 	}
-	return data, nil
 }
 
 func (s *SharedMemory) close(data []byte) error {
+	if len(data) == 0 {
+		return nil
+	}
 	err := syscall.Munmap(data)
 	if err != nil {
 		return fmt.Errorf("munmap failed: %v", err)
