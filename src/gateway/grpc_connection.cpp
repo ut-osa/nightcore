@@ -306,8 +306,7 @@ bool GrpcConnection::H2ValidateAndPopulateHeader(H2StreamContext* context,
     } else {
         // Normal header
         if (name == "content-type") {
-            // return value == "application/grpc";
-            return true;
+            return value == "application/grpc";
         } else if (name == "user-agent") {
             // user-agent is ignored
             return true;
