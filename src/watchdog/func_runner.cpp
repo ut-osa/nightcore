@@ -59,17 +59,11 @@ void SerializingFuncRunner::OnSubprocessExit(int exit_status,
         Complete(kProcessExitAbnormally);
         return;
     }
-    if (stdout.length() == 0) {
-#ifdef __FAAS_ENABLE_PROFILING
-        Complete(kEmptyOutput, GetMonotonicMicroTimestamp() - start_timestamp_);
-#else
-        Complete(kEmptyOutput);
-#endif
-        return;
-    }
     utils::SharedMemory::Region* region = shared_memory_->Create(
         absl::StrCat(call_id_, ".o"), stdout.length());
-    memcpy(region->base(), stdout.data(), stdout.length());
+    if (stdout.length() > 0) {
+        memcpy(region->base(), stdout.data(), stdout.length());
+    }
     region->Close();
 #ifdef __FAAS_ENABLE_PROFILING
     Complete(kSuccess, GetMonotonicMicroTimestamp() - start_timestamp_);
@@ -89,7 +83,7 @@ UV_WRITE_CB_FOR_CLASS(SerializingFuncRunner, WriteSubprocessStdin) {
     if (status == 0) {
         subprocess_.ClosePipe(Subprocess::kStdin);
     } else {
-        HLOG(ERROR) << "Failed to write input data";
+        HLOG(ERROR) << "Failed to write input data: " << uv_strerror(status);
         subprocess_.Kill();
     }
 }

@@ -365,6 +365,8 @@ public:
             return false;
         }
         // gRPC allows empty input (when protobuf serialized to empty string)
+        // However, the actual input buffer will not be empty because method name
+        // is appended.
         return true;
     }
 
@@ -433,9 +435,7 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
         } else {
             HLOG(ERROR) << "Cannot find message connection of watchdog with func_id " << func_id;
         }
-    } else if (type == MessageType::FUNC_CALL_COMPLETE
-               || type == MessageType::FUNC_CALL_COMPLETE_WITH_EMPTY_OUTPUT
-               || type == MessageType::FUNC_CALL_FAILED) {
+    } else if (type == MessageType::FUNC_CALL_COMPLETE || type == MessageType::FUNC_CALL_FAILED) {
         uint16_t client_id = message.func_call.client_id;
         if (client_id > 0) {
             absl::MutexLock lk(&message_connection_mu_);
@@ -460,12 +460,8 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
                 if (type == MessageType::FUNC_CALL_COMPLETE) {
                     func_call_context->WriteOutput(shared_memory_.get());
                     func_call_context->Finish();
-                } else if (type == MessageType::FUNC_CALL_COMPLETE_WITH_EMPTY_OUTPUT) {
-                    func_call_context->Finish();
                 } else if (type == MessageType::FUNC_CALL_FAILED) {
                     func_call_context->FinishWithError();
-                } else {
-                    LOG(FATAL) << "Unreachable";
                 }
                 external_func_calls_.erase(full_call_id);
             } else {

@@ -24,7 +24,6 @@ public:
 
     enum Status {
         kSuccess,
-        kEmptyOutput,  // EmptyOutput is also considered as success
         kFailedWithoutReason,
         kFailedToStartProcess,
         kFailedToSchedule,

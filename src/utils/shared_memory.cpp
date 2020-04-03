@@ -31,11 +31,14 @@ SharedMemory::Region* SharedMemory::Create(absl::string_view path, size_t size) 
     int fd = open(full_path.c_str(), O_CREAT|O_EXCL|O_RDWR, 0644);
     PCHECK(fd != -1) << "open failed";
     PCHECK(ftruncate(fd, size) == 0) << "ftruncate failed";
-    void* ptr = mmap(0, size, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
-    PCHECK(ptr != MAP_FAILED) << "mmap failed";
-    PCHECK(close(fd) == 0) << "close failed";
-    memset(ptr, 0, size);
-    mmap_delay_stat_.AddSample(GetMonotonicMicroTimestamp() - start_timestamp);
+    void* ptr = nullptr;
+    if (size > 0) {
+        ptr = mmap(0, size, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
+        PCHECK(ptr != MAP_FAILED) << "mmap failed";
+        PCHECK(close(fd) == 0) << "close failed";
+        memset(ptr, 0, size);
+        mmap_delay_stat_.AddSample(GetMonotonicMicroTimestamp() - start_timestamp);
+    }
     Region* region = new Region(this, path, reinterpret_cast<char*>(ptr), size);
     {
         absl::MutexLock lk(&regions_mu_);
@@ -52,10 +55,13 @@ SharedMemory::Region* SharedMemory::OpenReadOnly(absl::string_view path) {
     struct stat statbuf;
     PCHECK(fstat(fd, &statbuf) == 0) << "fstat failed";
     size_t size = static_cast<size_t>(statbuf.st_size);
-    void* ptr = mmap(0, size, PROT_READ, MAP_SHARED, fd, 0);
-    PCHECK(ptr != MAP_FAILED) << "mmap failed";
-    PCHECK(close(fd) == 0) << "close failed";
-    mmap_delay_stat_.AddSample(GetMonotonicMicroTimestamp() - start_timestamp);
+    void* ptr = nullptr;
+    if (size > 0) {
+        ptr = mmap(0, size, PROT_READ, MAP_SHARED, fd, 0);
+        PCHECK(ptr != MAP_FAILED) << "mmap failed";
+        PCHECK(close(fd) == 0) << "close failed";
+        mmap_delay_stat_.AddSample(GetMonotonicMicroTimestamp() - start_timestamp);
+    }
     Region* region = new Region(this, path, reinterpret_cast<char*>(ptr), size);
     {
         absl::MutexLock lk(&regions_mu_);
@@ -67,7 +73,9 @@ SharedMemory::Region* SharedMemory::OpenReadOnly(absl::string_view path) {
 void SharedMemory::Close(SharedMemory::Region* region, bool remove) {
     absl::MutexLock lk(&regions_mu_);
     DCHECK(regions_.contains(region));
-    PCHECK(munmap(region->base(), region->size()) == 0);
+    if (region->size() > 0) {
+        PCHECK(munmap(region->base(), region->size()) == 0);
+    }
     if (remove) {
         PCHECK(fs_utils::Remove(
             absl::StrFormat("%s/%s", base_path_, region->path())));

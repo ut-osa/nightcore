@@ -211,14 +211,16 @@ bool FuncWorker::RunFuncHandler(void* worker_handle, uint64_t call_id) {
         }
         func_invoke_contexts_.clear();
     }
-    if (ret != 0 || func_output_buffer_.length() == 0) {
+    if (ret != 0) {
         return false;
     }
     utils::SharedMemory::Region* output_region = shared_memory_->Create(
         absl::StrCat(call_id, ".o"), func_output_buffer_.length());
     output_size_stat_.AddSample(func_output_buffer_.length());
-    memcpy(output_region->base(), func_output_buffer_.data(),
-           func_output_buffer_.length());
+    if (func_output_buffer_.length() > 0) {
+        memcpy(output_region->base(), func_output_buffer_.data(),
+               func_output_buffer_.length());
+    }
     output_region->Close();
     return true;
 }

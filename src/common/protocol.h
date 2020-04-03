@@ -41,9 +41,7 @@ enum class MessageType {
     INVALID            = 0,
     INVOKE_FUNC        = 1,
     FUNC_CALL_COMPLETE = 2,
-    FUNC_CALL_FAILED   = 3,
-    // Hacks for empty output
-    FUNC_CALL_COMPLETE_WITH_EMPTY_OUTPUT = 4
+    FUNC_CALL_FAILED   = 3
 };
 
 struct Message {

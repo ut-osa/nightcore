@@ -193,16 +193,14 @@ void Watchdog::OnFuncRunnerComplete(FuncRunner* func_runner, FuncRunner::Status 
         HLOG(WARNING) << "Watchdog is scheduled to close, will not write to gateway connection";
         return;
     }
-    if (status == FuncRunner::kSuccess || status == FuncRunner::kEmptyOutput) {
+    if (status == FuncRunner::kSuccess) {
         if (run_mode_ == RunMode::SERIALIZING) {
             gateway_connection_.WriteMessage({
 #ifdef __FAAS_ENABLE_PROFILING
                 .send_timestamp = GetMonotonicMicroTimestamp(),
                 .processing_time = processing_time,
 #endif
-                .message_type = static_cast<uint16_t>(
-                    status == FuncRunner::kSuccess ? MessageType::FUNC_CALL_COMPLETE
-                                                   : MessageType::FUNC_CALL_COMPLETE_WITH_EMPTY_OUTPUT),
+                .message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_COMPLETE),
                 .func_call = func_call
             });
         }

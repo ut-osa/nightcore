@@ -28,6 +28,9 @@ public:
     }
 
     void AppendData(const char* data, int length) {
+        if (length == 0) {
+            return;
+        }
         int new_size = buf_size_;
         while (pos_ + length > new_size) {
             new_size *= 2;
