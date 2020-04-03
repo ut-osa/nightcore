@@ -21,11 +21,6 @@ export CXXFLAGS="-fdata-sections -ffunction-sections"
 rm -rf ${DEPS_INSTALL_PATH}
 mkdir -p ${DEPS_INSTALL_PATH}
 
-# Build jemalloc
-cd $BASE_DIR/deps/jemalloc && make clean && \
-  ./autogen.sh --prefix=${DEPS_INSTALL_PATH} && \
-  make -j$(nproc) && make install && make clean
-
 # Build json
 cd $BASE_DIR/deps/json && rm -rf build && mkdir -p build && cd build && \
   cmake -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DJSON_BuildTests=OFF -DCMAKE_CXX_STANDARD=11 \
