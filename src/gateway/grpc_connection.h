@@ -18,6 +18,7 @@ class IOWorker;
 class GrpcConnection final : public Connection {
 public:
     static constexpr size_t kH2FrameHeaderByteSize = 9;
+    static constexpr size_t kGrpcLPMPrefixByteSize = 5;
 
     GrpcConnection(Server* server, int connection_id);
     ~GrpcConnection();
@@ -64,7 +65,8 @@ private:
     bool H2SessionTerminated();
     void H2SendPendingDataIfNecessary();
     void H2SendSettingsFrame();
-    bool H2ValidateAndPopulateHeader(H2StreamContext* stream_context, absl::string_view name, absl::string_view value);
+    bool H2ValidateAndPopulateHeader(H2StreamContext* stream_context,
+                                     absl::string_view name, absl::string_view value);
     void H2SendResponse(H2StreamContext* stream_context);
     bool H2HasTrailersToSend(H2StreamContext* stream_context);
     void H2SendTrailers(H2StreamContext* stream_context);

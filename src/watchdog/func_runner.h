@@ -24,11 +24,11 @@ public:
 
     enum Status {
         kSuccess,
+        kEmptyOutput,  // EmptyOutput is also considered as success
         kFailedWithoutReason,
         kFailedToStartProcess,
         kFailedToSchedule,
-        kProcessExitAbnormally,
-        kEmptyOutput
+        kProcessExitAbnormally
     };
     void Complete(Status status, uint32_t processing_time = 0);
 

@@ -60,15 +60,22 @@ void SerializingFuncRunner::OnSubprocessExit(int exit_status,
         return;
     }
     if (stdout.length() == 0) {
-        HLOG(WARNING) << "Subprocess produces empyt output";
+#ifdef __FAAS_ENABLE_PROFILING
+        Complete(kEmptyOutput, GetMonotonicMicroTimestamp() - start_timestamp_);
+#else
         Complete(kEmptyOutput);
+#endif
         return;
     }
     utils::SharedMemory::Region* region = shared_memory_->Create(
         absl::StrCat(call_id_, ".o"), stdout.length());
     memcpy(region->base(), stdout.data(), stdout.length());
     region->Close();
+#ifdef __FAAS_ENABLE_PROFILING
     Complete(kSuccess, GetMonotonicMicroTimestamp() - start_timestamp_);
+#else
+    Complete(kSuccess);
+#endif
 }
 
 void SerializingFuncRunner::ScheduleStop() {

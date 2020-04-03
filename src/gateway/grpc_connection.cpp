@@ -5,6 +5,7 @@
 #include "gateway/server.h"
 #include "gateway/io_worker.h"
 
+#include <byteswap.h>
 #include <absl/strings/match.h>
 #include <absl/strings/str_split.h>
 
@@ -22,6 +23,7 @@ namespace faas {
 namespace gateway {
 
 constexpr size_t GrpcConnection::kH2FrameHeaderByteSize;
+constexpr size_t GrpcConnection::kGrpcLPMPrefixByteSize;
 
 struct GrpcConnection::H2StreamContext {
     enum State {
@@ -42,6 +44,8 @@ struct GrpcConnection::H2StreamContext {
     std::string service_name;
     std::string method_name;
     absl::flat_hash_map<std::string, std::string> headers;
+    bool first_data_chunk;
+    size_t body_size;
     utils::AppendableBuffer body_buffer;
 
     // For response
@@ -49,6 +53,7 @@ struct GrpcConnection::H2StreamContext {
     GrpcStatus grpc_status;
     utils::AppendableBuffer response_body_buffer;
     size_t response_body_write_pos;
+    bool first_response_frame;
 
     void Init(int stream_id) {
         this->state = kCreated;
@@ -57,10 +62,14 @@ struct GrpcConnection::H2StreamContext {
         this->service_name.clear();
         this->method_name.clear();
         this->headers.clear();
+        this->first_data_chunk = true;
+        this->body_size = 0;
         this->body_buffer.Reset();
         this->http_status = HttpStatus::OK;
         this->grpc_status = GrpcStatus::OK;
         this->response_body_buffer.Reset();
+        this->response_body_write_pos = 0;
+        this->first_response_frame = true;
     }
 };
 
@@ -92,6 +101,7 @@ GrpcConnection::GrpcConnection(Server* server, int connection_id)
 
 GrpcConnection::~GrpcConnection() {
     DCHECK(state_ == kCreated || state_ == kClosed);
+    DCHECK(grpc_calls_.empty());
     nghttp2_session_del(h2_session_);
 }
 
@@ -354,6 +364,7 @@ void GrpcConnection::H2SendResponse(H2StreamContext* context) {
         H2_CHECK_OK(nghttp2_submit_response(
             h2_session_, context->stream_id, &header, 1, nullptr));
     }
+    H2SendPendingDataIfNecessary();
 }
 
 bool GrpcConnection::H2HasTrailersToSend(H2StreamContext* context) {
@@ -374,6 +385,7 @@ void GrpcConnection::OnNewGrpcCall(H2StreamContext* context) {
     HVLOG(1) << "New request on stream with stream " << context->stream_id;
     HVLOG(1) << "Service name = " << context->service_name;
     HVLOG(1) << "Method name = " << context->method_name;
+    HVLOG(1) << "Request body length = " << context->body_buffer.length();
 
     std::shared_ptr<GrpcCallContext> call_context(new GrpcCallContext());
     call_context->connection_ = this;
@@ -383,9 +395,7 @@ void GrpcConnection::OnNewGrpcCall(H2StreamContext* context) {
     call_context->request_body_buffer_.Swap(context->body_buffer);
     grpc_calls_[context->stream_id] = call_context;
 
-    if (!server_->OnNewGrpcCall(this, call_context)) {
-        OnGrpcCallFinish(context->stream_id);
-    }
+    server_->OnNewGrpcCall(call_context);
 }
 
 void GrpcConnection::OnGrpcCallFinish(int32_t stream_id) {
@@ -419,6 +429,16 @@ int GrpcConnection::H2OnFrameRecv(const nghttp2_frame* frame) {
     case NGHTTP2_HEADERS:
         if (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) {
             H2StreamContext* context = H2GetStreamContext(frame->hd.stream_id);
+            if (context->body_buffer.length() != context->body_size) {
+                HLOG(WARNING) << "Encounter incorrect Message-Length in Length-Prefixed-Message";
+                context->http_status = HttpStatus::BAD_REQUEST;
+                context->state = H2StreamContext::kError;
+            }
+            if (context->state == H2StreamContext::kError) {
+                context->state = H2StreamContext::kSendResponse;
+                H2SendResponse(context);
+                return 0;
+            }
             DCHECK(context->state == H2StreamContext::kRecvHeaders
                    || context->state == H2StreamContext::kRecvRequestBody);
             context->state = H2StreamContext::kProcessing;
@@ -445,10 +465,6 @@ int GrpcConnection::H2OnStreamClose(int32_t stream_id, uint32_t error_code) {
           && context->state != H2StreamContext::kError) {
         HLOG(WARNING) << "Stream " << stream_id << " closed with non-finished state: "
                       << context->state;
-        if (context->state == H2StreamContext::kSendResponse) {
-            HLOG(WARNING) << "response_body_write_pos=" << context->response_body_write_pos << ", "
-                          << "response_body_buffer_len=" << context->response_body_buffer.length();
-        }
     }
     H2ReclaimStreamContext(context);
     return 0;
@@ -458,12 +474,13 @@ int GrpcConnection::H2OnHeader(const nghttp2_frame* frame, absl::string_view nam
                                absl::string_view value, uint8_t flags) {
     if (frame->hd.type == NGHTTP2_HEADERS && frame->headers.cat == NGHTTP2_HCAT_REQUEST) {
         H2StreamContext* context = H2GetStreamContext(frame->hd.stream_id);
+        if (context->state == H2StreamContext::kError) {
+            return 0;
+        }
         DCHECK(context->state == H2StreamContext::kRecvHeaders);
         if (!H2ValidateAndPopulateHeader(context, name, value)) {
+            context->http_status = HttpStatus::BAD_REQUEST;
             context->state = H2StreamContext::kError;
-            H2_CHECK_OK(nghttp2_submit_goaway(
-                h2_session_, NGHTTP2_FLAG_NONE, context->stream_id,
-                NGHTTP2_PROTOCOL_ERROR, nullptr, 0));
         }
     } else {
         HLOG(WARNING) << "Unexpected HTTP/2 frame within H2OnHeader";
@@ -486,11 +503,31 @@ int GrpcConnection::H2OnBeginHeaders(const nghttp2_frame* frame) {
 int GrpcConnection::H2OnDataChunkRecv(uint8_t flags, int32_t stream_id,
                                       const uint8_t* data, size_t len) {
     H2StreamContext* context = H2GetStreamContext(stream_id);
+    if (context->state == H2StreamContext::kError) {
+        return 0;
+    }
     if (context->state == H2StreamContext::kRecvHeaders) {
         context->state = H2StreamContext::kRecvRequestBody;
     }
     DCHECK(context->state == H2StreamContext::kRecvRequestBody);
-    context->body_buffer.AppendData(reinterpret_cast<const char*>(data), len);
+    if (context->first_data_chunk) {
+        CHECK(len >= kGrpcLPMPrefixByteSize);
+        uint8_t compressed_flag = data[0];
+        if (compressed_flag != 0) {
+            HLOG(WARNING) << "Encounter non-zero Compressed-Flag in Length-Prefixed-Message";
+            context->http_status = HttpStatus::BAD_REQUEST;
+            context->state = H2StreamContext::kError;
+            return 0;
+        }
+        context->body_size = bswap_32(*(reinterpret_cast<const uint32_t*>(data + 1)));
+        if (len > kGrpcLPMPrefixByteSize) {
+            context->body_buffer.AppendData(reinterpret_cast<const char*>(data + kGrpcLPMPrefixByteSize),
+                                            len - kGrpcLPMPrefixByteSize);
+        }
+        context->first_data_chunk = false;
+    } else {
+        context->body_buffer.AppendData(reinterpret_cast<const char*>(data), len);
+    }
     return 0;
 }
 
@@ -499,6 +536,9 @@ ssize_t GrpcConnection::H2DataSourceRead(H2StreamContext* stream_context, uint8_
     DCHECK(stream_context->state == H2StreamContext::kSendResponse);
     size_t remaining_size = stream_context->response_body_buffer.length()
                           - stream_context->response_body_write_pos;
+    if (stream_context->first_response_frame) {
+        remaining_size += kGrpcLPMPrefixByteSize;
+    }
     if (remaining_size == 0) {
         *data_flags |= NGHTTP2_DATA_FLAG_EOF;
         if (H2HasTrailersToSend(stream_context)) {
@@ -515,6 +555,10 @@ ssize_t GrpcConnection::H2DataSourceRead(H2StreamContext* stream_context, uint8_
 int GrpcConnection::H2SendData(H2StreamContext* stream_context, nghttp2_frame* frame,
                                const uint8_t* framehd, size_t length) {
     DCHECK_GT(length, 0);
+    if (stream_context->first_response_frame) {
+        DCHECK_GE(length, kGrpcLPMPrefixByteSize);
+        length -= kGrpcLPMPrefixByteSize;
+    }
     DCHECK_EQ(frame->hd.stream_id, stream_context->stream_id);
     DCHECK_LE(stream_context->response_body_write_pos + length,
               stream_context->response_body_buffer.length());
@@ -526,9 +570,19 @@ int GrpcConnection::H2SendData(H2StreamContext* stream_context, nghttp2_frame* f
                      + stream_context->response_body_write_pos;
     uv_buf_t hd_buf;
     io_worker_->NewWriteBuffer(&hd_buf);
+    DCHECK_GE(hd_buf.len, kH2FrameHeaderByteSize + kGrpcLPMPrefixByteSize);
     memcpy(hd_buf.base, framehd, kH2FrameHeaderByteSize);
+    hd_buf.len = kH2FrameHeaderByteSize;
+    if (stream_context->first_response_frame) {
+        char* buf = hd_buf.base + kH2FrameHeaderByteSize;
+        buf[0] = '\0';  // Compressed-Flag of '0'
+        uint32_t msg_size = stream_context->response_body_buffer.length();
+        *(reinterpret_cast<uint32_t*>(buf+1)) = bswap_32(msg_size);
+        hd_buf.len += kGrpcLPMPrefixByteSize;
+        stream_context->first_response_frame = false;
+    }
     uv_buf_t bufs[2] = {
-        { .base = hd_buf.base, .len = kH2FrameHeaderByteSize },
+        hd_buf,
         { .base = const_cast<char*>(data), .len = length }
     };
     stream_context->response_body_write_pos += length;

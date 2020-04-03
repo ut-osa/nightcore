@@ -93,8 +93,7 @@ public:
                         const protocol::HandshakeMessage& message,
                         protocol::HandshakeResponse* response);
     void OnRecvMessage(MessageConnection* connection, const protocol::Message& message);
-    bool OnNewGrpcCall(GrpcConnection* connection,
-                       std::shared_ptr<GrpcCallContext> call_context);
+    void OnNewGrpcCall(std::shared_ptr<GrpcCallContext> call_context);
 
 private:
     class ExternalFuncCallContext;
@@ -158,8 +157,10 @@ private:
     void ReturnConnection(Connection* connection);
 
     void RegisterInternalRequestHandlers();
+    protocol::FuncCall NewFuncCall(uint16_t func_id);
     void OnExternalFuncCall(uint16_t func_id,
                             std::shared_ptr<HttpAsyncRequestContext> http_context);
+    void NewExternalFuncCall(std::unique_ptr<ExternalFuncCallContext> func_call_context);
 
     void EventLoopThreadMain();
     IOWorker* PickHttpWorker();

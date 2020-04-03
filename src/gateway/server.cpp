@@ -305,7 +305,11 @@ void Server::OnNewHandshake(MessageConnection* connection,
 class Server::ExternalFuncCallContext {
 public:
     ExternalFuncCallContext(FuncCall call, std::shared_ptr<HttpAsyncRequestContext> http_context)
-        : call_(call), http_context_(http_context),
+        : call_(call), http_context_(http_context), grpc_context_(nullptr),
+          input_region_(nullptr), output_region_(nullptr) {}
+    
+    ExternalFuncCallContext(FuncCall call, std::shared_ptr<GrpcCallContext> grpc_context)
+        : call_(call), http_context_(nullptr), grpc_context_(grpc_context),
           input_region_(nullptr), output_region_(nullptr) {}
     
     ~ExternalFuncCallContext() {
@@ -317,24 +321,90 @@ public:
         }
     }
 
-    HttpAsyncRequestContext* http_context() { return http_context_.get(); }
+    const FuncCall& call() const { return call_; }
 
     void CreateInputRegion(utils::SharedMemory* shared_memory) {
-        absl::Span<const char> body = http_context_->body();
-        input_region_ = shared_memory->Create(
-            absl::StrCat(call_.full_call_id, ".i"), body.length());
-        memcpy(input_region_->base(), body.data(), body.length());
+        if (http_context_ != nullptr) {
+            absl::Span<const char> body = http_context_->body();
+            input_region_ = shared_memory->Create(
+                absl::StrCat(call_.full_call_id, ".i"), body.length());
+            memcpy(input_region_->base(), body.data(), body.length());
+        }
+        if (grpc_context_ != nullptr) {
+            absl::string_view method_name = grpc_context_->method_name();
+            absl::Span<const char> body = grpc_context_->request_body();
+            size_t region_size = method_name.length() + 1 + body.length();
+            input_region_ = shared_memory->Create(
+                absl::StrCat(call_.full_call_id, ".i"), region_size);
+            char* buf = input_region_->base();
+            memcpy(buf, method_name.data(), method_name.length());
+            buf[method_name.length()] = '\0';
+            if (body.length() > 0) {
+                buf += method_name.length() + 1;
+                memcpy(buf, body.data(), body.length());
+            }
+        }
     }
 
     void WriteOutput(utils::SharedMemory* shared_memory) {
         output_region_ = shared_memory->OpenReadOnly(
             absl::StrCat(call_.full_call_id, ".o"));
-        http_context_->AppendToResponseBody(output_region_->to_span());
+        if (http_context_ != nullptr) {
+            http_context_->AppendToResponseBody(output_region_->to_span());
+        }
+        if (grpc_context_ != nullptr) {
+            grpc_context_->AppendToResponseBody(output_region_->to_span());
+        }
+    }
+
+    bool CheckInputNotEmpty() {
+        if (http_context_ != nullptr && http_context_->body().length() == 0) {
+            http_context_->AppendToResponseBody("Request body cannot be empty!\n");
+            http_context_->SetStatus(400);
+            Finish();
+            return false;
+        }
+        // gRPC allows empty input (when protobuf serialized to empty string)
+        return true;
+    }
+
+    void FinishWithError() {
+        if (http_context_ != nullptr) {
+            http_context_->AppendToResponseBody("Function call failed\n");
+            http_context_->SetStatus(500);
+        }
+        if (grpc_context_ != nullptr) {
+            grpc_context_->set_grpc_status(GrpcStatus::UNKNOWN);
+        }
+        Finish();
+    }
+
+    void FinishWithWatchdogNotFound() {
+        if (http_context_ != nullptr) {
+            http_context_->AppendToResponseBody(
+                absl::StrFormat("Cannot find watchdog for func_id %d\n",
+                                static_cast<int>(call_.func_id)));
+            http_context_->SetStatus(404);
+        }
+        if (grpc_context_ != nullptr) {
+            grpc_context_->set_http_status(HttpStatus::NOT_FOUND);
+        }
+        Finish();
+    }
+
+    void Finish() {
+        if (http_context_ != nullptr) {
+            http_context_->Finish();
+        }
+        if (grpc_context_ != nullptr) {
+            grpc_context_->Finish();
+        }
     }
 
 private:
     FuncCall call_;
     std::shared_ptr<HttpAsyncRequestContext> http_context_;
+    std::shared_ptr<GrpcCallContext> grpc_context_;
     utils::SharedMemory::Region* input_region_;
     utils::SharedMemory::Region* output_region_;
 
@@ -363,7 +433,9 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
         } else {
             HLOG(ERROR) << "Cannot find message connection of watchdog with func_id " << func_id;
         }
-    } else if (type == MessageType::FUNC_CALL_COMPLETE || type == MessageType::FUNC_CALL_FAILED) {
+    } else if (type == MessageType::FUNC_CALL_COMPLETE
+               || type == MessageType::FUNC_CALL_COMPLETE_WITH_EMPTY_OUTPUT
+               || type == MessageType::FUNC_CALL_FAILED) {
         uint16_t client_id = message.func_call.client_id;
         if (client_id > 0) {
             absl::MutexLock lk(&message_connection_mu_);
@@ -387,11 +459,14 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
                 ExternalFuncCallContext* func_call_context = external_func_calls_[full_call_id].get();
                 if (type == MessageType::FUNC_CALL_COMPLETE) {
                     func_call_context->WriteOutput(shared_memory_.get());
+                    func_call_context->Finish();
+                } else if (type == MessageType::FUNC_CALL_COMPLETE_WITH_EMPTY_OUTPUT) {
+                    func_call_context->Finish();
+                } else if (type == MessageType::FUNC_CALL_FAILED) {
+                    func_call_context->FinishWithError();
                 } else {
-                    func_call_context->http_context()->AppendToResponseBody("Function call failed\n");
-                    func_call_context->http_context()->SetStatus(500);
+                    LOG(FATAL) << "Unreachable";
                 }
-                func_call_context->http_context()->Finish();
                 external_func_calls_.erase(full_call_id);
             } else {
                 HLOG(ERROR) << "Cannot find external call with func_id=" << message.func_call.func_id << ", "
@@ -403,26 +478,37 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
     }
 }
 
-bool Server::OnNewGrpcCall(GrpcConnection* connection,
-                           std::shared_ptr<GrpcCallContext> call_context) {
-    call_context->set_grpc_status(GrpcStatus::CANCELLED);
-    return false;
-}
-
-void Server::OnExternalFuncCall(uint16_t func_id, std::shared_ptr<HttpAsyncRequestContext> http_context) {
-    if (http_context->body().length() == 0) {
-        http_context->AppendToResponseBody("Request body cannot be empty!\n");
-        http_context->SetStatus(400);
-        http_context->Finish();
+void Server::OnNewGrpcCall(std::shared_ptr<GrpcCallContext> call_context) {
+    const FuncConfig::Entry* func_entry = func_config_.find_by_func_name(
+        absl::StrFormat("grpc:%s", call_context->service_name()));
+    if (func_entry == nullptr || !func_entry->grpc_methods.contains(call_context->method_name())) {
+        call_context->set_http_status(HttpStatus::NOT_FOUND);
+        call_context->Finish();
         return;
     }
+    NewExternalFuncCall(absl::WrapUnique(
+        new ExternalFuncCallContext(NewFuncCall(func_entry->func_id), std::move(call_context))));
+}
+
+FuncCall Server::NewFuncCall(uint16_t func_id) {
     FuncCall call;
     call.func_id = func_id;
     call.client_id = 0;
     call.call_id = next_call_id_.fetch_add(1);
-    std::unique_ptr<ExternalFuncCallContext> func_call_context(
-        new ExternalFuncCallContext(call, http_context));
+    return call;
+}
+
+void Server::OnExternalFuncCall(uint16_t func_id, std::shared_ptr<HttpAsyncRequestContext> http_context) {
+    NewExternalFuncCall(absl::WrapUnique(
+        new ExternalFuncCallContext(NewFuncCall(func_id), std::move(http_context))));
+}
+
+void Server::NewExternalFuncCall(std::unique_ptr<ExternalFuncCallContext> func_call_context) {
+    if (!func_call_context->CheckInputNotEmpty()) {
+        return;
+    }
     func_call_context->CreateInputRegion(shared_memory_.get());
+    uint16_t func_id = func_call_context->call().func_id;
     {
         absl::MutexLock lk(&message_connection_mu_);
         if (watchdog_connections_by_func_id_.contains(func_id)) {
@@ -433,19 +519,17 @@ void Server::OnExternalFuncCall(uint16_t func_id, std::shared_ptr<HttpAsyncReque
                 .processing_time = 0,
 #endif
                 .message_type = static_cast<uint16_t>(MessageType::INVOKE_FUNC),
-                .func_call = call
+                .func_call = func_call_context->call()
             });
         } else {
-            http_context->AppendToResponseBody(
-                absl::StrFormat("Cannot find watchdog for func_id %d\n", static_cast<int>(func_id)));
-            http_context->SetStatus(404);
-            http_context->Finish();
+            HLOG(WARNING) << "Watchdog for func_id " << func_id << " not found";
+            func_call_context->FinishWithWatchdogNotFound();
             return;
         }
     }
     {
         absl::MutexLock lk(&external_func_calls_mu_);
-        external_func_calls_[call.full_call_id] = std::move(func_call_context);
+        external_func_calls_[func_call_context->call().full_call_id] = std::move(func_call_context);
     }
 }
 

@@ -16,6 +16,7 @@ public:
     struct Entry {
         std::string func_name;
         int func_id;
+        absl::flat_hash_set<std::string> grpc_methods;
     };
 
     bool Load(absl::string_view json_path);
