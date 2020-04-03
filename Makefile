@@ -6,7 +6,7 @@ SRC_EXT = cpp
 # Path to the source directory, relative to the makefile
 SRC_PATH = ./src
 # General compiler flags
-COMPILE_FLAGS = -std=c++11 -Wall -Werror -D__FAAS_SRC
+COMPILE_FLAGS = -std=c++11 -Wall -Werror -D__FAAS_SRC -fdata-sections -ffunction-sections
 # Additional release-specific flags
 RCOMPILE_FLAGS = -DNDEBUG -O3
 # Additional debug-specific flags
@@ -19,7 +19,7 @@ ABSL_LIBRARIES = $(shell find deps/out/lib/libabsl_*.a -printf '%f\n' \
 LINK_FLAGS = -Ldeps/out/lib \
     -Wl,-Bstatic -luv_a -lhttp_parser -lnghttp2_static \
     -Wl,--start-group $(ABSL_LIBRARIES) -Wl,--end-group \
-    -Wl,-Bdynamic -lpthread -ldl
+    -Wl,-Bdynamic -lpthread -ldl -Wl,--gc-sections
 # Additional release-specific linker settings
 RLINK_FLAGS = -Wl,-Bstatic -lglog -Wl,-Bdynamic
 # Additional debug-specific linker settings

@@ -146,7 +146,7 @@ UV_READ_CB_FOR_CLASS(GrpcConnection, RecvData) {
         size_t length = static_cast<size_t>(nread);
         ssize_t ret = nghttp2_session_mem_recv(h2_session_, data, length);
         if (ret >= 0) {
-            if (ret != length) {
+            if (static_cast<size_t>(ret) != length) {
                 HLOG(FATAL) << "nghttp2_session_mem_recv does not consume all input data";
             }
             H2SendPendingDataIfNecessary();
@@ -564,7 +564,7 @@ ssize_t GrpcConnection::H2DataSourceRead(H2StreamContext* stream_context, uint8_
 
 int GrpcConnection::H2SendData(H2StreamContext* stream_context, nghttp2_frame* frame,
                                const uint8_t* framehd, size_t length) {
-    DCHECK_GT(length, 0);
+    DCHECK(length > 0);
     if (stream_context->first_response_frame) {
         DCHECK_GE(length, kGrpcLPMPrefixByteSize);
         length -= kGrpcLPMPrefixByteSize;

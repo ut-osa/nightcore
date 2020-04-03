@@ -15,6 +15,9 @@ do
 	shift
 done
 
+export CFLAGS="-fdata-sections -ffunction-sections"
+export CXXFLAGS="-fdata-sections -ffunction-sections"
+
 rm -rf ${DEPS_INSTALL_PATH}
 mkdir -p ${DEPS_INSTALL_PATH}
 
