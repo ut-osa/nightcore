@@ -1,6 +1,7 @@
 #pragma once
 
 #include "base/common.h"
+#include "base/thread.h"
 #include "common/stat.h"
 #include "common/func_config.h"
 #include "utils/shared_memory.h"

@@ -61,11 +61,11 @@ bool FuncConfig::Load(std::string_view json_path) {
         return false;
     }
     json config;
-#ifndef __FAAS_NODE_ADDON
+#ifndef __FAAS_CXX_NO_EXCEPTIONS
     try {
 #endif
         config = json::parse(json_contents);
-#ifndef __FAAS_NODE_ADDON
+#ifndef __FAAS_CXX_NO_EXCEPTIONS
     } catch (const json::parse_error& e) {
         LOG(ERROR) << "Failed to parse json: " << e.what();
         return false;
@@ -121,7 +121,7 @@ bool FuncConfig::Load(std::string_view json_path) {
             entries_by_func_id_[func_id] = entry.get();
             entries_.push_back(std::move(entry));
         }
-#ifndef __FAAS_NODE_ADDON
+#ifndef __FAAS_CXX_NO_EXCEPTIONS
     } catch (const json::exception& e) {
         LOG(ERROR) << "Invalid config file: " << e.what();
         return false;

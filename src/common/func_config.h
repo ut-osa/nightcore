@@ -2,8 +2,6 @@
 
 #include "base/common.h"
 
-#include <limits>
-
 namespace faas {
 
 class FuncConfig {

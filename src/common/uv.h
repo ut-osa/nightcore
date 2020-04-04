@@ -1,6 +1,11 @@
 #pragma once
 
+#ifdef __FAAS_USED_IN_BINDING
+#error Libuv cannot be used in binding
+#endif
+
 #include "base/common.h"
+#include "base/thread.h"
 
 #include <uv.h>
 

@@ -9,6 +9,10 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
+#ifdef __FAAS_HAVE_ABSL
+#include <absl/strings/str_cat.h>
+#endif
+
 namespace faas {
 namespace utils {
 
@@ -84,9 +88,35 @@ void SharedMemory::AddRegion(Region* region) {
     regions_[region] = std::unique_ptr<Region>(region);
 }
 
+#ifdef __FAAS_HAVE_ABSL
+
+std::string SharedMemory::InputPath(uint64_t full_call_id) {
+    return absl::StrCat(full_call_id, ".i");
+}
+
+std::string SharedMemory::OutputPath(uint64_t full_call_id) {
+    return absl::StrCat(full_call_id, ".o");
+}
+
+std::string SharedMemory::GetFullPath(std::string_view path) {
+    return absl::StrCat(base_path_, "/", path);
+}
+
+#else
+
+std::string SharedMemory::InputPath(uint64_t full_call_id) {
+    return std::to_string(full_call_id) + ".i";
+}
+
+std::string SharedMemory::OutputPath(uint64_t full_call_id) {
+    return std::to_string(full_call_id) + ".o";
+}
+
 std::string SharedMemory::GetFullPath(std::string_view path) {
     return base_path_ + "/" + std::string(path);
 }
+
+#endif
 
 }  // namespace utils
 }  // namespace faas

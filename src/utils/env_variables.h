@@ -2,6 +2,10 @@
 
 #include "base/common.h"
 
+#ifdef __FAAS_HAVE_ABSL
+#include <absl/strings/numbers.h>
+#endif
+
 namespace faas {
 namespace utils {
 
@@ -11,7 +15,9 @@ inline std::string_view GetEnvVariable(std::string_view name,
     return value != nullptr ? value : default_value;
 }
 
-template<class IntType>
+#ifdef __FAAS_HAVE_ABSL
+
+template<class IntType = int>
 IntType GetEnvVariableAsInt(std::string_view name,
                             IntType default_value = 0) {
     char* value = getenv(std::string(name).c_str());
@@ -24,6 +30,18 @@ IntType GetEnvVariableAsInt(std::string_view name,
     }
     return result;
 }
+
+#else
+
+int GetEnvVariableAsInt(std::string_view name, int default_value = 0) {
+    char* value = getenv(std::string(name).c_str());
+    if (value == nullptr) {
+        return default_value;
+    }
+    return atoi(value);
+}
+
+#endif
 
 }  // namespace utils
 }  // namespace faas

@@ -1,14 +1,19 @@
 #pragma once
 
-#ifdef __FAAS_SRC
+#ifdef __FAAS_HAVE_ABSL
 
 #include <absl/synchronization/mutex.h>
 
-#else  // __FAAS_SRC
+#else  // __FAAS_HAVE_ABSL
+
+// No-op polyfills for thread annotations
+#define ABSL_GUARDED_BY(x)
+#define ABSL_EXCLUSIVE_LOCKS_REQUIRED(x)
+
+#ifdef __FAAS_NODE_ADDON
+// Node.js environment can safely use an no-op polyfill
 
 namespace absl {
-
-// No-op polyfills
 
 class Mutex {
 public:
@@ -28,9 +33,8 @@ private:
     DISALLOW_COPY_AND_ASSIGN(MutexLock);
 };
 
-#define ABSL_GUARDED_BY(x)
-#define ABSL_EXCLUSIVE_LOCKS_REQUIRED(x)
-
 }  // namespace absl
 
-#endif  // __FAAS_SRC
+#endif  // __FAAS_NODE_ADDON
+
+#endif  // __FAAS_HAVE_ABSL

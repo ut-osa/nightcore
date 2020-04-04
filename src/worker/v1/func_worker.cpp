@@ -194,7 +194,7 @@ void FuncWorker::GatewayIpcThreadMain() {
 
 bool FuncWorker::RunFuncHandler(void* worker_handle, uint64_t call_id) {
     utils::SharedMemory::Region* input_region = shared_memory_->OpenReadOnly(
-        absl::StrCat(call_id, ".i"));
+        utils::SharedMemory::InputPath(call_id));
     input_size_stat_.AddSample(input_region->size());
     func_output_buffer_.Reset();
     int ret = func_call_fn_(
@@ -215,7 +215,7 @@ bool FuncWorker::RunFuncHandler(void* worker_handle, uint64_t call_id) {
         return false;
     }
     utils::SharedMemory::Region* output_region = shared_memory_->Create(
-        absl::StrCat(call_id, ".o"), func_output_buffer_.length());
+        utils::SharedMemory::OutputPath(call_id), func_output_buffer_.length());
     output_size_stat_.AddSample(func_output_buffer_.length());
     if (func_output_buffer_.length() > 0) {
         memcpy(output_region->base(), func_output_buffer_.data(),
@@ -247,7 +247,7 @@ bool FuncWorker::InvokeFunc(const char* func_name, const char* input_data, size_
     func_call.client_id = client_id_;
     func_call.call_id = next_call_id_.fetch_add(1);
     context->input_region = shared_memory_->Create(
-        absl::StrCat(func_call.full_call_id, ".i"), input_length);
+        utils::SharedMemory::InputPath(func_call.full_call_id), input_length);
     memcpy(context->input_region->base(), input_data, input_length);
     Message message = {
 #ifdef __FAAS_ENABLE_PROFILING
@@ -265,7 +265,7 @@ bool FuncWorker::InvokeFunc(const char* func_name, const char* input_data, size_
     context->finished.WaitForNotification();
     if (context->success) {
         context->output_region = shared_memory_->OpenReadOnly(
-            absl::StrCat(func_call.full_call_id, ".o"));
+            utils::SharedMemory::OutputPath(func_call.full_call_id));
         *output_data = context->output_region->base();
         *output_length = context->output_region->size();
 #ifdef __FAAS_ENABLE_PROFILING

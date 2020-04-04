@@ -323,7 +323,7 @@ public:
         if (http_context_ != nullptr) {
             std::span<const char> body = http_context_->body();
             input_region_ = shared_memory->Create(
-                absl::StrCat(call_.full_call_id, ".i"), body.size());
+                utils::SharedMemory::InputPath(call_.full_call_id), body.size());
             memcpy(input_region_->base(), body.data(), body.size());
         }
         if (grpc_context_ != nullptr) {
@@ -331,7 +331,7 @@ public:
             std::span<const char> body = grpc_context_->request_body();
             size_t region_size = method_name.length() + 1 + body.size();
             input_region_ = shared_memory->Create(
-                absl::StrCat(call_.full_call_id, ".i"), region_size);
+                utils::SharedMemory::InputPath(call_.full_call_id), region_size);
             char* buf = input_region_->base();
             memcpy(buf, method_name.data(), method_name.length());
             buf[method_name.length()] = '\0';

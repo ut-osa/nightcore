@@ -37,7 +37,7 @@ void SerializingFuncRunner::Start(uv_loop_t* uv_loop) {
         return;
     }
     uv_pipe_t* subprocess_stdin = subprocess_.GetPipe(Subprocess::kStdin);
-    input_region_ = shared_memory_->OpenReadOnly(absl::StrCat(call_id_, ".i"));
+    input_region_ = shared_memory_->OpenReadOnly(utils::SharedMemory::InputPath(call_id_));
     uv_buf_t buf = {
         .base = const_cast<char*>(input_region_->base()),
         .len = input_region_->size()
@@ -58,7 +58,7 @@ void SerializingFuncRunner::OnSubprocessExit(int exit_status,
         return;
     }
     utils::SharedMemory::Region* region = shared_memory_->Create(
-        absl::StrCat(call_id_, ".o"), stdout.size());
+        utils::SharedMemory::OutputPath(call_id_), stdout.size());
     if (stdout.size() > 0) {
         memcpy(region->base(), stdout.data(), stdout.size());
     }

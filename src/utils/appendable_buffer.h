@@ -53,6 +53,13 @@ public:
     }
 
     void Reset() { pos_ = 0; }
+    void ConsumeFront(int size) {
+        DCHECK_LE(size, pos_);
+        if (size < pos_) {
+            memmove(buf_, buf_ + size, pos_ - size);
+        }
+        pos_ -= size;
+    }
 
     std::span<const char> to_span() const {
         return std::span<const char>(buf_, pos_);
@@ -111,6 +118,7 @@ template<class T>
 void ReadMessages(AppendableBuffer* buffer,
                   const char* new_data, size_t new_data_length,
                   std::function<void(T*)> callback) {
+    DCHECK_LT(buffer->length(), sizeof(T));
     while (new_data_length + buffer->length() >= sizeof(T)) {
         size_t copy_size = sizeof(T) - buffer->length();
         buffer->AppendData(new_data, copy_size);

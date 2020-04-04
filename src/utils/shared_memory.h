@@ -12,6 +12,9 @@ public:
     explicit SharedMemory(std::string_view base_path);
     ~SharedMemory();
 
+    static std::string InputPath(uint64_t full_call_id);
+    static std::string OutputPath(uint64_t full_call_id);
+
     class Region {
     public:
         std::string_view path() const { return path_; }

@@ -4,8 +4,10 @@
 #ifndef __FAAS_USED_IN_BINDING
 #error Need the source file to have __FAAS_USED_IN_BINDING defined
 #endif
+#define __FAAS_CXX_NO_EXCEPTIONS
 #endif
 
+// C includes
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -13,28 +15,39 @@
 #include <time.h>
 #include <unistd.h>
 
+// C++ includes
+#include <limits>
+#include <atomic>
+#include <memory>
+#include <utility>
+#include <sstream>
 #include <string>
 #include <string_view>
-#include <vector>
-#include <queue>
-#include <sstream>
-#include <atomic>
 #include <functional>
 #include <algorithm>
+
+// STL containers
+#include <vector>
+#include <queue>
 #include <map>
 #include <set>
 #include <unordered_map>
 #include <unordered_set>
 
+// std::span polyfill
 #include <gsl/span>
 namespace std {
 using gsl::span;
 }  // namespace std
 
-#include "base/macro.h"
-#include "base/logging.h"
+#ifdef __FAAS_SRC
+#define __FAAS_HAVE_ABSL
+#endif
 
-#if defined(__FAAS_SRC) && !defined(__FAAS_USED_IN_BINDING)
+#ifndef __FAAS_USED_IN_BINDING
+
+// Will not include common absl headers in source files
+// with __FAAS_USED_IN_BINDING defined
 
 #include <absl/time/time.h>
 #include <absl/time/clock.h>
@@ -54,10 +67,8 @@ using gsl::span;
 #include <absl/functional/bind_front.h>
 #include <absl/algorithm/container.h>
 
-#include "base/thread.h"
+#endif  // !defined(__FAAS_USED_IN_BINDING)
 
-#else
-
+#include "base/macro.h"
+#include "base/logging.h"
 #include "base/absl_mutex_polyfill.h"
-
-#endif  // defined(__FAAS_SRC) && !defined(__FAAS_USED_IN_BINDING)

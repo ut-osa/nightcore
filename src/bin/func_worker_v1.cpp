@@ -14,12 +14,12 @@ int main(int argc, char* argv[]) {
     func_worker->set_gateway_ipc_path(
         faas::utils::GetEnvVariable("GATEWAY_IPC_PATH", "/tmp/faas_gateway"));
     func_worker->set_func_id(
-        faas::utils::GetEnvVariableAsInt<int>("FUNC_ID", -1));
+        faas::utils::GetEnvVariableAsInt("FUNC_ID", -1));
     func_worker->set_func_library_path(positional_args[0]);
     func_worker->set_input_pipe_fd(
-        faas::utils::GetEnvVariableAsInt<int>("INPUT_PIPE_FD", -1));
+        faas::utils::GetEnvVariableAsInt("INPUT_PIPE_FD", -1));
     func_worker->set_output_pipe_fd(
-        faas::utils::GetEnvVariableAsInt<int>("OUTPUT_PIPE_FD", -1));
+        faas::utils::GetEnvVariableAsInt("OUTPUT_PIPE_FD", -1));
     func_worker->set_shared_mem_path(
         faas::utils::GetEnvVariable("SHARED_MEMORY_PATH", "/dev/shm/faas"));
     func_worker->set_func_config_file(
