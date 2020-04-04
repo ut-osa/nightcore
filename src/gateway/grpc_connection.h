@@ -1,7 +1,7 @@
 #pragma once
 
 #include "base/common.h"
-#include "utils/uv_utils.h"
+#include "common/uv.h"
 #include "utils/appendable_buffer.h"
 #include "utils/object_pool.h"
 #include "gateway/connection.h"

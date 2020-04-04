@@ -1,7 +1,7 @@
 #pragma once
 
 #include "base/common.h"
-#include "utils/uv_utils.h"
+#include "common/uv.h"
 #include "utils/appendable_buffer.h"
 #include "utils/buffer_pool.h"
 
@@ -34,8 +34,8 @@ public:
     void AddEnvVariable(std::string_view name, std::string_view value);
     void AddEnvVariable(std::string_view name, int value);
 
-    typedef std::function<void(int /* exit_status */, gsl::span<const char> /* stdout */,
-                               gsl::span<const char> /* stderr */)> ExitCallback;
+    typedef std::function<void(int /* exit_status */, std::span<const char> /* stdout */,
+                               std::span<const char> /* stderr */)> ExitCallback;
 
     bool Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool,
                ExitCallback exit_callback);

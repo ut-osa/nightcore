@@ -3,9 +3,6 @@
 #include "common/time.h"
 #include "utils/fs.h"
 
-#include <absl/time/clock.h>
-#include <absl/random/distributions.h>
-
 #define HLOG(l) LOG(l) << "Watchdog: "
 #define HVLOG(l) VLOG(l) << "Watchdog: "
 

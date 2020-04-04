@@ -1,9 +1,9 @@
 #pragma once
 
 #include "base/common.h"
+#include "common/uv.h"
 #include "common/protocol.h"
 #include "common/stat.h"
-#include "utils/uv_utils.h"
 #include "utils/appendable_buffer.h"
 #include "utils/object_pool.h"
 #include "gateway/connection.h"

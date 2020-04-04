@@ -16,21 +16,21 @@ public:
     struct Entry {
         std::string func_name;
         int func_id;
-        absl::flat_hash_set<std::string> grpc_methods;
+        std::unordered_set<std::string> grpc_methods;
     };
 
     bool Load(std::string_view json_path);
 
     const Entry* find_by_func_name(std::string_view func_name) const {
-        if (entires_by_func_name_.contains(func_name)) {
-            return entires_by_func_name_.at(func_name);
+        if (entires_by_func_name_.count(std::string(func_name)) > 0) {
+            return entires_by_func_name_.at(std::string(func_name));
         } else {
             return nullptr;
         }
     }
 
     const Entry* find_by_func_id(int func_id) const {
-        if (entries_by_func_id_.contains(func_id)) {
+        if (entries_by_func_id_.count(func_id) > 0) {
             return entries_by_func_id_.at(func_id);
         } else {
             return nullptr;
@@ -39,8 +39,8 @@ public:
 
 private:
     std::vector<std::unique_ptr<Entry>> entries_;
-    absl::flat_hash_map<std::string, Entry*> entires_by_func_name_;
-    absl::flat_hash_map<int, Entry*> entries_by_func_id_;
+    std::unordered_map<std::string, Entry*> entires_by_func_name_;
+    std::unordered_map<int, Entry*> entries_by_func_id_;
 
     static bool ValidateFuncId(int func_id);
     static bool ValidateFuncName(std::string_view func_name);

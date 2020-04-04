@@ -4,8 +4,6 @@
 #include "watchdog/func_runner.h"
 #include "watchdog/watchdog.h"
 
-#include <absl/functional/bind_front.h>
-
 #define HLOG(l) LOG(l) << log_header_
 #define HVLOG(l) VLOG(l) << log_header_
 
@@ -100,8 +98,8 @@ bool FuncWorker::ScheduleFuncCall(WorkerFuncRunner* func_runner, uint64_t call_i
     return true;
 }
 
-void FuncWorker::OnSubprocessExit(int exit_status, gsl::span<const char> stdout,
-                                  gsl::span<const char> stderr) {
+void FuncWorker::OnSubprocessExit(int exit_status, std::span<const char> stdout,
+                                  std::span<const char> stderr) {
     DCHECK(state_ != kCreated);
     DCHECK_IN_EVENT_LOOP_THREAD(uv_loop_);
     if (exit_status != 0) {

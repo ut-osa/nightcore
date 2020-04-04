@@ -4,8 +4,6 @@
 #include "watchdog/watchdog.h"
 #include "watchdog/func_worker.h"
 
-#include <absl/functional/bind_front.h>
-
 #define HLOG(l) LOG(l) << log_header_
 #define HVLOG(l) VLOG(l) << log_header_
 
@@ -51,8 +49,8 @@ void SerializingFuncRunner::Start(uv_loop_t* uv_loop) {
 }
 
 void SerializingFuncRunner::OnSubprocessExit(int exit_status,
-                                             gsl::span<const char> stdout,
-                                             gsl::span<const char> stderr) {
+                                             std::span<const char> stdout,
+                                             std::span<const char> stderr) {
     if (exit_status != 0) {
         HLOG(WARNING) << "Subprocess exits with code " << exit_status;
         HVLOG(1) << "Subprocess's stderr: " << std::string_view(stderr.data(), stderr.size());

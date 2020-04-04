@@ -4,9 +4,6 @@
 #include "gateway/server.h"
 #include "gateway/io_worker.h"
 
-#include <absl/time/time.h>
-#include <absl/time/clock.h>
-
 #define HLOG(l) LOG(l) << log_header_
 #define HVLOG(l) VLOG(l) << log_header_
 

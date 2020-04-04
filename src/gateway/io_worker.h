@@ -1,8 +1,8 @@
 #pragma once
 
 #include "base/common.h"
+#include "common/uv.h"
 #include "common/stat.h"
-#include "utils/uv_utils.h"
 #include "utils/buffer_pool.h"
 #include "utils/object_pool.h"
 #include "gateway/connection.h"

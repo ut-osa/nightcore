@@ -1,10 +1,10 @@
 #pragma once
 
 #include "base/common.h"
+#include "common/uv.h"
 #include "common/stat.h"
 #include "common/protocol.h"
 #include "common/func_config.h"
-#include "utils/uv_utils.h"
 #include "utils/buffer_pool.h"
 #include "utils/shared_memory.h"
 #include "gateway/connection.h"

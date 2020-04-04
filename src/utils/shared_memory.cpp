@@ -1,3 +1,4 @@
+#define __FAAS_USED_IN_BINDING
 #include "utils/shared_memory.h"
 
 #include "common/time.h"
@@ -6,6 +7,7 @@
 #include <sys/mman.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <fcntl.h>
 
 namespace faas {
 namespace utils {
@@ -19,14 +21,15 @@ SharedMemory::SharedMemory(std::string_view base_path)
 
 SharedMemory::~SharedMemory() {
     absl::MutexLock lk(&regions_mu_);
-    for (const auto& region : regions_) {
+    for (const auto& item : regions_) {
+        Region* region = item.first;
         LOG(WARNING) << "Unclosed shared memory region: " << region->path();
         PCHECK(munmap(region->base(), region->size()) == 0);
     }
 }
 
 SharedMemory::Region* SharedMemory::Create(std::string_view path, size_t size) {
-    std::string full_path(absl::StrFormat("%s/%s", base_path_, path));
+    std::string full_path = GetFullPath(path);
     uint64_t start_timestamp = GetMonotonicMicroTimestamp();
     int fd = open(full_path.c_str(), O_CREAT|O_EXCL|O_RDWR, 0644);
     PCHECK(fd != -1) << "open failed";
@@ -40,15 +43,12 @@ SharedMemory::Region* SharedMemory::Create(std::string_view path, size_t size) {
         mmap_delay_stat_.AddSample(GetMonotonicMicroTimestamp() - start_timestamp);
     }
     Region* region = new Region(this, path, reinterpret_cast<char*>(ptr), size);
-    {
-        absl::MutexLock lk(&regions_mu_);
-        regions_.insert(std::unique_ptr<Region>(region));
-    }
+    AddRegion(region);
     return region;
 }
 
 SharedMemory::Region* SharedMemory::OpenReadOnly(std::string_view path) {
-    std::string full_path(absl::StrFormat("%s/%s", base_path_, path));
+    std::string full_path = GetFullPath(path);
     uint64_t start_timestamp = GetMonotonicMicroTimestamp();
     int fd = open(full_path.c_str(), O_RDONLY);
     PCHECK(fd != -1) << "open failed";
@@ -63,24 +63,29 @@ SharedMemory::Region* SharedMemory::OpenReadOnly(std::string_view path) {
         mmap_delay_stat_.AddSample(GetMonotonicMicroTimestamp() - start_timestamp);
     }
     Region* region = new Region(this, path, reinterpret_cast<char*>(ptr), size);
-    {
-        absl::MutexLock lk(&regions_mu_);
-        regions_.insert(std::unique_ptr<Region>(region));
-    }
+    AddRegion(region);
     return region;
 }
 
 void SharedMemory::Close(SharedMemory::Region* region, bool remove) {
     absl::MutexLock lk(&regions_mu_);
-    DCHECK(regions_.contains(region));
+    DCHECK(regions_.count(region) > 0);
     if (region->size() > 0) {
         PCHECK(munmap(region->base(), region->size()) == 0);
     }
     if (remove) {
-        PCHECK(fs_utils::Remove(
-            absl::StrFormat("%s/%s", base_path_, region->path())));
+        PCHECK(fs_utils::Remove(GetFullPath(region->path())));
     }
     regions_.erase(region);
+}
+
+void SharedMemory::AddRegion(Region* region) {
+    absl::MutexLock lk(&regions_mu_);
+    regions_[region] = std::unique_ptr<Region>(region);
+}
+
+std::string SharedMemory::GetFullPath(std::string_view path) {
+    return base_path_ + "/" + std::string(path);
 }
 
 }  // namespace utils

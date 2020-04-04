@@ -2,7 +2,7 @@
 
 #include "base/common.h"
 #include "common/protocol.h"
-#include "utils/uv_utils.h"
+#include "common/uv.h"
 #include "utils/buffer_pool.h"
 #include "utils/object_pool.h"
 #include "watchdog/subprocess.h"
@@ -61,8 +61,8 @@ private:
     std::unique_ptr<utils::SimpleObjectPool<uv_write_t>> write_req_pool_;
     int inflight_requests_;
 
-    void OnSubprocessExit(int exit_status, gsl::span<const char> stdout,
-                          gsl::span<const char> stderr);
+    void OnSubprocessExit(int exit_status, std::span<const char> stdout,
+                          std::span<const char> stderr);
     void DispatchFuncCall(uint64_t call_id);
     void OnRecvMessage(const protocol::Message& message);
 

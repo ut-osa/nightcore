@@ -1,7 +1,7 @@
 #include "gateway/message_connection.h"
 
 #include "common/time.h"
-#include "utils/uv_utils.h"
+#include "common/uv.h"
 #include "gateway/server.h"
 
 #define HLOG(l) LOG(l) << log_header_

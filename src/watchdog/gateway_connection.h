@@ -2,7 +2,7 @@
 
 #include "base/common.h"
 #include "common/protocol.h"
-#include "utils/uv_utils.h"
+#include "common/uv.h"
 #include "utils/appendable_buffer.h"
 #include "utils/buffer_pool.h"
 #include "utils/object_pool.h"

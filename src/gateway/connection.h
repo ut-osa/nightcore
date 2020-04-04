@@ -1,6 +1,7 @@
 #pragma once
 
 #include "base/common.h"
+#include "common/uv.h"
 
 namespace faas {
 namespace gateway {

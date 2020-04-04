@@ -17,17 +17,17 @@ public:
     std::string_view header(std::string_view field) const {
         return headers_->contains(field) ? headers_->at(field) : "";
     }
-    gsl::span<const char> body() const { return body_; }
+    std::span<const char> body() const { return body_; }
 
     void SetStatus(int status) { *status_ = status; }
     void SetContentType(std::string_view content_type) {
         *content_type_ = std::string(content_type);
     }
-    void AppendToResponseBody(gsl::span<const char> data) {
+    void AppendToResponseBody(std::span<const char> data) {
         response_body_buffer_->AppendData(data);
     }
     // Append a null-terminated C string. Implicit conversion from
-    // `const char*` to `gsl::span<const char>` will include the last
+    // `const char*` to `std::span<const char>` will include the last
     // '\0' character, which we usually do not want.
     void AppendToResponseBody(const char* str) {
         response_body_buffer_->AppendData(str, strlen(str));
@@ -37,7 +37,7 @@ private:
     std::string_view method_;
     std::string_view path_;
     const absl::flat_hash_map<std::string_view, std::string_view>* headers_;
-    gsl::span<const char> body_;
+    std::span<const char> body_;
 
     int* status_;
     std::string* content_type_;
@@ -58,17 +58,17 @@ public:
     std::string_view header(std::string_view field) const {
         return headers_.contains(field) ? headers_.at(field) : "";
     }
-    gsl::span<const char> body() const { return body_buffer_.to_span(); }
+    std::span<const char> body() const { return body_buffer_.to_span(); }
 
     void SetStatus(int status) { status_ = status; }
     void SetContentType(std::string_view content_type) {
         content_type_ = std::string(content_type);
     }
-    void AppendToResponseBody(gsl::span<const char> data) {
+    void AppendToResponseBody(std::span<const char> data) {
         response_body_buffer_.AppendData(data);
     }
     // Append a null-terminated C string. Implicit conversion from
-    // `const char*` to `gsl::span<const char>` will include the last
+    // `const char*` to `std::span<const char>` will include the last
     // '\0' character, which we usually do not want.
     void AppendToResponseBody(const char* str) {
         response_body_buffer_.AppendData(str, strlen(str));

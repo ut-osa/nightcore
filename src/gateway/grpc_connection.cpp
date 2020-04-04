@@ -6,8 +6,6 @@
 #include "gateway/io_worker.h"
 
 #include <byteswap.h>
-#include <absl/strings/match.h>
-#include <absl/strings/str_split.h>
 
 #define HLOG(l) LOG(l) << log_header_
 #define HVLOG(l) VLOG(l) << log_header_

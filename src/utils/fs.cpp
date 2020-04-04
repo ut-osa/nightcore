@@ -1,3 +1,4 @@
+#define __FAAS_USED_IN_BINDING
 #include "utils/fs.h"
 
 #include <fcntl.h>

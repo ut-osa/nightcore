@@ -19,8 +19,8 @@ public:
         const char* base() const { return base_; }
         size_t size() const { return size_; }
 
-        gsl::span<const char> to_span() const {
-            return gsl::span<const char>(base_, size_);
+        std::span<const char> to_span() const {
+            return std::span<const char>(base_, size_);
         }
     
         void Close(bool remove = false) {
@@ -48,8 +48,12 @@ public:
 private:
     std::string base_path_;
     absl::Mutex regions_mu_;
-    absl::flat_hash_set<std::unique_ptr<Region>> regions_ ABSL_GUARDED_BY(regions_mu_);
+    std::unordered_map<Region*, std::unique_ptr<Region>>
+        regions_ ABSL_GUARDED_BY(regions_mu_);
     stat::StatisticsCollector<uint32_t> mmap_delay_stat_;
+
+    void AddRegion(Region* region);
+    std::string GetFullPath(std::string_view path);
 
     DISALLOW_COPY_AND_ASSIGN(SharedMemory);
 };

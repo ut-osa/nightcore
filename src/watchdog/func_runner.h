@@ -1,7 +1,7 @@
 #pragma once
 
 #include "base/common.h"
-#include "utils/uv_utils.h"
+#include "common/uv.h"
 #include "utils/shared_memory.h"
 #include "watchdog/subprocess.h"
 
@@ -61,8 +61,8 @@ private:
     utils::SharedMemory::Region* input_region_;
     uint64_t start_timestamp_;
 
-    void OnSubprocessExit(int exit_status, gsl::span<const char> stdout,
-                          gsl::span<const char> stderr);
+    void OnSubprocessExit(int exit_status, std::span<const char> stdout,
+                          std::span<const char> stderr);
 
     DECLARE_UV_WRITE_CB_FOR_CLASS(WriteSubprocessStdin);
 

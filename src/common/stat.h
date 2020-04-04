@@ -1,29 +1,61 @@
 #pragma once
 
 #include "base/common.h"
-
-#include <absl/time/time.h>
-#include <absl/time/clock.h>
-#include <absl/algorithm/container.h>
+#include "common/time.h"
 
 namespace faas {
 namespace stat {
 
+class ReportTimer {
+public:
+    static constexpr uint32_t kDefaultReportIntervalInMs = 10000;  /* 10 seconds */
+
+    explicit ReportTimer(uint32_t report_interval_in_ms = 10000 /* 10 seconds */)
+        : report_interval_in_ms_(report_interval_in_ms), last_report_time_(-1) {}
+    ~ReportTimer() {}
+
+    void set_report_interval_in_ms(uint32_t value) {
+        report_interval_in_ms_ = value;
+    }
+
+    bool Check() {
+        int64_t current_time = GetMonotonicMicroTimestamp();
+        if (last_report_time_ == -1) {
+            last_report_time_ = current_time;
+            return false;
+        } else {
+            return current_time - last_report_time_
+                     > static_cast<int64_t>(report_interval_in_ms_) * 1000; 
+        }
+    }
+
+    void MarkReport(uint32_t* duration_ms) {
+        int64_t current_time = GetMonotonicMicroTimestamp();
+        *duration_ms = static_cast<uint32_t>(current_time - last_report_time_);
+        last_report_time_ = current_time;
+    }
+
+private:
+    uint32_t report_interval_in_ms_;
+    int64_t last_report_time_;
+
+    DISALLOW_COPY_AND_ASSIGN(ReportTimer);
+};
+
 template<class T>
 class StatisticsCollector {
 public:
-    static constexpr absl::Duration kDefaultReportInterval = absl::Seconds(10);
     static constexpr size_t kDefaultMinReportSamples = 200;
 
     struct Report {
         T p50; T p70; T p90; T p99; T p99_9;
     };
 
-    typedef std::function<void(absl::Duration /* duration */, size_t /* n_samples */,
+    typedef std::function<void(uint32_t /* duration_ms */, size_t /* n_samples */,
                                const Report& /* report */)> ReportCallback;
     static ReportCallback StandardReportCallback(std::string_view stat_name) {
         std::string stat_name_copy = std::string(stat_name);
-        return [stat_name_copy] (absl::Duration duration, size_t n_samples, const Report& report) {
+        return [stat_name_copy] (uint32_t duration_ms, size_t n_samples, const Report& report) {
             LOG(INFO) << stat_name_copy << " statistics (" << n_samples << " samples): "
                       << "p50=" << report.p50 << ", "
                       << "p70=" << report.p70 << ", "
@@ -34,15 +66,14 @@ public:
     }
 
     explicit StatisticsCollector(ReportCallback report_callback)
-        : report_interval_(kDefaultReportInterval),
-          min_report_samples_(kDefaultMinReportSamples),
-          report_callback_(report_callback),
-          last_report_time_(absl::InfinitePast()) {}
+        : min_report_samples_(kDefaultMinReportSamples),
+          report_callback_(report_callback) {}
 
     ~StatisticsCollector() {}
 
-    void set_report_interval(absl::Duration interval) {
-        report_interval_ = interval;
+    void set_report_interval_in_ms(uint32_t value) {
+        absl::MutexLock lk(&mu_);
+        report_timer_.set_report_interval_in_ms(value);
     }
     void set_min_report_samples(size_t value) {
         min_report_samples_ = value;
@@ -50,32 +81,27 @@ public:
 
     void AddSample(T sample) {
         absl::MutexLock lk(&mu_);
-        if (last_report_time_ == absl::InfinitePast()) {
-            last_report_time_ = absl::Now();
-        }
         samples_.push_back(sample);
-        absl::Time current_time = absl::Now();
-        if (samples_.size() >= min_report_samples_
-              && current_time >= last_report_time_ + report_interval_) {
+        if (samples_.size() >= min_report_samples_ && report_timer_.Check()) {
+            uint32_t duration_ms;
             Report report = BuildReport();
             size_t n_samples = samples_.size();
             samples_.clear();
-            report_callback_(current_time - last_report_time_, n_samples, report);
-            last_report_time_ = current_time;
+            report_timer_.MarkReport(&duration_ms);
+            report_callback_(duration_ms, n_samples, report);
         }
     }
 
 private:
-    absl::Duration report_interval_;
     size_t min_report_samples_;
     ReportCallback report_callback_;
 
     absl::Mutex mu_;
-    absl::Time last_report_time_ ABSL_GUARDED_BY(mu_);
-    absl::InlinedVector<T, 1024> samples_ ABSL_GUARDED_BY(mu_);
+    ReportTimer report_timer_ ABSL_GUARDED_BY(mu_);
+    std::vector<T> samples_ ABSL_GUARDED_BY(mu_);
 
     inline Report BuildReport() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
-        absl::c_sort(samples_);
+        std::sort(samples_.begin(), samples_.end());
         return {
             .p50 = percentile(0.5),
             .p70 = percentile(0.7),
@@ -98,54 +124,43 @@ private:
 };
 
 template<class T>
-constexpr absl::Duration StatisticsCollector<T>::kDefaultReportInterval;
-
-template<class T>
 constexpr size_t StatisticsCollector<T>::kDefaultMinReportSamples;
 
 class Counter {
 public:
-    static constexpr absl::Duration kDefaultReportInterval = absl::Seconds(10);
-
-    typedef std::function<void(absl::Duration /* duration */, uint64_t /* new_value */,
+    typedef std::function<void(uint32_t /* duration_ms */, uint64_t /* new_value */,
                                uint64_t /* old_value */)> ReportCallback;
     static ReportCallback StandardReportCallback(std::string_view counter_name) {
         std::string counter_name_copy = std::string(counter_name);
-        return [counter_name_copy] (absl::Duration duration, uint64_t new_value, uint64_t old_value) {
-            double rate = static_cast<double>(new_value - old_value) / absl::ToDoubleSeconds(duration);
+        return [counter_name_copy] (uint32_t duration_ms, uint64_t new_value, uint64_t old_value) {
+            double rate = static_cast<double>(new_value - old_value) / duration_ms * 1000;
             LOG(INFO) << counter_name_copy << " counter: value=" << new_value << ", "
                       << "rate=" << rate << " per sec";
         };
     }
 
     explicit Counter(ReportCallback report_callback)
-        : report_interval_(kDefaultReportInterval),
-          report_callback_(report_callback),
-          last_report_time_(absl::InfinitePast()),
+        : report_callback_(report_callback),
           value_(0), last_report_value_(0) {}
     
     ~Counter() {}
 
     void Tick(uint32_t delta = 1) {
         absl::MutexLock lk(&mu_);
-        if (last_report_time_ == absl::InfinitePast()) {
-            last_report_time_ = absl::Now();
-        }
         value_ += delta;
-        absl::Time current_time = absl::Now();
-        if (value_ > last_report_value_ && current_time >= last_report_time_ + report_interval_) {
-            report_callback_(current_time - last_report_time_, value_, last_report_value_);
-            last_report_time_ = current_time;
+        if (value_ > last_report_value_ && report_timer_.Check()) {
+            uint32_t duration_ms;
+            report_timer_.MarkReport(&duration_ms);
+            report_callback_(duration_ms, value_, last_report_value_);
             last_report_value_ = value_;
         }
     }
 
 private:
-    absl::Duration report_interval_;
     ReportCallback report_callback_;
 
     absl::Mutex mu_;
-    absl::Time last_report_time_ ABSL_GUARDED_BY(mu_);
+    ReportTimer report_timer_ ABSL_GUARDED_BY(mu_);
     uint64_t value_ ABSL_GUARDED_BY(mu_);
     uint64_t last_report_value_ ABSL_GUARDED_BY(mu_);
 
@@ -154,13 +169,11 @@ private:
 
 class CategoryCounter {
 public:
-    static constexpr absl::Duration kDefaultReportInterval = absl::Seconds(10);
-
-    typedef std::function<void(absl::Duration /* duration */,
-                               const absl::flat_hash_map<int, uint64_t>& /* values */)> ReportCallback;
+    typedef std::function<void(uint32_t /* duration_ms */,
+                               const std::map<int, uint64_t>& /* values */)> ReportCallback;
     static ReportCallback StandardReportCallback(std::string_view counter_name) {
         std::string counter_name_copy = std::string(counter_name);
-        return [counter_name_copy] (absl::Duration duration, const absl::flat_hash_map<int, uint64_t>& values) {
+        return [counter_name_copy] (uint32_t duration_ms, const std::map<int, uint64_t>& values) {
             uint64_t sum = 0;
             for (const auto& entry : values) {
                 sum += entry.second;
@@ -182,24 +195,19 @@ public:
     }
 
     explicit CategoryCounter(ReportCallback report_callback)
-        : report_interval_(kDefaultReportInterval),
-          report_callback_(report_callback),
-          last_report_time_(absl::InfinitePast()),
+        : report_callback_(report_callback),
           sum_(0) {}
     
     ~CategoryCounter() {}
 
     void Tick(int category, uint32_t delta = 1) {
         absl::MutexLock lk(&mu_);
-        if (last_report_time_ == absl::InfinitePast()) {
-            last_report_time_ = absl::Now();
-        }
         values_[category] += delta;
         sum_ += delta;
-        absl::Time current_time = absl::Now();
-        if (sum_ > 0 && current_time >= last_report_time_ + report_interval_) {
-            report_callback_(current_time - last_report_time_, values_);
-            last_report_time_ = current_time;
+        if (sum_ > 0 && report_timer_.Check()) {
+            uint32_t duration_ms;
+            report_timer_.MarkReport(&duration_ms);
+            report_callback_(duration_ms, values_);
             for (auto& entry : values_) {
                 entry.second = 0;
             }
@@ -208,12 +216,11 @@ public:
     }
 
 private:
-    absl::Duration report_interval_;
     ReportCallback report_callback_;
 
     absl::Mutex mu_;
-    absl::Time last_report_time_ ABSL_GUARDED_BY(mu_);
-    absl::flat_hash_map<int, uint64_t> values_ ABSL_GUARDED_BY(mu_);
+    ReportTimer report_timer_ ABSL_GUARDED_BY(mu_);
+    std::map<int, uint64_t> values_ ABSL_GUARDED_BY(mu_);
     uint64_t sum_ ABSL_GUARDED_BY(mu_);
 
     DISALLOW_COPY_AND_ASSIGN(CategoryCounter);

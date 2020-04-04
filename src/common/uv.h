@@ -2,6 +2,8 @@
 
 #include "base/common.h"
 
+#include <uv.h>
+
 namespace faas {
 namespace uv {
 

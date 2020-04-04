@@ -3,10 +3,6 @@
 #include "common/time.h"
 #include "utils/fs.h"
 
-#include <absl/strings/match.h>
-#include <absl/strings/strip.h>
-#include <absl/strings/numbers.h>
-
 #define HLOG(l) LOG(l) << "Server: "
 #define HVLOG(l) VLOG(l) << "Server: "
 
@@ -325,14 +321,14 @@ public:
 
     void CreateInputRegion(utils::SharedMemory* shared_memory) {
         if (http_context_ != nullptr) {
-            gsl::span<const char> body = http_context_->body();
+            std::span<const char> body = http_context_->body();
             input_region_ = shared_memory->Create(
                 absl::StrCat(call_.full_call_id, ".i"), body.size());
             memcpy(input_region_->base(), body.data(), body.size());
         }
         if (grpc_context_ != nullptr) {
             std::string_view method_name = grpc_context_->method_name();
-            gsl::span<const char> body = grpc_context_->request_body();
+            std::span<const char> body = grpc_context_->request_body();
             size_t region_size = method_name.length() + 1 + body.size();
             input_region_ = shared_memory->Create(
                 absl::StrCat(call_.full_call_id, ".i"), region_size);
@@ -477,7 +473,8 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
 void Server::OnNewGrpcCall(std::shared_ptr<GrpcCallContext> call_context) {
     const FuncConfig::Entry* func_entry = func_config_.find_by_func_name(
         absl::StrFormat("grpc:%s", call_context->service_name()));
-    if (func_entry == nullptr || !func_entry->grpc_methods.contains(call_context->method_name())) {
+    if (func_entry == nullptr
+          || func_entry->grpc_methods.count(std::string(call_context->method_name())) == 0) {
         call_context->set_grpc_status(GrpcStatus::NOT_FOUND);
         call_context->Finish();
         return;

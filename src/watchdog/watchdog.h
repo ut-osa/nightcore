@@ -4,16 +4,13 @@
 #include "common/stat.h"
 #include "common/protocol.h"
 #include "common/func_config.h"
-#include "utils/uv_utils.h"
+#include "common/uv.h"
 #include "utils/shared_memory.h"
 #include "utils/buffer_pool.h"
 #include "watchdog/run_mode.h"
 #include "watchdog/gateway_connection.h"
 #include "watchdog/func_runner.h"
 #include "watchdog/func_worker.h"
-
-#include <absl/time/time.h>
-#include <absl/random/random.h>
 
 namespace faas {
 namespace watchdog {
