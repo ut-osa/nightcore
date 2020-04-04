@@ -41,13 +41,6 @@ cd $BASE_DIR/deps/http-parser && make clean && make package && \
   install -D $BASE_DIR/deps/http-parser/libhttp_parser.a $DEPS_INSTALL_PATH/lib/libhttp_parser.a && \
   make clean
 
-# Build glog
-cd $BASE_DIR/deps/glog && rm -rf build && mkdir -p build && cd build && \
-  cmake -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DWITH_GFLAGS=OFF -DCMAKE_CXX_STANDARD=11 \
-        -DBUILD_TESTING=OFF -DCMAKE_INSTALL_PREFIX=${DEPS_INSTALL_PATH} .. && \
-  make -j$(nproc) install && \
-  rm -rf $BASE_DIR/deps/glog/build
-
 # Build libuv
 cd $BASE_DIR/deps/libuv && rm -rf build && mkdir -p build && cd build && \
   cmake -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DLIBUV_BUILD_TESTS=OFF \

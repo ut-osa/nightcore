@@ -104,7 +104,6 @@ ErrnoLogMessage::~ErrnoLogMessage() {
     if (severity_ == FATAL) {
         abort();
     }
-    _exit(1);
 }
 
 void LogMessage::SendToLog(const std::string& message_text) {

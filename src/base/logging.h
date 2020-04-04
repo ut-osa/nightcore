@@ -189,7 +189,6 @@ T CheckNotNull(const char* file, int line, const char* exprtext, T&& t) {
 #if DCHECK_IS_ON()
 
 #define DLOG(severity)               LOG(severity)
-#define DVLOG(level)                 VLOG(level)
 #define DLOG_IF(severity, condition) LOG_IF(severity, condition)
 #define DCHECK(condition)            CHECK(condition)
 #define DCHECK_EQ(val1, val2)        CHECK_EQ(val1, val2)
@@ -202,19 +201,26 @@ T CheckNotNull(const char* file, int line, const char* exprtext, T&& t) {
 
 #else  // DCHECK_IS_ON()
 
-#define DLOG(severity)               static_cast<void>(0), true ? (void) 0 : faas::logging::LogMessageVoidify() & LOG(severity)
-#define DVLOG(level)                 static_cast<void>(0), true ? (void) 0 : faas::logging::LogMessageVoidify() & VLOG(level)
-#define DLOG_IF(severity, condition) static_cast<void>(0), true ? (void) 0 : faas::logging::LogMessageVoidify() & LOG_IF(severity, condition)
-#define DCHECK(condition)            static_cast<void>(0), true ? (void) 0 : faas::logging::LogMessageVoidify() & CHECK(condition)
-#define DCHECK_EQ(val1, val2)        static_cast<void>(0), true ? (void) 0 : faas::logging::LogMessageVoidify() & CHECK_EQ(val1, val2)
-#define DCHECK_NE(val1, val2)        static_cast<void>(0), true ? (void) 0 : faas::logging::LogMessageVoidify() & CHECK_NE(val1, val2)
-#define DCHECK_LE(val1, val2)        static_cast<void>(0), true ? (void) 0 : faas::logging::LogMessageVoidify() & CHECK_LE(val1, val2)
-#define DCHECK_LT(val1, val2)        static_cast<void>(0), true ? (void) 0 : faas::logging::LogMessageVoidify() & CHECK_LT(val1, val2)
-#define DCHECK_GE(val1, val2)        static_cast<void>(0), true ? (void) 0 : faas::logging::LogMessageVoidify() & CHECK_GE(val1, val2)
-#define DCHECK_GT(val1, val2)        static_cast<void>(0), true ? (void) 0 : faas::logging::LogMessageVoidify() & CHECK_GT(val1, val2)
-#define DCHECK_NOTNULL(val)          static_cast<void>(0), true ? (void) 0 : faas::logging::LogMessageVoidify() & CHECK_NOTNULL(val)
+#define DLOG(severity)    \
+    static_cast<void>(0), \
+    true ? (void) 0 : faas::logging::LogMessageVoidify() & LOG(severity)
+
+#define DLOG_IF(severity, condition) \
+    static_cast<void>(0),            \
+    (true || !(condition)) ? (void) 0 : faas::logging::LogMessageVoidify() & LOG(severity)
+
+#define DCHECK(condition)     while (false) CHECK(condition)
+#define DCHECK_EQ(val1, val2) while (false) CHECK_EQ(val1, val2)
+#define DCHECK_NE(val1, val2) while (false) CHECK_NE(val1, val2)
+#define DCHECK_LE(val1, val2) while (false) CHECK_LE(val1, val2)
+#define DCHECK_LT(val1, val2) while (false) CHECK_LT(val1, val2)
+#define DCHECK_GE(val1, val2) while (false) CHECK_GE(val1, val2)
+#define DCHECK_GT(val1, val2) while (false) CHECK_GT(val1, val2)
+#define DCHECK_NOTNULL(val)   while (false) CHECK_NOTNULL(val)
 
 #endif  // DCHECK_IS_ON()
+
+#define DVLOG(level) DLOG_IF(INFO, (level) <= faas::logging::get_vlog_level())
 
 }  // namespace logging
 }  // namespace faas
