@@ -19,9 +19,9 @@ public:
         absl::flat_hash_set<std::string> grpc_methods;
     };
 
-    bool Load(absl::string_view json_path);
+    bool Load(std::string_view json_path);
 
-    const Entry* find_by_func_name(absl::string_view func_name) const {
+    const Entry* find_by_func_name(std::string_view func_name) const {
         if (entires_by_func_name_.contains(func_name)) {
             return entires_by_func_name_.at(func_name);
         } else {
@@ -43,7 +43,7 @@ private:
     absl::flat_hash_map<int, Entry*> entries_by_func_id_;
 
     static bool ValidateFuncId(int func_id);
-    static bool ValidateFuncName(absl::string_view func_name);
+    static bool ValidateFuncName(std::string_view func_name);
 
     DISALLOW_COPY_AND_ASSIGN(FuncConfig);
 };

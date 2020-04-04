@@ -12,32 +12,32 @@ class HttpSyncRequestContext {
 public:
     ~HttpSyncRequestContext() {}
 
-    absl::string_view method() const { return method_; }
-    absl::string_view path() const { return path_; }
-    absl::string_view header(absl::string_view field) const {
+    std::string_view method() const { return method_; }
+    std::string_view path() const { return path_; }
+    std::string_view header(std::string_view field) const {
         return headers_->contains(field) ? headers_->at(field) : "";
     }
-    absl::Span<const char> body() const { return body_; }
+    gsl::span<const char> body() const { return body_; }
 
     void SetStatus(int status) { *status_ = status; }
-    void SetContentType(absl::string_view content_type) {
+    void SetContentType(std::string_view content_type) {
         *content_type_ = std::string(content_type);
     }
-    void AppendToResponseBody(absl::Span<const char> data) {
+    void AppendToResponseBody(gsl::span<const char> data) {
         response_body_buffer_->AppendData(data);
     }
     // Append a null-terminated C string. Implicit conversion from
-    // `const char*` to `absl::Span<const char>` will include the last
+    // `const char*` to `gsl::span<const char>` will include the last
     // '\0' character, which we usually do not want.
     void AppendToResponseBody(const char* str) {
         response_body_buffer_->AppendData(str, strlen(str));
     }
 
 private:
-    absl::string_view method_;
-    absl::string_view path_;
-    const absl::flat_hash_map<absl::string_view, absl::string_view>* headers_;
-    absl::Span<const char> body_;
+    std::string_view method_;
+    std::string_view path_;
+    const absl::flat_hash_map<std::string_view, std::string_view>* headers_;
+    gsl::span<const char> body_;
 
     int* status_;
     std::string* content_type_;
@@ -53,22 +53,22 @@ class HttpAsyncRequestContext {
 public:
     ~HttpAsyncRequestContext() {}
 
-    absl::string_view method() const { return method_; }
-    absl::string_view path() const { return path_; }
-    absl::string_view header(absl::string_view field) const {
+    std::string_view method() const { return method_; }
+    std::string_view path() const { return path_; }
+    std::string_view header(std::string_view field) const {
         return headers_.contains(field) ? headers_.at(field) : "";
     }
-    absl::Span<const char> body() const { return body_buffer_.to_span(); }
+    gsl::span<const char> body() const { return body_buffer_.to_span(); }
 
     void SetStatus(int status) { status_ = status; }
-    void SetContentType(absl::string_view content_type) {
+    void SetContentType(std::string_view content_type) {
         content_type_ = std::string(content_type);
     }
-    void AppendToResponseBody(absl::Span<const char> data) {
+    void AppendToResponseBody(gsl::span<const char> data) {
         response_body_buffer_.AppendData(data);
     }
     // Append a null-terminated C string. Implicit conversion from
-    // `const char*` to `absl::Span<const char>` will include the last
+    // `const char*` to `gsl::span<const char>` will include the last
     // '\0' character, which we usually do not want.
     void AppendToResponseBody(const char* str) {
         response_body_buffer_.AppendData(str, strlen(str));

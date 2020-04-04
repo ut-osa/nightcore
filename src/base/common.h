@@ -8,6 +8,7 @@
 #include <unistd.h>
 
 #include <string>
+#include <string_view>
 #include <vector>
 #include <queue>
 #include <sstream>
@@ -15,9 +16,7 @@
 #include <functional>
 #include <algorithm>
 
-#include <absl/memory/memory.h>
-#include <absl/types/span.h>
-#include <absl/strings/string_view.h>
+#include <gsl/span>
 #include <absl/strings/str_format.h>
 #include <absl/strings/str_cat.h>
 #include <absl/container/flat_hash_map.h>

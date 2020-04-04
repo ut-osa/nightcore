@@ -61,8 +61,8 @@ private:
     utils::SharedMemory::Region* input_region_;
     uint64_t start_timestamp_;
 
-    void OnSubprocessExit(int exit_status, absl::Span<const char> stdout,
-                          absl::Span<const char> stderr);
+    void OnSubprocessExit(int exit_status, gsl::span<const char> stdout,
+                          gsl::span<const char> stderr);
 
     DECLARE_UV_WRITE_CB_FOR_CLASS(WriteSubprocessStdin);
 

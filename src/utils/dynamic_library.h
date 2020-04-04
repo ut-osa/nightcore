@@ -15,17 +15,17 @@ public:
         }
     }
 
-    static std::unique_ptr<DynamicLibrary> Create(absl::string_view path) {
+    static std::unique_ptr<DynamicLibrary> Create(std::string_view path) {
         void* handle = dlopen(std::string(path).c_str(), RTLD_LAZY);
         if (handle == nullptr) {
             LOG(FATAL) << "Failed to open dynamic library " << path << ": " << dlerror();
         }
         DynamicLibrary* dynamic_library = new DynamicLibrary(handle);
-        return absl::WrapUnique(dynamic_library);
+        return std::unique_ptr<DynamicLibrary>(dynamic_library);
     }
 
     template<class T>
-    T LoadSymbol(absl::string_view name) {
+    T LoadSymbol(std::string_view name) {
         void* ptr = dlsym(handle_, std::string(name).c_str());
         if (ptr == nullptr) {
             LOG(FATAL) << "Cannot load symbol " << name << " from the dynamic library";

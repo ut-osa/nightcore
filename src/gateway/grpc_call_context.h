@@ -21,16 +21,16 @@ class GrpcCallContext {
 public:
     ~GrpcCallContext() {}
 
-    absl::string_view service_name() const { return service_name_; }
-    absl::string_view method_name() const { return method_name_; }
-    absl::Span<const char> request_body() const {
+    std::string_view service_name() const { return service_name_; }
+    std::string_view method_name() const { return method_name_; }
+    gsl::span<const char> request_body() const {
         return request_body_buffer_.to_span();
     }
 
     void set_http_status(HttpStatus value) { http_status_ = value; }
     void set_grpc_status(GrpcStatus value) { grpc_status_ = value; }
 
-    void AppendToResponseBody(absl::Span<const char> data) {
+    void AppendToResponseBody(gsl::span<const char> data) {
         response_body_buffer_.AppendData(data);
     }
     bool Finish();

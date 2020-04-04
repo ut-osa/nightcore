@@ -28,19 +28,19 @@ public:
     Watchdog();
     ~Watchdog();
 
-    void set_gateway_ipc_path(absl::string_view path) {
+    void set_gateway_ipc_path(std::string_view path) {
         gateway_ipc_path_ = std::string(path);
     }
     void set_func_id(int func_id) {
         func_id_ = func_id;
     }
-    void set_fprocess(absl::string_view fprocess) {
+    void set_fprocess(std::string_view fprocess) {
         fprocess_ = std::string(fprocess);
     }
-    void set_shared_mem_path(absl::string_view path) {
+    void set_shared_mem_path(std::string_view path) {
         shared_mem_path_ = std::string(path);
     }
-    void set_func_config_file(absl::string_view path) {
+    void set_func_config_file(std::string_view path) {
         func_config_file_ = std::string(path);
     }
     void set_run_mode(int run_mode) {
@@ -52,22 +52,22 @@ public:
     void set_max_num_func_workers(int value) {
         max_num_func_workers_ = value;
     }
-    void set_func_worker_output_dir(absl::string_view path) {
+    void set_func_worker_output_dir(std::string_view path) {
         func_worker_output_dir_ = std::string(path);
     }
     void set_go_max_procs(int value) {
         go_max_procs_ = value;
     }
 
-    absl::string_view gateway_ipc_path() const { return gateway_ipc_path_; }
+    std::string_view gateway_ipc_path() const { return gateway_ipc_path_; }
     int func_id() const { return func_id_; }
-    absl::string_view fprocess() const { return fprocess_; }
-    absl::string_view shared_mem_path() const { return shared_mem_path_; }
-    absl::string_view func_config_file() const { return func_config_file_; }
-    absl::string_view func_worker_output_dir() const { return func_worker_output_dir_; }
+    std::string_view fprocess() const { return fprocess_; }
+    std::string_view shared_mem_path() const { return shared_mem_path_; }
+    std::string_view func_config_file() const { return func_config_file_; }
+    std::string_view func_worker_output_dir() const { return func_worker_output_dir_; }
     int go_max_procs() const { return go_max_procs_; }
 
-    absl::string_view func_name() const {
+    std::string_view func_name() const {
         const FuncConfig::Entry* entry = func_config_.find_by_func_id(func_id_);
         return entry->func_name;
     }

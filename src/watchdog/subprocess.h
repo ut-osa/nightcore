@@ -16,13 +16,13 @@ public:
 
     enum StandardPipe { kStdin = 0, kStdout = 1, kStderr = 2, kNumStdPipes = 3 };
 
-    explicit Subprocess(absl::string_view cmd,
+    explicit Subprocess(std::string_view cmd,
                         size_t max_stdout_size = kDefaultMaxStdoutSize,
                         size_t max_stderr_size = kDefaultMaxStderrSize);
     ~Subprocess();
 
     // Open file for standard file
-    void SetStandardFile(StandardPipe pipe, absl::string_view file_path);
+    void SetStandardFile(StandardPipe pipe, std::string_view file_path);
 
     // For both CreateReadPipe and CreateWritePipe, fd is returned. stdin, stdout,
     // and stderr pipes will be created automatically, thus new pipes start with fd 3. 
@@ -31,11 +31,11 @@ public:
     int CreateReadablePipe();
     int CreateWritablePipe();
 
-    void AddEnvVariable(absl::string_view name, absl::string_view value);
-    void AddEnvVariable(absl::string_view name, int value);
+    void AddEnvVariable(std::string_view name, std::string_view value);
+    void AddEnvVariable(std::string_view name, int value);
 
-    typedef std::function<void(int /* exit_status */, absl::Span<const char> /* stdout */,
-                               absl::Span<const char> /* stderr */)> ExitCallback;
+    typedef std::function<void(int /* exit_status */, gsl::span<const char> /* stdout */,
+                               gsl::span<const char> /* stderr */)> ExitCallback;
 
     bool Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool,
                ExitCallback exit_callback);

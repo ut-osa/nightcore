@@ -23,7 +23,7 @@ public:
 
     uv_pipe_t* uv_pipe_handle() { return &uv_pipe_handle_; }
 
-    void Start(absl::string_view ipc_path,
+    void Start(std::string_view ipc_path,
                const protocol::HandshakeMessage& handshake_message);
     void ScheduleClose();
 

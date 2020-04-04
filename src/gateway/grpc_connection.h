@@ -66,7 +66,7 @@ private:
     void H2SendPendingDataIfNecessary();
     void H2SendSettingsFrame();
     bool H2ValidateAndPopulateHeader(H2StreamContext* stream_context,
-                                     absl::string_view name, absl::string_view value);
+                                     std::string_view name, std::string_view value);
     void H2SendResponse(H2StreamContext* stream_context);
     bool H2HasTrailersToSend(H2StreamContext* stream_context);
     void H2SendTrailers(H2StreamContext* stream_context);
@@ -77,7 +77,7 @@ private:
 
     int H2OnFrameRecv(const nghttp2_frame* frame);
     int H2OnStreamClose(int32_t stream_id, uint32_t error_code);
-    int H2OnHeader(const nghttp2_frame* frame, absl::string_view name, absl::string_view value, uint8_t flags);
+    int H2OnHeader(const nghttp2_frame* frame, std::string_view name, std::string_view value, uint8_t flags);
     int H2OnBeginHeaders(const nghttp2_frame* frame);
     int H2OnDataChunkRecv(uint8_t flags, int32_t stream_id, const uint8_t* data, size_t len);
     ssize_t H2DataSourceRead(H2StreamContext* stream_context, uint8_t* buf, size_t length, uint32_t* data_flags);

@@ -28,7 +28,7 @@ int main(int argc, char* argv[]) {
     signal(SIGINT, SignalHandlerToStopServer);
     faas::base::InitMain(argc, argv);
 
-    auto server = absl::make_unique<faas::gateway::Server>();
+    auto server = std::make_unique<faas::gateway::Server>();
     server->set_address(absl::GetFlag(FLAGS_listen_addr));
     server->set_ipc_path(absl::GetFlag(FLAGS_ipc_path));
     server->set_port(absl::GetFlag(FLAGS_listen_port));

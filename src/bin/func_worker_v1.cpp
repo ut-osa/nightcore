@@ -10,7 +10,7 @@ int main(int argc, char* argv[]) {
         LOG(FATAL) << "The only positional argument should be path to the function library";
     }
 
-    auto func_worker = absl::make_unique<faas::worker_v1::FuncWorker>();
+    auto func_worker = std::make_unique<faas::worker_v1::FuncWorker>();
     func_worker->set_gateway_ipc_path(
         faas::utils::GetEnvVariable("GATEWAY_IPC_PATH", "/tmp/faas_gateway"));
     func_worker->set_func_id(

@@ -9,18 +9,18 @@ namespace utils {
 // SharedMemory is thread-safe
 class SharedMemory {
 public:
-    explicit SharedMemory(absl::string_view base_path);
+    explicit SharedMemory(std::string_view base_path);
     ~SharedMemory();
 
     class Region {
     public:
-        absl::string_view path() const { return path_; }
+        std::string_view path() const { return path_; }
         char* base() { return base_; }
         const char* base() const { return base_; }
         size_t size() const { return size_; }
 
-        absl::Span<const char> to_span() const {
-            return absl::Span<const char>(base_, size_);
+        gsl::span<const char> to_span() const {
+            return gsl::span<const char>(base_, size_);
         }
     
         void Close(bool remove = false) {
@@ -35,14 +35,14 @@ public:
         char* base_;
         size_t size_;
 
-        Region(SharedMemory* parent, absl::string_view path, char* base, size_t size)
+        Region(SharedMemory* parent, std::string_view path, char* base, size_t size)
             : parent_(parent), path_(path), base_(base), size_(size) {}
 
         DISALLOW_COPY_AND_ASSIGN(Region);
     };
 
-    Region* Create(absl::string_view path, size_t size);
-    Region* OpenReadOnly(absl::string_view path);
+    Region* Create(std::string_view path, size_t size);
+    Region* OpenReadOnly(std::string_view path);
     void Close(Region* region, bool remove = false);
 
 private:

@@ -7,7 +7,7 @@ namespace faas {
 namespace fs_utils {
 
 namespace {
-bool Stat(absl::string_view path, struct stat* statbuf) {
+bool Stat(std::string_view path, struct stat* statbuf) {
     return stat(std::string(path).c_str(), statbuf) == 0;
 }
 
@@ -17,11 +17,11 @@ int RemoveFileFtwFn(const char* fpath, const struct stat* sb,
 }
 }
 
-bool Exists(absl::string_view path) {
+bool Exists(std::string_view path) {
     return access(std::string(path).c_str(), F_OK) == 0;
 }
 
-bool IsFile(absl::string_view path) {
+bool IsFile(std::string_view path) {
     struct stat statbuf;
     if (!Stat(path, &statbuf)) {
         return false;
@@ -29,7 +29,7 @@ bool IsFile(absl::string_view path) {
     return S_ISREG(statbuf.st_mode) != 0;
 }
 
-bool IsDirectory(absl::string_view path) {
+bool IsDirectory(std::string_view path) {
     struct stat statbuf;
     if (!Stat(path, &statbuf)) {
         return false;
@@ -37,20 +37,20 @@ bool IsDirectory(absl::string_view path) {
     return S_ISDIR(statbuf.st_mode) != 0;
 }
 
-bool MakeDirectory(absl::string_view path, mode_t mode) {
+bool MakeDirectory(std::string_view path, mode_t mode) {
     return mkdir(std::string(path).c_str(), mode) == 0;
 }
 
-bool Remove(absl::string_view path) {
+bool Remove(std::string_view path) {
     return remove(std::string(path).c_str()) == 0;
 }
 
-bool RemoveDirectoryRecursively(absl::string_view path) {
+bool RemoveDirectoryRecursively(std::string_view path) {
     return nftw(std::string(path).c_str(), RemoveFileFtwFn, 8,
                 FTW_DEPTH|FTW_MOUNT|FTW_PHYS) == 0;
 }
 
-bool ReadContents(absl::string_view path, std::string* contents) {
+bool ReadContents(std::string_view path, std::string* contents) {
     FILE* fin = fopen(std::string(path).c_str(), "rb");
     if (fin == nullptr) {
         return false;

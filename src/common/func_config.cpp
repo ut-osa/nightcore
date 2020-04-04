@@ -16,10 +16,10 @@ bool FuncConfig::ValidateFuncId(int func_id) {
     return 0 < func_id && func_id <= kMaxFuncId;
 }
 
-bool FuncConfig::ValidateFuncName(absl::string_view func_name) {
+bool FuncConfig::ValidateFuncName(std::string_view func_name) {
     if (absl::StartsWith(func_name, "grpc:")) {
         // gRPC service
-        absl::string_view service_name = absl::StripPrefix(func_name, "grpc:");
+        std::string_view service_name = absl::StripPrefix(func_name, "grpc:");
         for (const char& ch : service_name) {
             if (!(('0' <= ch && ch <= '9') ||
                   ('a' <= ch && ch <= 'z') ||
@@ -41,7 +41,7 @@ bool FuncConfig::ValidateFuncName(absl::string_view func_name) {
     return true;
 }
 
-bool FuncConfig::Load(absl::string_view json_path) {
+bool FuncConfig::Load(std::string_view json_path) {
     std::string json_contents;
     if (!fs_utils::ReadContents(json_path, &json_contents)) {
         LOG(ERROR) << "Failed to read from file " << json_path;
@@ -78,11 +78,11 @@ bool FuncConfig::Load(absl::string_view json_path) {
                 LOG(ERROR) << "Duplicate func_id: " << func_id;
                 return false;
             }
-            auto entry = absl::make_unique<Entry>();
+            auto entry = std::make_unique<Entry>();
             entry->func_name = func_name;
             entry->func_id = func_id;
             if (absl::StartsWith(func_name, "grpc:")) {
-                absl::string_view service_name = absl::StripPrefix(func_name, "grpc:");
+                std::string_view service_name = absl::StripPrefix(func_name, "grpc:");
                 LOG(INFO) << "Load configuration for gRPC service " << service_name
                           << "[" << func_id << "]";
                 const json& grpc_methods = item.at("grpcMethods");

@@ -61,8 +61,8 @@ private:
     std::unique_ptr<utils::SimpleObjectPool<uv_write_t>> write_req_pool_;
     int inflight_requests_;
 
-    void OnSubprocessExit(int exit_status, absl::Span<const char> stdout,
-                          absl::Span<const char> stderr);
+    void OnSubprocessExit(int exit_status, gsl::span<const char> stdout,
+                          gsl::span<const char> stderr);
     void DispatchFuncCall(uint64_t call_id);
     void OnRecvMessage(const protocol::Message& message);
 

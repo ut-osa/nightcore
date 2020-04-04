@@ -71,7 +71,7 @@ void Watchdog::Start() {
     CHECK_GT(go_max_procs_, 0);
     switch (run_mode_) {
     case RunMode::SERIALIZING:
-        buffer_pool_for_subprocess_pipes_ = absl::make_unique<utils::BufferPool>(
+        buffer_pool_for_subprocess_pipes_ = std::make_unique<utils::BufferPool>(
             "SubprocessPipe", kSubprocessPipeBufferSizeForSerializingMode);
         break;
     case RunMode::FUNC_WORKER_FIXED:
@@ -80,14 +80,14 @@ void Watchdog::Start() {
         if (!func_worker_output_dir_.empty() && !fs_utils::Exists(func_worker_output_dir_)) {
             CHECK(fs_utils::MakeDirectory(func_worker_output_dir_));
         }
-        buffer_pool_for_subprocess_pipes_ = absl::make_unique<utils::BufferPool>(
+        buffer_pool_for_subprocess_pipes_ = std::make_unique<utils::BufferPool>(
             "SubprocessPipe", kSubprocessPipeBufferSizeForFuncWorkerMode);
         int initial_num_func_workers_ = max_num_func_workers_;
         if (run_mode_ == RunMode::FUNC_WORKER_ON_DEMAND) {
             initial_num_func_workers_ = min_num_func_workers_;
         }
         for (int i = 0; i < initial_num_func_workers_; i++) {
-            auto func_worker = absl::make_unique<FuncWorker>(this, i, run_mode_ == RunMode::FUNC_WORKER_ASYNC);
+            auto func_worker = std::make_unique<FuncWorker>(this, i, run_mode_ == RunMode::FUNC_WORKER_ASYNC);
             func_worker->Start(&uv_loop_, buffer_pool_for_subprocess_pipes_.get());
             func_workers_.push_back(std::move(func_worker));
         }
@@ -100,7 +100,7 @@ void Watchdog::Start() {
     }
     // Create shared memory pool
     CHECK(!shared_mem_path_.empty());
-    shared_memory_ = absl::make_unique<utils::SharedMemory>(shared_mem_path_);
+    shared_memory_ = std::make_unique<utils::SharedMemory>(shared_mem_path_);
     // Connect to gateway via IPC path
     uv_pipe_t* pipe_handle = gateway_connection_.uv_pipe_handle();
     UV_DCHECK_OK(uv_pipe_init(&uv_loop_, pipe_handle, 0));
@@ -237,7 +237,7 @@ FuncWorker* Watchdog::PickFuncWorker() {
         if (idle_func_workers_.empty()
                 && static_cast<int>(func_workers_.size()) < max_num_func_workers_
                 && absl::Now() >= last_func_worker_creation_time_ + kMinFuncWorkerCreationInterval) {
-            auto new_func_worker = absl::make_unique<FuncWorker>(this, func_workers_.size());
+            auto new_func_worker = std::make_unique<FuncWorker>(this, func_workers_.size());
             new_func_worker->Start(&uv_loop_, buffer_pool_for_subprocess_pipes_.get());
             func_workers_.push_back(std::move(new_func_worker));
             HLOG(INFO) << "Create new FuncWorker, current count is " << func_workers_.size();

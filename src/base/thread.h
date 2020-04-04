@@ -8,7 +8,7 @@ namespace base {
 
 class Thread {
 public:
-    Thread(absl::string_view name, std::function<void()> fn)
+    Thread(std::string_view name, std::function<void()> fn)
         : state_(kCreated), name_(std::string(name)), fn_(fn), tid_(-1) {}
 
     ~Thread() {
@@ -19,7 +19,7 @@ public:
     void Start();
     void Join();
 
-    absl::string_view name() const { return name_; }
+    std::string_view name() const { return name_; }
     int tid() { return tid_; }
     static Thread* current() {
         DCHECK(current_ != nullptr);

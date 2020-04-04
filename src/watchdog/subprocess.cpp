@@ -6,7 +6,7 @@
 namespace faas {
 namespace watchdog {
 
-Subprocess::Subprocess(absl::string_view cmd, size_t max_stdout_size, size_t max_stderr_size)
+Subprocess::Subprocess(std::string_view cmd, size_t max_stdout_size, size_t max_stderr_size)
     : state_(kCreated), cmd_(cmd),
       max_stdout_size_(max_stdout_size), max_stderr_size_(max_stderr_size) {
     pipe_types_.push_back(UV_READABLE_PIPE);  // stdin
@@ -19,7 +19,7 @@ Subprocess::~Subprocess() {
     DCHECK(state_ == kCreated || state_ == kClosed);
 }
 
-void Subprocess::SetStandardFile(StandardPipe pipe, absl::string_view file_path) {
+void Subprocess::SetStandardFile(StandardPipe pipe, std::string_view file_path) {
     DCHECK(state_ == kCreated);
     DCHECK_EQ(std_fds_[pipe], -1);
     int fd;
@@ -45,12 +45,12 @@ int Subprocess::CreateWritablePipe() {
     return static_cast<int>(pipe_types_.size()) - 1;
 }
 
-void Subprocess::AddEnvVariable(absl::string_view name, absl::string_view value) {
+void Subprocess::AddEnvVariable(std::string_view name, std::string_view value) {
     DCHECK(state_ == kCreated);
     env_variables_.push_back(absl::StrFormat("%s=%s", name, value));
 }
 
-void Subprocess::AddEnvVariable(absl::string_view name, int value) {
+void Subprocess::AddEnvVariable(std::string_view name, int value) {
     DCHECK(state_ == kCreated);
     env_variables_.push_back(absl::StrFormat("%s=%d", name, value));
 }

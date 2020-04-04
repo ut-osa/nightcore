@@ -21,7 +21,7 @@ public:
 
     typedef std::function<void(absl::Duration /* duration */, size_t /* n_samples */,
                                const Report& /* report */)> ReportCallback;
-    static ReportCallback StandardReportCallback(absl::string_view stat_name) {
+    static ReportCallback StandardReportCallback(std::string_view stat_name) {
         std::string stat_name_copy = std::string(stat_name);
         return [stat_name_copy] (absl::Duration duration, size_t n_samples, const Report& report) {
             LOG(INFO) << stat_name_copy << " statistics (" << n_samples << " samples): "
@@ -109,7 +109,7 @@ public:
 
     typedef std::function<void(absl::Duration /* duration */, uint64_t /* new_value */,
                                uint64_t /* old_value */)> ReportCallback;
-    static ReportCallback StandardReportCallback(absl::string_view counter_name) {
+    static ReportCallback StandardReportCallback(std::string_view counter_name) {
         std::string counter_name_copy = std::string(counter_name);
         return [counter_name_copy] (absl::Duration duration, uint64_t new_value, uint64_t old_value) {
             double rate = static_cast<double>(new_value - old_value) / absl::ToDoubleSeconds(duration);
@@ -158,7 +158,7 @@ public:
 
     typedef std::function<void(absl::Duration /* duration */,
                                const absl::flat_hash_map<int, uint64_t>& /* values */)> ReportCallback;
-    static ReportCallback StandardReportCallback(absl::string_view counter_name) {
+    static ReportCallback StandardReportCallback(std::string_view counter_name) {
         std::string counter_name_copy = std::string(counter_name);
         return [counter_name_copy] (absl::Duration duration, const absl::flat_hash_map<int, uint64_t>& values) {
             uint64_t sum = 0;

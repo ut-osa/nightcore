@@ -48,14 +48,14 @@ public:
         pos_ += length;
     }
 
-    void AppendData(absl::Span<const char> data) {
-        AppendData(data.data(), data.length());
+    void AppendData(gsl::span<const char> data) {
+        AppendData(data.data(), data.size());
     }
 
     void Reset() { pos_ = 0; }
 
-    absl::Span<const char> to_span() const {
-        return absl::Span<const char>(buf_, pos_);
+    gsl::span<const char> to_span() const {
+        return gsl::span<const char>(buf_, pos_);
     }
 
     const char* data() const { return buf_; }

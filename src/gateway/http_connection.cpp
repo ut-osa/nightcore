@@ -181,11 +181,11 @@ void HttpConnection::HttpParserOnBody(const char* data, size_t length) {
 
 namespace {
 static bool ReadParsedUrlField(const http_parser_url* parsed_url, http_parser_url_fields field,
-                               const char* url_buf, absl::string_view* result) {
+                               const char* url_buf, std::string_view* result) {
     if ((parsed_url->field_set & (1 << field)) == 0) {
         return false;
     } else {
-        *result = absl::string_view(url_buf + parsed_url->field_data[field].off,
+        *result = std::string_view(url_buf + parsed_url->field_data[field].off,
                                     parsed_url->field_data[field].len);
         return true;
     }
@@ -201,7 +201,7 @@ void HttpConnection::HttpParserOnMessageComplete() {
         ScheduleClose();
         return;
     }
-    absl::string_view path;
+    std::string_view path;
     if (!ReadParsedUrlField(&parsed_url, UF_PATH, url_buffer_.data(), &path)) {
         HLOG(WARNING) << "Parsed URL misses some fields";
         ScheduleClose();
@@ -212,10 +212,10 @@ void HttpConnection::HttpParserOnMessageComplete() {
 }
 
 void HttpConnection::HttpParserOnNewHeader() {
-    absl::string_view field(header_field_buffer_.data() + header_field_buffer_pos_,
+    std::string_view field(header_field_buffer_.data() + header_field_buffer_pos_,
                             header_field_buffer_.length() - header_field_buffer_pos_);
     header_field_buffer_pos_ = header_field_buffer_.length();
-    absl::string_view value(header_value_buffer_.data() + header_value_buffer_pos_,
+    std::string_view value(header_value_buffer_.data() + header_value_buffer_pos_,
                             header_value_buffer_.length() - header_value_buffer_pos_);
     header_value_buffer_pos_ = header_value_buffer_.length();
     HVLOG(1) << "Parse new HTTP header: " << field << " = " << value;
@@ -226,7 +226,7 @@ void HttpConnection::ResetHttpParser() {
     http_parser_init(&http_parser_, HTTP_REQUEST);
 }
 
-void HttpConnection::OnNewHttpRequest(absl::string_view method, absl::string_view path) {
+void HttpConnection::OnNewHttpRequest(std::string_view method, std::string_view path) {
     DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
     HVLOG(1) << "New HTTP request: " << method << " " << path;
     response_status_ = 200;

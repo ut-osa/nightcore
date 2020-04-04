@@ -32,7 +32,7 @@ int main(int argc, char* argv[]) {
     signal(SIGINT, SignalHandlerToStopWatchdog);
     faas::base::InitMain(argc, argv);
 
-    auto watchdog = absl::make_unique<faas::watchdog::Watchdog>();
+    auto watchdog = std::make_unique<faas::watchdog::Watchdog>();
     watchdog->set_gateway_ipc_path(absl::GetFlag(FLAGS_gateway_ipc_path));
     watchdog->set_func_id(absl::GetFlag(FLAGS_func_id));
     watchdog->set_fprocess(absl::GetFlag(FLAGS_fprocess));

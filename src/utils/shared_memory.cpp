@@ -10,7 +10,7 @@
 namespace faas {
 namespace utils {
 
-SharedMemory::SharedMemory(absl::string_view base_path)
+SharedMemory::SharedMemory(std::string_view base_path)
     : base_path_(base_path),
       mmap_delay_stat_(
           stat::StatisticsCollector<uint32_t>::StandardReportCallback("mmap_delay")) {
@@ -25,7 +25,7 @@ SharedMemory::~SharedMemory() {
     }
 }
 
-SharedMemory::Region* SharedMemory::Create(absl::string_view path, size_t size) {
+SharedMemory::Region* SharedMemory::Create(std::string_view path, size_t size) {
     std::string full_path(absl::StrFormat("%s/%s", base_path_, path));
     uint64_t start_timestamp = GetMonotonicMicroTimestamp();
     int fd = open(full_path.c_str(), O_CREAT|O_EXCL|O_RDWR, 0644);
@@ -47,7 +47,7 @@ SharedMemory::Region* SharedMemory::Create(absl::string_view path, size_t size) 
     return region;
 }
 
-SharedMemory::Region* SharedMemory::OpenReadOnly(absl::string_view path) {
+SharedMemory::Region* SharedMemory::OpenReadOnly(std::string_view path) {
     std::string full_path(absl::StrFormat("%s/%s", base_path_, path));
     uint64_t start_timestamp = GetMonotonicMicroTimestamp();
     int fd = open(full_path.c_str(), O_RDONLY);

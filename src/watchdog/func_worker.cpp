@@ -41,8 +41,8 @@ void FuncWorker::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool) 
     subprocess_.AddEnvVariable("WORKER_ID", worker_id_);
     subprocess_.AddEnvVariable("GOMAXPROCS", watchdog_->go_max_procs());
     if (!watchdog_->func_worker_output_dir().empty()) {
-        absl::string_view output_dir = watchdog_->func_worker_output_dir();
-        absl::string_view func_name = watchdog_->func_name();
+        std::string_view output_dir = watchdog_->func_worker_output_dir();
+        std::string_view func_name = watchdog_->func_name();
         subprocess_.SetStandardFile(Subprocess::kStdout,
                                     absl::StrFormat("%s/%s_worker_%d.stdout",
                                                     output_dir, func_name, worker_id_));
@@ -60,9 +60,9 @@ void FuncWorker::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool) 
     if (async_) {
         HLOG(INFO) << "Enable async mode";
         state_ = kAsync;
-        write_buffer_pool_ = absl::make_unique<utils::BufferPool>(
+        write_buffer_pool_ = std::make_unique<utils::BufferPool>(
             absl::StrFormat("FuncWorker[%d]", worker_id_), kWriteBufferSize);
-        write_req_pool_ = absl::make_unique<utils::SimpleObjectPool<uv_write_t>>();
+        write_req_pool_ = std::make_unique<utils::SimpleObjectPool<uv_write_t>>();
         UV_DCHECK_OK(uv_read_start(UV_AS_STREAM(uv_output_pipe_handle_),
                                    &FuncWorker::BufferAllocCallback,
                                    &FuncWorker::ReadMessageCallback));
@@ -100,15 +100,15 @@ bool FuncWorker::ScheduleFuncCall(WorkerFuncRunner* func_runner, uint64_t call_i
     return true;
 }
 
-void FuncWorker::OnSubprocessExit(int exit_status, absl::Span<const char> stdout,
-                                  absl::Span<const char> stderr) {
+void FuncWorker::OnSubprocessExit(int exit_status, gsl::span<const char> stdout,
+                                  gsl::span<const char> stderr) {
     DCHECK(state_ != kCreated);
     DCHECK_IN_EVENT_LOOP_THREAD(uv_loop_);
     if (exit_status != 0) {
         HLOG(WARNING) << "Subprocess exits abnormally with code: " << exit_status;
     }
-    if (stderr.length() > 0) {
-        HVLOG(1) << "Stderr: " << absl::string_view(stderr.data(), stderr.length());
+    if (stderr.size() > 0) {
+        HVLOG(1) << "Stderr: " << std::string_view(stderr.data(), stderr.size());
     }
     for (const auto& entry : func_runners_) {
         WorkerFuncRunner* func_runner = entry.second;

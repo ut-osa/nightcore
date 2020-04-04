@@ -28,17 +28,17 @@ public:
     Server();
     ~Server();
 
-    void set_address(absl::string_view address) { address_ = std::string(address); }
+    void set_address(std::string_view address) { address_ = std::string(address); }
     void set_port(int port) { port_ = port; }
     void set_grpc_port(int port) { grpc_port_ = port; }
-    void set_ipc_path(absl::string_view address) { ipc_path_ = std::string(address); }
+    void set_ipc_path(std::string_view address) { ipc_path_ = std::string(address); }
     void set_listen_backlog(int value) { listen_backlog_ = value; }
     void set_num_http_workers(int value) { num_http_workers_ = value; }
     void set_num_ipc_workers(int value) { num_ipc_workers_ = value; }
-    void set_shared_mem_path(absl::string_view path) {
+    void set_shared_mem_path(std::string_view path) {
         shared_mem_path_ = std::string(path);
     }
-    void set_func_config_file(absl::string_view path) {
+    void set_func_config_file(std::string_view path) {
         func_config_file_ = std::string(path);
     }
 
@@ -46,8 +46,8 @@ public:
     void ScheduleStop();
     void WaitForFinish();
 
-    typedef std::function<bool(absl::string_view /* method */,
-                               absl::string_view /* path */)> RequestMatcher;
+    typedef std::function<bool(std::string_view /* method */,
+                               std::string_view /* path */)> RequestMatcher;
     typedef std::function<void(HttpSyncRequestContext*)> SyncRequestHandler;
     typedef std::function<void(std::shared_ptr<HttpAsyncRequestContext>)> AsyncRequestHandler;
 
@@ -85,7 +85,7 @@ public:
         DISALLOW_COPY_AND_ASSIGN(RequestHandler);
     };
 
-    bool MatchRequest(absl::string_view method, absl::string_view path,
+    bool MatchRequest(std::string_view method, std::string_view path,
                       const RequestHandler** request_handler) const;
 
     // Must be thread-safe

@@ -16,12 +16,12 @@ class IOWorker : public uv::Base {
 public:
     static constexpr size_t kDefaultBufferSize = 4096;
 
-    IOWorker(Server* server, absl::string_view worker_name,
+    IOWorker(Server* server, std::string_view worker_name,
              size_t read_buffer_size = kDefaultBufferSize,
              size_t write_buffer_size = kDefaultBufferSize);
     ~IOWorker();
 
-    absl::string_view worker_name() const { return worker_name_; }
+    std::string_view worker_name() const { return worker_name_; }
 
     void Start(int pipe_to_server_fd);
     void ScheduleStop();

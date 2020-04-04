@@ -63,7 +63,7 @@ void FuncWorker::Serve() {
     CHECK(output_pipe_fd_ != -1);
     // Create shared memory pool
     CHECK(!shared_mem_path_.empty());
-    shared_memory_ = absl::make_unique<utils::SharedMemory>(shared_mem_path_);
+    shared_memory_ = std::make_unique<utils::SharedMemory>(shared_mem_path_);
     // Connect to gateway via IPC path
     CHECK(!gateway_ipc_path_.empty());
     gateway_sock_fd_ = utils::UnixDomainSocketConnect(gateway_ipc_path_);
@@ -231,7 +231,7 @@ bool FuncWorker::InvokeFunc(const char* func_name, const char* input_data, size_
         return false;
     }
     const FuncConfig::Entry* func_entry = func_config_.find_by_func_name(
-        absl::string_view(func_name, strlen(func_name)));
+        std::string_view(func_name, strlen(func_name)));
     if (func_entry == nullptr) {
         return false;
     }
@@ -259,7 +259,7 @@ bool FuncWorker::InvokeFunc(const char* func_name, const char* input_data, size_
     };
     {
         absl::MutexLock lk(&invoke_func_mu_);
-        func_invoke_contexts_[func_call.full_call_id] = absl::WrapUnique(context);
+        func_invoke_contexts_[func_call.full_call_id] = std::unique_ptr<FuncInvokeContext>(context);
         PCHECK(io_utils::SendMessage(gateway_sock_fd_, message));
     }
     context->finished.WaitForNotification();

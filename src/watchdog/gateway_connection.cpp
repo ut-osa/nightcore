@@ -22,7 +22,7 @@ GatewayConnection::~GatewayConnection() {
     DCHECK(state_ == kCreated || state_ == kClosed);
 }
 
-void GatewayConnection::Start(absl::string_view ipc_path,
+void GatewayConnection::Start(std::string_view ipc_path,
                               const HandshakeMessage& handshake_message) {
     DCHECK(state_ == kCreated);
     handshake_message_ = handshake_message;

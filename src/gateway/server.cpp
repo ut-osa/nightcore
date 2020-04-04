@@ -55,24 +55,24 @@ Server::~Server() {
 
 void Server::RegisterInternalRequestHandlers() {
     // POST /shutdown
-    RegisterSyncRequestHandler([] (absl::string_view method, absl::string_view path) -> bool {
+    RegisterSyncRequestHandler([] (std::string_view method, std::string_view path) -> bool {
         return method == "POST" && path == "/shutdown";
     }, [this] (HttpSyncRequestContext* context) {
         context->AppendToResponseBody("Server is shutting down\n");
         ScheduleStop();
     });
     // GET /hello
-    RegisterSyncRequestHandler([] (absl::string_view method, absl::string_view path) -> bool {
+    RegisterSyncRequestHandler([] (std::string_view method, std::string_view path) -> bool {
         return method == "GET" && path == "/hello";
     }, [] (HttpSyncRequestContext* context) {
         context->AppendToResponseBody("Hello world\n");
     });
     // POST /function/[:name]
-    RegisterAsyncRequestHandler([this] (absl::string_view method, absl::string_view path) -> bool {
+    RegisterAsyncRequestHandler([this] (std::string_view method, std::string_view path) -> bool {
         if (method != "POST" || !absl::StartsWith(path, "/function/")) {
             return false;
         }
-        absl::string_view func_name = absl::StripPrefix(path, "/function/");
+        std::string_view func_name = absl::StripPrefix(path, "/function/");
         const FuncConfig::Entry* func_entry = func_config_.find_by_func_name(func_name);
         return func_entry != nullptr;
     }, [this] (std::shared_ptr<HttpAsyncRequestContext> context) {
@@ -97,17 +97,17 @@ void Server::Start() {
         PCHECK(fs_utils::Remove(shared_mem_path_));
     }
     PCHECK(fs_utils::MakeDirectory(shared_mem_path_));
-    shared_memory_ = absl::make_unique<utils::SharedMemory>(shared_mem_path_);
+    shared_memory_ = std::make_unique<utils::SharedMemory>(shared_mem_path_);
     // Start IO workers
     for (int i = 0; i < num_http_workers_; i++) {
-        auto io_worker = absl::make_unique<IOWorker>(this, absl::StrFormat("HttpWorker-%d", i),
+        auto io_worker = std::make_unique<IOWorker>(this, absl::StrFormat("HttpWorker-%d", i),
                                                      kHttpConnectionBufferSize);
         InitAndStartIOWorker(io_worker.get());
         http_workers_.push_back(io_worker.get());
         io_workers_.push_back(std::move(io_worker));
     }
     for (int i = 0; i < num_ipc_workers_; i++) {
-        auto io_worker = absl::make_unique<IOWorker>(this, absl::StrFormat("IpcWorker-%d", i),
+        auto io_worker = std::make_unique<IOWorker>(this, absl::StrFormat("IpcWorker-%d", i),
                                                      kMessageConnectionBufferSize,
                                                      kMessageConnectionBufferSize);
         InitAndStartIOWorker(io_worker.get());
@@ -171,7 +171,7 @@ void Server::RegisterAsyncRequestHandler(RequestMatcher matcher, AsyncRequestHan
     request_handlers_.emplace_back(new RequestHandler(std::move(matcher), std::move(handler)));
 }
 
-bool Server::MatchRequest(absl::string_view method, absl::string_view path,
+bool Server::MatchRequest(std::string_view method, std::string_view path,
                           const RequestHandler** request_handler) const {
     for (const std::unique_ptr<RequestHandler>& entry : request_handlers_) {
         if (entry->matcher_(method, path)) {
@@ -225,7 +225,7 @@ void Server::InitAndStartIOWorker(IOWorker* io_worker) {
 std::unique_ptr<uv_pipe_t> Server::CreatePipeToWorker(int* pipe_fd_for_worker) {
     int pipe_fds[2] = { -1, -1 };
     CHECK_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, pipe_fds), 0);
-    std::unique_ptr<uv_pipe_t> pipe_to_worker = absl::make_unique<uv_pipe_t>();
+    std::unique_ptr<uv_pipe_t> pipe_to_worker = std::make_unique<uv_pipe_t>();
     UV_DCHECK_OK(uv_pipe_init(&uv_loop_, pipe_to_worker.get(), 1));
     pipe_to_worker->data = this;
     UV_DCHECK_OK(uv_pipe_open(pipe_to_worker.get(), pipe_fds[0]));
@@ -325,23 +325,23 @@ public:
 
     void CreateInputRegion(utils::SharedMemory* shared_memory) {
         if (http_context_ != nullptr) {
-            absl::Span<const char> body = http_context_->body();
+            gsl::span<const char> body = http_context_->body();
             input_region_ = shared_memory->Create(
-                absl::StrCat(call_.full_call_id, ".i"), body.length());
-            memcpy(input_region_->base(), body.data(), body.length());
+                absl::StrCat(call_.full_call_id, ".i"), body.size());
+            memcpy(input_region_->base(), body.data(), body.size());
         }
         if (grpc_context_ != nullptr) {
-            absl::string_view method_name = grpc_context_->method_name();
-            absl::Span<const char> body = grpc_context_->request_body();
-            size_t region_size = method_name.length() + 1 + body.length();
+            std::string_view method_name = grpc_context_->method_name();
+            gsl::span<const char> body = grpc_context_->request_body();
+            size_t region_size = method_name.length() + 1 + body.size();
             input_region_ = shared_memory->Create(
                 absl::StrCat(call_.full_call_id, ".i"), region_size);
             char* buf = input_region_->base();
             memcpy(buf, method_name.data(), method_name.length());
             buf[method_name.length()] = '\0';
-            if (body.length() > 0) {
+            if (body.size() > 0) {
                 buf += method_name.length() + 1;
-                memcpy(buf, body.data(), body.length());
+                memcpy(buf, body.data(), body.size());
             }
         }
     }
@@ -358,7 +358,7 @@ public:
     }
 
     bool CheckInputNotEmpty() {
-        if (http_context_ != nullptr && http_context_->body().length() == 0) {
+        if (http_context_ != nullptr && http_context_->body().size() == 0) {
             http_context_->AppendToResponseBody("Request body cannot be empty!\n");
             http_context_->SetStatus(400);
             Finish();
@@ -482,7 +482,7 @@ void Server::OnNewGrpcCall(std::shared_ptr<GrpcCallContext> call_context) {
         call_context->Finish();
         return;
     }
-    NewExternalFuncCall(absl::WrapUnique(
+    NewExternalFuncCall(std::unique_ptr<ExternalFuncCallContext>(
         new ExternalFuncCallContext(NewFuncCall(func_entry->func_id), std::move(call_context))));
 }
 
@@ -495,7 +495,7 @@ FuncCall Server::NewFuncCall(uint16_t func_id) {
 }
 
 void Server::OnExternalFuncCall(uint16_t func_id, std::shared_ptr<HttpAsyncRequestContext> http_context) {
-    NewExternalFuncCall(absl::WrapUnique(
+    NewExternalFuncCall(std::unique_ptr<ExternalFuncCallContext>(
         new ExternalFuncCallContext(NewFuncCall(func_id), std::move(http_context))));
 }
 
@@ -534,7 +534,7 @@ UV_CONNECTION_CB_FOR_CLASS(Server, HttpConnection) {
         HLOG(WARNING) << "Failed to open HTTP connection: " << uv_strerror(status);
         return;
     }
-    std::unique_ptr<HttpConnection> connection = absl::make_unique<HttpConnection>(
+    std::unique_ptr<HttpConnection> connection = std::make_unique<HttpConnection>(
         this, next_http_connection_id_++);
     uv_tcp_t* client = reinterpret_cast<uv_tcp_t*>(malloc(sizeof(uv_tcp_t)));
     UV_DCHECK_OK(uv_tcp_init(&uv_loop_, client));
@@ -552,7 +552,7 @@ UV_CONNECTION_CB_FOR_CLASS(Server, GrpcConnection) {
         HLOG(WARNING) << "Failed to open gRPC connection: " << uv_strerror(status);
         return;
     }
-    std::unique_ptr<GrpcConnection> connection = absl::make_unique<GrpcConnection>(
+    std::unique_ptr<GrpcConnection> connection = std::make_unique<GrpcConnection>(
         this, next_grpc_connection_id_++);
     uv_tcp_t* client = reinterpret_cast<uv_tcp_t*>(malloc(sizeof(uv_tcp_t)));
     UV_DCHECK_OK(uv_tcp_init(&uv_loop_, client));
@@ -571,7 +571,7 @@ UV_CONNECTION_CB_FOR_CLASS(Server, MessageConnection) {
         return;
     }
     HLOG(INFO) << "New message connection";
-    std::unique_ptr<MessageConnection> connection = absl::make_unique<MessageConnection>(this);
+    std::unique_ptr<MessageConnection> connection = std::make_unique<MessageConnection>(this);
     uv_pipe_t* client = reinterpret_cast<uv_pipe_t*>(malloc(sizeof(uv_pipe_t)));
     UV_DCHECK_OK(uv_pipe_init(&uv_loop_, client, 0));
     if (uv_accept(UV_AS_STREAM(&uv_ipc_handle_), UV_AS_STREAM(client)) == 0) {

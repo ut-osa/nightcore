@@ -8,7 +8,7 @@ namespace gateway {
 
 constexpr size_t IOWorker::kDefaultBufferSize;
 
-IOWorker::IOWorker(Server* server, absl::string_view worker_name,
+IOWorker::IOWorker(Server* server, std::string_view worker_name,
                    size_t read_buffer_size, size_t write_buffer_size)
     : server_(server), worker_name_(worker_name), state_(kCreated),
       log_header_(absl::StrFormat("%s: ", worker_name)),
@@ -105,7 +105,7 @@ void IOWorker::ScheduleFunction(Connection* owner, std::function<void()> fn) {
         return;
     }
     bool within_my_event_loop = uv::WithinEventLoop(&uv_loop_);
-    std::unique_ptr<ScheduledFunction> function = absl::make_unique<ScheduledFunction>();
+    std::unique_ptr<ScheduledFunction> function = std::make_unique<ScheduledFunction>();
     function->owner = owner;
     function->fn = fn;
     {

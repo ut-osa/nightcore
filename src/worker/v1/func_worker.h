@@ -16,13 +16,13 @@ public:
     FuncWorker();
     ~FuncWorker();
 
-    void set_gateway_ipc_path(absl::string_view path) {
+    void set_gateway_ipc_path(std::string_view path) {
         gateway_ipc_path_ = std::string(path);
     }
     void set_func_id(int func_id) {
         func_id_ = func_id;
     }
-    void set_func_library_path(absl::string_view path) {
+    void set_func_library_path(std::string_view path) {
         func_library_path_ = std::string(path);
     }
     void set_input_pipe_fd(int input_pipe_fd) {
@@ -31,10 +31,10 @@ public:
     void set_output_pipe_fd(int output_pipe_fd) {
         output_pipe_fd_ = output_pipe_fd;
     }
-    void set_shared_mem_path(absl::string_view path) {
+    void set_shared_mem_path(std::string_view path) {
         shared_mem_path_ = std::string(path);
     }
-    void set_func_config_file(absl::string_view path) {
+    void set_func_config_file(std::string_view path) {
         func_config_file_ = std::string(path);
     }
 

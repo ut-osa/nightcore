@@ -13,3 +13,6 @@
 [submodule "deps/nghttp2"]
 	path = deps/nghttp2
 	url = https://github.com/nghttp2/nghttp2.git
+[submodule "deps/GSL"]
+	path = deps/GSL
+	url = https://github.com/microsoft/GSL.git

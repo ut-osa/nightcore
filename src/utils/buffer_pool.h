@@ -8,7 +8,7 @@ namespace utils {
 // BufferPool is NOT thread-safe
 class BufferPool {
 public:
-    explicit BufferPool(absl::string_view pool_name, size_t buffer_size)
+    explicit BufferPool(std::string_view pool_name, size_t buffer_size)
         : pool_name_(std::string(pool_name)), buffer_size_(buffer_size) {}
     ~BufferPool() {}
 

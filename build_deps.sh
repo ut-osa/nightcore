@@ -23,14 +23,14 @@ mkdir -p ${DEPS_INSTALL_PATH}
 
 # Build json
 cd $BASE_DIR/deps/json && rm -rf build && mkdir -p build && cd build && \
-  cmake -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DJSON_BuildTests=OFF -DCMAKE_CXX_STANDARD=11 \
+  cmake -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DJSON_BuildTests=OFF -DCMAKE_CXX_STANDARD=17 \
         -DCMAKE_INSTALL_PREFIX=${DEPS_INSTALL_PATH} .. && \
   make -j$(nproc) install && \
   rm -rf $BASE_DIR/deps/json/build
 
 # Build abseil-cpp
 cd $BASE_DIR/deps/abseil-cpp && rm -rf build && mkdir -p build && cd build && \
-  cmake -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DCMAKE_CXX_STANDARD=11 \
+  cmake -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DCMAKE_CXX_STANDARD=17 \
         -DCMAKE_INSTALL_PREFIX=${DEPS_INSTALL_PATH} .. && \
   make -j$(nproc) install && \
   rm -rf $BASE_DIR/deps/abseil-cpp/build

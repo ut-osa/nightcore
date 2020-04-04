@@ -51,18 +51,18 @@ void SerializingFuncRunner::Start(uv_loop_t* uv_loop) {
 }
 
 void SerializingFuncRunner::OnSubprocessExit(int exit_status,
-                                             absl::Span<const char> stdout,
-                                             absl::Span<const char> stderr) {
+                                             gsl::span<const char> stdout,
+                                             gsl::span<const char> stderr) {
     if (exit_status != 0) {
         HLOG(WARNING) << "Subprocess exits with code " << exit_status;
-        HVLOG(1) << "Subprocess's stderr: " << absl::string_view(stderr.data(), stderr.length());
+        HVLOG(1) << "Subprocess's stderr: " << std::string_view(stderr.data(), stderr.size());
         Complete(kProcessExitAbnormally);
         return;
     }
     utils::SharedMemory::Region* region = shared_memory_->Create(
-        absl::StrCat(call_id_, ".o"), stdout.length());
-    if (stdout.length() > 0) {
-        memcpy(region->base(), stdout.data(), stdout.length());
+        absl::StrCat(call_id_, ".o"), stdout.size());
+    if (stdout.size() > 0) {
+        memcpy(region->base(), stdout.data(), stdout.size());
     }
     region->Close();
 #ifdef __FAAS_ENABLE_PROFILING

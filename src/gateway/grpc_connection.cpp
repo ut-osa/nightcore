@@ -284,7 +284,7 @@ void GrpcConnection::H2SendSettingsFrame() {
 }
 
 bool GrpcConnection::H2ValidateAndPopulateHeader(H2StreamContext* context,
-                                                 absl::string_view name, absl::string_view value) {
+                                                 std::string_view name, std::string_view value) {
     if (absl::StartsWith(name, ":")) {
         // Reserved header
         if (name == ":scheme") {
@@ -292,7 +292,7 @@ bool GrpcConnection::H2ValidateAndPopulateHeader(H2StreamContext* context,
         } else if (name == ":method") {
             return value == "POST";
         } else if (name == ":path") {
-            std::vector<absl::string_view> parts = absl::StrSplit(value, '/', absl::SkipEmpty());
+            std::vector<std::string_view> parts = absl::StrSplit(value, '/', absl::SkipEmpty());
             if (parts.size() != 2) {
                 return false;
             }
@@ -337,7 +337,7 @@ bool GrpcConnection::H2ValidateAndPopulateHeader(H2StreamContext* context,
 }
 
 namespace {
-nghttp2_nv make_h2_nv(absl::string_view name, absl::string_view value) {
+nghttp2_nv make_h2_nv(std::string_view name, std::string_view value) {
     return {
         .name = (uint8_t*) name.data(),
         .value = (uint8_t*) value.data(),
@@ -478,8 +478,8 @@ int GrpcConnection::H2OnStreamClose(int32_t stream_id, uint32_t error_code) {
     return 0;
 }
 
-int GrpcConnection::H2OnHeader(const nghttp2_frame* frame, absl::string_view name,
-                               absl::string_view value, uint8_t flags) {
+int GrpcConnection::H2OnHeader(const nghttp2_frame* frame, std::string_view name,
+                               std::string_view value, uint8_t flags) {
     if (frame->hd.type == NGHTTP2_HEADERS && frame->headers.cat == NGHTTP2_HCAT_REQUEST) {
         H2StreamContext* context = H2GetStreamContext(frame->hd.stream_id);
         if (context->state == H2StreamContext::kError) {
@@ -606,7 +606,7 @@ int GrpcConnection::H2SendData(H2StreamContext* stream_context, nghttp2_frame* f
 int GrpcConnection::H2ErrorCallback(nghttp2_session* session, int lib_error_code, const char* msg,
                                     size_t len, void* user_data) {
     GrpcConnection* self = reinterpret_cast<GrpcConnection*>(user_data);
-    LOG(WARNING) << self->log_header_ << "nghttp2 error: " << absl::string_view(msg, len);
+    LOG(WARNING) << self->log_header_ << "nghttp2 error: " << std::string_view(msg, len);
     return 0;
 }
 
@@ -627,8 +627,8 @@ int GrpcConnection::H2OnHeaderCallback(nghttp2_session* session, const nghttp2_f
                                        const uint8_t* value, size_t valuelen,
                                        uint8_t flags, void* user_data) {
     GrpcConnection* self = reinterpret_cast<GrpcConnection*>(user_data);
-    return self->H2OnHeader(frame, absl::string_view(reinterpret_cast<const char*>(name), namelen),
-                            absl::string_view(reinterpret_cast<const char*>(value), valuelen), flags);
+    return self->H2OnHeader(frame, std::string_view(reinterpret_cast<const char*>(name), namelen),
+                            std::string_view(reinterpret_cast<const char*>(value), valuelen), flags);
 }
 
 int GrpcConnection::H2OnBeginHeadersCallback(nghttp2_session* session,
