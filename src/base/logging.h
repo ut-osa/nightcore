@@ -21,10 +21,10 @@
 #define CHECK(condition) \
     LOG_IF(FATAL, !(condition)) << "Check failed: " #condition " "
 
-#define COMPACT_FAAS_PLOG_INFO    faas::logging::ErrnoLogMessage(__FILE__, __LINE__, faas::logging::INFO)
-#define COMPACT_FAAS_PLOG_WARNING faas::logging::ErrnoLogMessage(__FILE__, __LINE__, faas::logging::WARNING)
-#define COMPACT_FAAS_PLOG_ERROR   faas::logging::ErrnoLogMessage(__FILE__, __LINE__, faas::logging::ERROR)
-#define COMPACT_FAAS_PLOG_FATAL   faas::logging::ErrnoLogMessage(__FILE__, __LINE__, faas::logging::FATAL)
+#define COMPACT_FAAS_PLOG_INFO    faas::logging::LogMessage(__FILE__, __LINE__, faas::logging::INFO, true)
+#define COMPACT_FAAS_PLOG_WARNING faas::logging::LogMessage(__FILE__, __LINE__, faas::logging::WARNING, true)
+#define COMPACT_FAAS_PLOG_ERROR   faas::logging::LogMessage(__FILE__, __LINE__, faas::logging::ERROR, true)
+#define COMPACT_FAAS_PLOG_FATAL   faas::logging::LogMessageFatal(__FILE__, __LINE__, true)
 
 #define PLOG(severity) COMPACT_FAAS_PLOG_##severity.stream()
 #define PLOG_IF(severity, condition) \
@@ -131,17 +131,19 @@ int get_vlog_level();
 
 class LogMessage {
 public:
-    LogMessage(const char* file, int line);
-    LogMessage(const char* file, int line, LogSeverity severity);
-    LogMessage(const char* file, int line, const std::string& result);
+    LogMessage(const char* file, int line, LogSeverity severity = INFO,
+               bool append_err_str = false);
     ~LogMessage();
     std::ostringstream& stream() { return stream_; }
 
 protected:
     void SendToLog(const std::string& message_text);
+    void AppendErrStrIfNecessary();
+
     LogSeverity severity_;
     std::ostringstream stream_;
     int preserved_errno_;
+    bool append_err_str_;
 
 private:
     void Init(const char* file, int line, LogSeverity severity);
@@ -157,25 +159,15 @@ public:
 class LogMessageFatal : public LogMessage {
 public:
     __ATTRIBUTE_NORETURN ~LogMessageFatal();
-    LogMessageFatal(const char* file, int line, LogSeverity severity = FATAL)
-        : LogMessage(file, line, severity) {}
-    LogMessageFatal(const char* file, int line, const std::string& result)
-        : LogMessage(file, line, result) {}
-};
-
-class ErrnoLogMessage : public LogMessage {
-public:
-    ~ErrnoLogMessage();
-    ErrnoLogMessage(const char* file, int line, LogSeverity severity = INFO)
-        : LogMessage(file, line, severity) {}
-    ErrnoLogMessage(const char* file, int line, const std::string& result)
-        : LogMessage(file, line, result) {}
+    LogMessageFatal(const char* file, int line, bool append_err_str = false)
+        : LogMessage(file, line, FATAL, append_err_str) {}
+    LogMessageFatal(const char* file, int line, const std::string& result);
 };
 
 template <typename T>
 T CheckNotNull(const char* file, int line, const char* exprtext, T&& t) {
     if (__PREDICT_FALSE(!t)) {
-        LogMessage(file, line, std::string(exprtext));
+        LogMessageFatal(file, line, std::string(exprtext));
     }
     return std::forward<T>(t);
 }

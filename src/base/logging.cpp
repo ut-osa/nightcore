@@ -12,12 +12,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <signal.h>
 
 namespace faas {
 namespace logging {
 
+namespace {
+
 int vlog_level = 0;
-thread_local bool log_panic = false;
 
 const char* GetBasename(const char* file_path) {
     const char* slash = strrchr(file_path, '/');
@@ -28,6 +30,16 @@ std::string StrError(int err) {
     return std::string(strerror(err));
 }
 
+void Abort() {
+#ifdef __FAAS_SRC
+    raise(SIGABRT);
+#else
+    abort();
+#endif
+}
+
+}
+
 void set_vlog_level(int level) { vlog_level = level; }
 int get_vlog_level() { return vlog_level; }
 
@@ -35,33 +47,14 @@ void Init(int level) {
     set_vlog_level(level);
 }
 
-LogMessage::LogMessage(const char* file, int line) {
-    Init(file, line, INFO);
-}
-
-LogMessage::LogMessage(const char* file, int line, LogSeverity severity) {
-    Init(file, line, severity);
-}
-
-LogMessage::LogMessage(const char* file, int line, const std::string& result) {
-    Init(file, line, FATAL);
-    stream() << "Check failed: " << result << " ";
-}
-
 static constexpr const char* LogSeverityNames[4] = {
     "INFO", "WARN", "ERROR", "FATAL"
 };
 
-void LogMessage::Init(const char* file, int line, LogSeverity severity) {
-    // Disallow recursive fatal messages.
-    if (log_panic) {
-        abort();
-    }
+LogMessage::LogMessage(const char* file, int line, LogSeverity severity, bool append_err_str) {
     severity_ = severity;
     preserved_errno_ = errno;
-    if (severity_ == FATAL) {
-        log_panic = true;
-    }
+    append_err_str_ = append_err_str;
     const char *filename = GetBasename(file);
     // Write a prefix into the log message, including local date/time, severity
     // level, filename, and line number.
@@ -82,34 +75,36 @@ void LogMessage::Init(const char* file, int line, LogSeverity severity) {
 }
 
 LogMessage::~LogMessage() {
+    AppendErrStrIfNecessary();
     std::string message_text = stream_.str();
     SendToLog(message_text);
+    if (severity_ == FATAL) {
+        Abort();
+    }
 }
+
+LogMessageFatal::LogMessageFatal(const char* file, int line, const std::string& result)
+    : LogMessage(file, line, FATAL) { stream() << "Check failed: " << result << " "; }
 
 LogMessageFatal::~LogMessageFatal() {
+    AppendErrStrIfNecessary();
     std::string message_text = stream_.str();
     SendToLog(message_text);
-    // if FATAL occurs, abort enclave.
-    if (severity_ == FATAL) {
-        abort();
-    }
-    _exit(1);
-}
-
-ErrnoLogMessage::~ErrnoLogMessage() {
-    stream() << ": " << StrError(preserved_errno_) << " ["
-             << preserved_errno_ << "]";
-    std::string message_text = stream_.str();
-    SendToLog(message_text);
-    // if FATAL occurs, abort enclave.
-    if (severity_ == FATAL) {
-        abort();
-    }
+    Abort();
+    exit(-1);
 }
 
 void LogMessage::SendToLog(const std::string& message_text) {
     fprintf(stderr, "%s\n", message_text.c_str());
     fflush(stderr);
+}
+
+void LogMessage::AppendErrStrIfNecessary() {
+    if (!append_err_str_) {
+        return;
+    }
+    stream() << ": " << StrError(preserved_errno_) << " ["
+             << preserved_errno_ << "]";
 }
 
 CheckOpMessageBuilder::CheckOpMessageBuilder(const char* exprtext)
@@ -118,7 +113,7 @@ CheckOpMessageBuilder::CheckOpMessageBuilder(const char* exprtext)
 CheckOpMessageBuilder::~CheckOpMessageBuilder() { delete stream_; }
 
 std::ostream* CheckOpMessageBuilder::ForVar2() {
-    *stream_ << " vs. ";
+    *stream_ << " vs ";
     return stream_;
 }
 
