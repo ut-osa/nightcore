@@ -12,7 +12,7 @@ RCOMPILE_FLAGS = -DNDEBUG -O3
 # Additional debug-specific flags
 DCOMPILE_FLAGS = -DDEBUG -g
 # Add additional include paths
-INCLUDES = -I$(SRC_PATH) -I./include -I./deps/out/include -I./deps/GSL/include
+INCLUDES = -I$(SRC_PATH) -I./include -I./deps/out/include -I./deps/json/single_include -I./deps/GSL/include
 # General linker settings
 ABSL_LIBRARIES = $(shell find deps/out/lib/libabsl_*.a -printf '%f\n' \
                    | sed -e 's/libabsl_\([a-z0-9_]\+\)\.a/-labsl_\1/g')
