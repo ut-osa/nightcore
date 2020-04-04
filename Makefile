@@ -21,9 +21,9 @@ LINK_FLAGS = -Ldeps/out/lib \
     -Wl,--start-group $(ABSL_LIBRARIES) -Wl,--end-group \
     -Wl,-Bdynamic -lpthread -ldl -Wl,--gc-sections
 # Additional release-specific linker settings
-RLINK_FLAGS = -Wl,-Bstatic -lglog -Wl,-Bdynamic
+RLINK_FLAGS =
 # Additional debug-specific linker settings
-DLINK_FLAGS = -Wl,-Bstatic -lglogd -Wl,-Bdynamic
+DLINK_FLAGS =
 #### END PROJECT SETTINGS ####
 
 # These options can be overridden in config.mk

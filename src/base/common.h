@@ -15,7 +15,6 @@
 #include <functional>
 #include <algorithm>
 
-#include <glog/logging.h>
 #include <absl/memory/memory.h>
 #include <absl/types/span.h>
 #include <absl/strings/string_view.h>
@@ -30,4 +29,5 @@
 #include <uv.h>
 
 #include "base/macro.h"
+#include "base/logging.h"
 #include "base/thread.h"

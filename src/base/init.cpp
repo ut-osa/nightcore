@@ -1,10 +1,13 @@
 #include "base/init.h"
+#include "base/logging.h"
 #include "base/thread.h"
 
+#include <absl/flags/flag.h>
 #include <absl/flags/parse.h>
 #include <absl/debugging/symbolize.h>
 #include <absl/debugging/failure_signal_handler.h>
-#include <glog/logging.h>
+
+ABSL_FLAG(int, v, 0, "Show all VLOG(m) messages for m <= this.");
 
 namespace faas {
 namespace base {
@@ -16,7 +19,7 @@ void InitMain(int argc, char* argv[],
     absl::InstallFailureSignalHandler(options);
 
     std::vector<char*> unparsed_args = absl::ParseCommandLine(argc, argv);
-    InitGoogleLogging(argv[0]);
+    logging::Init(absl::GetFlag(FLAGS_v));
 
     if (positional_args == nullptr && unparsed_args.size() > 1) {
         LOG(FATAL) << "This program does not accept positional arguments";
