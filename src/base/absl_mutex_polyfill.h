@@ -13,6 +13,8 @@
 #ifdef __FAAS_NODE_ADDON
 // Node.js environment can safely use an no-op polyfill
 
+#include "base/macro.h"  // For DISALLOW_COPY_AND_ASSIGN
+
 namespace absl {
 
 class Mutex {
