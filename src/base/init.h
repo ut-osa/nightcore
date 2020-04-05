@@ -1,5 +1,9 @@
 #pragma once
 
+#ifndef __FAAS_SRC
+#error base/init.h cannot be included outside
+#endif
+
 #include <vector>
 
 namespace faas {

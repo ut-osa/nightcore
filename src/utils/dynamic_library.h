@@ -1,5 +1,9 @@
 #pragma once
 
+#ifndef __FAAS_SRC
+#error utils/dynamic_library.h cannot be included outside
+#endif
+
 #include "base/common.h"
 
 #include <dlfcn.h>

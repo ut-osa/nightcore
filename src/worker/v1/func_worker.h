@@ -1,5 +1,9 @@
 #pragma once
 
+#ifndef __FAAS_SRC
+#error worker/v1/func_worker.h cannot be included outside
+#endif
+
 #include "base/common.h"
 #include "base/thread.h"
 #include "common/stat.h"

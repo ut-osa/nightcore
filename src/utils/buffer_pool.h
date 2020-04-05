@@ -1,5 +1,9 @@
 #pragma once
 
+#ifndef __FAAS_SRC
+#error utils/buffer_pool.h cannot be included outside
+#endif
+
 #include "base/common.h"
 
 namespace faas {

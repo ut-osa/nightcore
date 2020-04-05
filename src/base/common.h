@@ -1,7 +1,7 @@
 #pragma once
 
 #ifdef __FAAS_NODE_ADDON
-#ifndef __FAAS_USED_IN_BINDING
+#if !defined(__FAAS_USED_IN_BINDING) && !defined(__FAAS_NODE_ADDON_SRC)
 #error Need the source file to have __FAAS_USED_IN_BINDING defined
 #endif
 #define __FAAS_CXX_NO_EXCEPTIONS
@@ -34,17 +34,11 @@
 #include <unordered_map>
 #include <unordered_set>
 
-// std::span polyfill
-#include <gsl/span>
-namespace std {
-using gsl::span;
-}  // namespace std
-
 #ifdef __FAAS_SRC
 #define __FAAS_HAVE_ABSL
 #endif
 
-#ifndef __FAAS_USED_IN_BINDING
+#if defined(__FAAS_HAVE_ABSL) && !defined(__FAAS_USED_IN_BINDING)
 
 // Will not include common absl headers in source files
 // with __FAAS_USED_IN_BINDING defined
@@ -67,8 +61,9 @@ using gsl::span;
 #include <absl/functional/bind_front.h>
 #include <absl/algorithm/container.h>
 
-#endif  // !defined(__FAAS_USED_IN_BINDING)
+#endif  // defined(__FAAS_HAVE_ABSL) && !defined(__FAAS_USED_IN_BINDING)
 
 #include "base/macro.h"
 #include "base/logging.h"
+#include "base/std_span_polyfill.h"
 #include "base/absl_mutex_polyfill.h"

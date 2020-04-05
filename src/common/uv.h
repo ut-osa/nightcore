@@ -1,7 +1,7 @@
 #pragma once
 
-#ifdef __FAAS_USED_IN_BINDING
-#error Libuv cannot be used in binding
+#ifndef __FAAS_SRC
+#error common/uv.h cannot be included outside
 #endif
 
 #include "base/common.h"

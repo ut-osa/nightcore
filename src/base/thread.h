@@ -1,5 +1,9 @@
 #pragma once
 
+#ifndef __FAAS_SRC
+#error base/thread.h cannot be included outside
+#endif
+
 #include "base/common.h"
 #include <pthread.h>
 

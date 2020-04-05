@@ -4,7 +4,9 @@
 /deps/out/
 /.release_time
 /.debug_time
-/worker/golang/build
+/worker/golang/build/
+/worker/nodejs/build/
+/worker/nodejs/node_modules/
 
 # Editor related
 /.vscode/
