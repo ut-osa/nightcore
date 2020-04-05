@@ -23,7 +23,7 @@ public:
     void Start();
     void Join();
 
-    std::string_view name() const { return name_; }
+    const char* name() const { return name_.c_str(); }
     int tid() { return tid_; }
     static Thread* current() {
         DCHECK(current_ != nullptr);

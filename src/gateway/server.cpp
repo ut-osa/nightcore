@@ -26,7 +26,7 @@ constexpr size_t Server::kMessageConnectionBufferSize;
 Server::Server()
     : state_(kCreated), port_(-1), grpc_port_(-1), listen_backlog_(kDefaultListenBackLog),
       num_http_workers_(kDefaultNumHttpWorkers), num_ipc_workers_(kDefaultNumIpcWorkers),
-      event_loop_thread_("Server_EventLoop", std::bind(&Server::EventLoopThreadMain, this)),
+      event_loop_thread_("Server/EL", std::bind(&Server::EventLoopThreadMain, this)),
       next_http_connection_id_(0), next_grpc_connection_id_(0),
       next_http_worker_id_(0), next_ipc_worker_id_(0), next_client_id_(1), next_call_id_(0),
       message_delay_stat_(
@@ -96,14 +96,14 @@ void Server::Start() {
     shared_memory_ = std::make_unique<utils::SharedMemory>(shared_mem_path_);
     // Start IO workers
     for (int i = 0; i < num_http_workers_; i++) {
-        auto io_worker = std::make_unique<IOWorker>(this, absl::StrFormat("HttpWorker-%d", i),
+        auto io_worker = std::make_unique<IOWorker>(this, absl::StrFormat("Http-%d", i),
                                                      kHttpConnectionBufferSize);
         InitAndStartIOWorker(io_worker.get());
         http_workers_.push_back(io_worker.get());
         io_workers_.push_back(std::move(io_worker));
     }
     for (int i = 0; i < num_ipc_workers_; i++) {
-        auto io_worker = std::make_unique<IOWorker>(this, absl::StrFormat("IpcWorker-%d", i),
+        auto io_worker = std::make_unique<IOWorker>(this, absl::StrFormat("Ipc-%d", i),
                                                      kMessageConnectionBufferSize,
                                                      kMessageConnectionBufferSize);
         InitAndStartIOWorker(io_worker.get());

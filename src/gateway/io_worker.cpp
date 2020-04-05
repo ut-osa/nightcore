@@ -12,7 +12,7 @@ IOWorker::IOWorker(Server* server, std::string_view worker_name,
                    size_t read_buffer_size, size_t write_buffer_size)
     : server_(server), worker_name_(worker_name), state_(kCreated),
       log_header_(absl::StrFormat("%s: ", worker_name)),
-      event_loop_thread_(absl::StrFormat("%s_EventLoop", worker_name),
+      event_loop_thread_(absl::StrFormat("%s/EL", worker_name),
                          std::bind(&IOWorker::EventLoopThreadMain, this)),
       read_buffer_pool_(absl::StrFormat("%s_Read", worker_name), read_buffer_size),
       write_buffer_pool_(absl::StrFormat("%s_Write", worker_name), write_buffer_size),

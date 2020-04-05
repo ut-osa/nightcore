@@ -14,6 +14,22 @@
 #include <time.h>
 #include <signal.h>
 
+#ifdef __FAAS_SRC
+
+#include <absl/synchronization/notification.h>
+#include "base/thread.h"
+
+#else  // __FAAS_SRC
+
+#include <sys/syscall.h>
+pid_t gettid() {
+    return syscall(SYS_gettid);
+}
+
+#endif  // __FAAS_SRC
+
+#define __PREDICT_FALSE(x) __builtin_expect(x, 0)
+
 namespace faas {
 namespace logging {
 
@@ -47,9 +63,11 @@ void Init(int level) {
     set_vlog_level(level);
 }
 
-static constexpr const char* LogSeverityNames[4] = {
+static constexpr const char* kLogSeverityNames[4] = {
     "INFO", "WARN", "ERROR", "FATAL"
 };
+
+static constexpr const char* kLogSeverityShortNames = "IWEF";
 
 LogMessage::LogMessage(const char* file, int line, LogSeverity severity, bool append_err_str) {
     severity_ = severity;
@@ -59,19 +77,29 @@ LogMessage::LogMessage(const char* file, int line, LogSeverity severity, bool ap
     // Write a prefix into the log message, including local date/time, severity
     // level, filename, and line number.
     struct timespec time_stamp;
-    clock_gettime(CLOCK_REALTIME, &time_stamp);
-    constexpr int kTimeMessageSize = 22;
+    if (__PREDICT_FALSE(clock_gettime(CLOCK_REALTIME, &time_stamp) != 0)) {
+        perror("clock_gettime failed");
+        abort();
+    }
+    constexpr int kBufferSize = 1 /* severity char */ + 14 /* datetime */ + 6 /* usec */
+                              + 1 /* space */ + 8 /* thread name */ + 2 /* space & \0 */;
+    char buffer[kBufferSize];
+    buffer[0] = kLogSeverityShortNames[severity_];
     struct tm datetime;
     memset(&datetime, 0, sizeof(datetime));
-    if (localtime_r(&time_stamp.tv_sec, &datetime)) {
-        char buffer[kTimeMessageSize];
-        strftime(buffer, kTimeMessageSize, "%Y-%m-%d %H:%M:%S ", &datetime);
-        stream() << buffer;
-    } else {
-        // localtime_r returns error. Attach the errno message.
-        stream() << "Failed to get time:" << strerror(errno) << "  ";
+    if (__PREDICT_FALSE(localtime_r(&time_stamp.tv_sec, &datetime) == NULL)) {
+        perror("localtime_r failed");
+        abort();
     }
-    stream() << "[" << LogSeverityNames[severity_] << "] " << filename << ":" << line << "] ";
+    strftime(buffer+1, 14, "%m%d %H:%M:%S", &datetime);
+    buffer[14] = '.';
+    sprintf(buffer+15, "%06d", static_cast<int>(time_stamp.tv_nsec / 1000));
+#ifdef __FAAS_SRC
+    sprintf(buffer+21, " %-8.8s ", base::Thread::current()->name());
+#else
+    sprintf(buffer+21, " %d ", static_cast<int>(gettid()));
+#endif
+    stream() << buffer << filename << ":" << line << "] ";
 }
 
 LogMessage::~LogMessage() {
