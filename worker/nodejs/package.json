@@ -1,8 +1,8 @@
 {
-  "name": "object_wrap",
-  "version": "0.0.0",
-  "description": "Node.js Addons Example #6",
-  "main": "addon.js",
+  "name": "faas",
+  "version": "0.0.1",
+  "description": "FaaS worker library",
+  "main": "index.js",
   "private": true,
   "gypfile": true,
   "dependencies": {
