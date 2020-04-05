@@ -17,9 +17,9 @@ public:
     // All callbacks have to be set before calling Start()
     void Start();
 
-    void OnGatewayIOError(int _errno);
+    void OnGatewayIOError(int errnum);
     void OnGatewayIOError(std::string_view message);
-    void OnWatchdogIOError(int _errno);
+    void OnWatchdogIOError(int errnum);
     void OnWatchdogIOError(std::string_view message);
 
     int watchdog_input_pipe_fd() const { return watchdog_input_pipe_fd_; }

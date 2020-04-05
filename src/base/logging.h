@@ -9,29 +9,6 @@
 #define __PREDICT_TRUE(x)    __builtin_expect(false || (x), true)
 #define __ATTRIBUTE_NORETURN __attribute__((noreturn))
 
-#define COMPACT_FAAS_LOG_INFO    faas::logging::LogMessage(__FILE__, __LINE__)
-#define COMPACT_FAAS_LOG_WARNING faas::logging::LogMessage(__FILE__, __LINE__, faas::logging::WARNING)
-#define COMPACT_FAAS_LOG_ERROR   faas::logging::LogMessage(__FILE__, __LINE__, faas::logging::ERROR)
-#define COMPACT_FAAS_LOG_FATAL   faas::logging::LogMessageFatal(__FILE__, __LINE__)
-
-#define LOG(severity) COMPACT_FAAS_LOG_##severity.stream()
-#define LOG_IF(severity, condition) \
-    !(condition) ? (void)0 : faas::logging::LogMessageVoidify() & LOG(severity)
-#define VLOG(level) LOG_IF(INFO, (level) <= faas::logging::get_vlog_level())
-#define CHECK(condition) \
-    LOG_IF(FATAL, !(condition)) << "Check failed: " #condition " "
-
-#define COMPACT_FAAS_PLOG_INFO    faas::logging::LogMessage(__FILE__, __LINE__, faas::logging::INFO, true)
-#define COMPACT_FAAS_PLOG_WARNING faas::logging::LogMessage(__FILE__, __LINE__, faas::logging::WARNING, true)
-#define COMPACT_FAAS_PLOG_ERROR   faas::logging::LogMessage(__FILE__, __LINE__, faas::logging::ERROR, true)
-#define COMPACT_FAAS_PLOG_FATAL   faas::logging::LogMessageFatal(__FILE__, __LINE__, true)
-
-#define PLOG(severity) COMPACT_FAAS_PLOG_##severity.stream()
-#define PLOG_IF(severity, condition) \
-    !(condition) ? (void)0 : faas::logging::LogMessageVoidify() & PLOG(severity)
-#define PCHECK(condition) \
-    PLOG_IF(FATAL, !(condition)) << "Check failed: " #condition " "
-
 namespace faas {
 namespace logging {
 
@@ -105,27 +82,6 @@ inline uint32_t GetReferenceableValue(uint32_t t) { return t; }
 inline int64_t GetReferenceableValue(int64_t t) { return t; }
 inline uint64_t GetReferenceableValue(uint64_t t) { return t; }
 
-#define CHECK_OP_LOG(name, op, val1, val2, log)            \
-    while (auto _result = std::unique_ptr<std::string>(    \
-           faas::logging::name##Impl(                      \
-               faas::logging::GetReferenceableValue(val1), \
-               faas::logging::GetReferenceableValue(val2), \
-               #val1 " " #op " " #val2)))                  \
-    log(__FILE__, __LINE__, *_result).stream()
-
-#define CHECK_OP(name, op, val1, val2) \
-    CHECK_OP_LOG(name, op, val1, val2, faas::logging::LogMessageFatal)
-
-#define CHECK_EQ(val1, val2) CHECK_OP(Check_EQ, ==, val1, val2)
-#define CHECK_NE(val1, val2) CHECK_OP(Check_NE, !=, val1, val2)
-#define CHECK_LE(val1, val2) CHECK_OP(Check_LE, <=, val1, val2)
-#define CHECK_LT(val1, val2) CHECK_OP(Check_LT, <, val1, val2)
-#define CHECK_GE(val1, val2) CHECK_OP(Check_GE, >=, val1, val2)
-#define CHECK_GT(val1, val2) CHECK_OP(Check_GT, >, val1, val2)
-
-#define CHECK_NOTNULL(val) \
-    faas::logging::CheckNotNull(__FILE__, __LINE__, "'" #val "' Must be non NULL", (val))
-
 void set_vlog_level(int level);
 int get_vlog_level();
 
@@ -172,6 +128,55 @@ T CheckNotNull(const char* file, int line, const char* exprtext, T&& t) {
     return std::forward<T>(t);
 }
 
+}  // namespace logging
+}  // namespace faas
+
+// Start public macro definitions
+
+#define COMPACT_FAAS_LOG_INFO    faas::logging::LogMessage(__FILE__, __LINE__)
+#define COMPACT_FAAS_LOG_WARNING faas::logging::LogMessage(__FILE__, __LINE__, faas::logging::WARNING)
+#define COMPACT_FAAS_LOG_ERROR   faas::logging::LogMessage(__FILE__, __LINE__, faas::logging::ERROR)
+#define COMPACT_FAAS_LOG_FATAL   faas::logging::LogMessageFatal(__FILE__, __LINE__)
+
+#define LOG(severity) COMPACT_FAAS_LOG_##severity.stream()
+#define LOG_IF(severity, condition) \
+    !(condition) ? (void)0 : faas::logging::LogMessageVoidify() & LOG(severity)
+#define VLOG(level) LOG_IF(INFO, (level) <= faas::logging::get_vlog_level())
+#define CHECK(condition) \
+    LOG_IF(FATAL, !(condition)) << "Check failed: " #condition " "
+
+#define COMPACT_FAAS_PLOG_INFO    faas::logging::LogMessage(__FILE__, __LINE__, faas::logging::INFO, true)
+#define COMPACT_FAAS_PLOG_WARNING faas::logging::LogMessage(__FILE__, __LINE__, faas::logging::WARNING, true)
+#define COMPACT_FAAS_PLOG_ERROR   faas::logging::LogMessage(__FILE__, __LINE__, faas::logging::ERROR, true)
+#define COMPACT_FAAS_PLOG_FATAL   faas::logging::LogMessageFatal(__FILE__, __LINE__, true)
+
+#define PLOG(severity) COMPACT_FAAS_PLOG_##severity.stream()
+#define PLOG_IF(severity, condition) \
+    !(condition) ? (void)0 : faas::logging::LogMessageVoidify() & PLOG(severity)
+#define PCHECK(condition) \
+    PLOG_IF(FATAL, !(condition)) << "Check failed: " #condition " "
+
+#define CHECK_OP_LOG(name, op, val1, val2, log)            \
+    while (auto _result = std::unique_ptr<std::string>(    \
+           faas::logging::name##Impl(                      \
+               faas::logging::GetReferenceableValue(val1), \
+               faas::logging::GetReferenceableValue(val2), \
+               #val1 " " #op " " #val2)))                  \
+    log(__FILE__, __LINE__, *_result).stream()
+
+#define CHECK_OP(name, op, val1, val2) \
+    CHECK_OP_LOG(name, op, val1, val2, faas::logging::LogMessageFatal)
+
+#define CHECK_EQ(val1, val2) CHECK_OP(Check_EQ, ==, val1, val2)
+#define CHECK_NE(val1, val2) CHECK_OP(Check_NE, !=, val1, val2)
+#define CHECK_LE(val1, val2) CHECK_OP(Check_LE, <=, val1, val2)
+#define CHECK_LT(val1, val2) CHECK_OP(Check_LT, <, val1, val2)
+#define CHECK_GE(val1, val2) CHECK_OP(Check_GE, >=, val1, val2)
+#define CHECK_GT(val1, val2) CHECK_OP(Check_GT, >, val1, val2)
+
+#define CHECK_NOTNULL(val) \
+    faas::logging::CheckNotNull(__FILE__, __LINE__, "'" #val "' Must be non NULL", (val))
+
 #if defined(NDEBUG) && !defined(DCHECK_ALWAYS_ON)
 #define DCHECK_IS_ON() 0
 #else
@@ -213,9 +218,6 @@ T CheckNotNull(const char* file, int line, const char* exprtext, T&& t) {
 #endif  // DCHECK_IS_ON()
 
 #define DVLOG(level) DLOG_IF(INFO, (level) <= faas::logging::get_vlog_level())
-
-}  // namespace logging
-}  // namespace faas
 
 #undef __PREDICT_FALSE
 #undef __PREDICT_TRUE

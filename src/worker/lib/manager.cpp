@@ -38,8 +38,8 @@ Manager::~Manager() {
     LOG(INFO) << "worker_lib::Manager deleted";
 }
 
-void Manager::OnGatewayIOError(int _errno) {
-    errno = _errno;
+void Manager::OnGatewayIOError(int errnum) {
+    errno = errnum;
     PLOG(FATAL) << "Gateway IO failed";
 }
 
@@ -47,8 +47,8 @@ void Manager::OnGatewayIOError(std::string_view message) {
     LOG(FATAL) << "Gateway IO failed: " << message;
 }
 
-void Manager::OnWatchdogIOError(int _errno) {
-    errno = _errno;
+void Manager::OnWatchdogIOError(int errnum) {
+    errno = errnum;
     PLOG(FATAL) << "Watchdog IO failed";
 }
 

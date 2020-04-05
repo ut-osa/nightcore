@@ -44,10 +44,6 @@ const char* GetBasename(const char* file_path) {
     return slash ? slash + 1 : file_path;
 }
 
-std::string StrError(int err) {
-    return std::string(strerror(err));
-}
-
 void Abort() {
 #ifdef __FAAS_SRC
     raise(SIGABRT);
@@ -75,7 +71,7 @@ LogMessage::LogMessage(const char* file, int line, LogSeverity severity, bool ap
     severity_ = severity;
     preserved_errno_ = errno;
     append_err_str_ = append_err_str;
-    const char *filename = GetBasename(file);
+    const char* filename = GetBasename(file);
     // Write a prefix into the log message, including local date/time, severity
     // level, filename, and line number.
     struct timespec time_stamp;
@@ -121,7 +117,7 @@ LogMessageFatal::~LogMessageFatal() {
     std::string message_text = stream_.str();
     SendToLog(message_text);
     Abort();
-    exit(-1);
+    exit(EXIT_FAILURE);
 }
 
 absl::Mutex stderr_mu;
@@ -133,11 +129,9 @@ void LogMessage::SendToLog(const std::string& message_text) {
 }
 
 void LogMessage::AppendErrStrIfNecessary() {
-    if (!append_err_str_) {
-        return;
+    if (append_err_str_) {
+        stream() << ": " << strerror(append_err_str_) << " [" << preserved_errno_ << "]";
     }
-    stream() << ": " << StrError(preserved_errno_) << " ["
-             << preserved_errno_ << "]";
 }
 
 CheckOpMessageBuilder::CheckOpMessageBuilder(const char* exprtext)

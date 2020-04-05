@@ -110,8 +110,8 @@ void WorkerManager::OnGatewayIOError(const Nan::FunctionCallbackInfo<v8::Value>&
     v8::Local<v8::Context> context = info.GetIsolate()->GetCurrentContext();
     WorkerManager* obj = ObjectWrap::Unwrap<WorkerManager>(info.Holder());
     if (info[0]->IsNumber()) {
-        int32_t _errno = info[0]->Int32Value(context).FromJust();
-        obj->inner_->OnGatewayIOError(_errno);
+        int32_t errnum = info[0]->Int32Value(context).FromJust();
+        obj->inner_->OnGatewayIOError(errnum);
     } else {
         obj->inner_->OnGatewayIOError(v8_string_to_std_string(info[0]));
     }
@@ -126,8 +126,8 @@ void WorkerManager::OnWatchdogIOError(const Nan::FunctionCallbackInfo<v8::Value>
     v8::Local<v8::Context> context = info.GetIsolate()->GetCurrentContext();
     WorkerManager* obj = ObjectWrap::Unwrap<WorkerManager>(info.Holder());
     if (info[0]->IsNumber()) {
-        int32_t _errno = info[0]->Int32Value(context).FromJust();
-        obj->inner_->OnWatchdogIOError(_errno);
+        int32_t errnum = info[0]->Int32Value(context).FromJust();
+        obj->inner_->OnWatchdogIOError(errnum);
     } else {
         obj->inner_->OnWatchdogIOError(v8_string_to_std_string(info[0]));
     }
