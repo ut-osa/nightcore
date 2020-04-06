@@ -57,9 +57,8 @@ private:
     size_t max_stdout_size_;
     size_t max_stderr_size_;
     int exit_status_;
+    uv::HandleScope handle_scope_;
     ExitCallback exit_callback_;
-    int closed_uv_handles_;
-    int total_uv_handles_;
 
     std::vector<int> std_fds_;
     std::vector<uv_stdio_flags> pipe_types_;
@@ -73,11 +72,12 @@ private:
     utils::AppendableBuffer stdout_;
     utils::AppendableBuffer stderr_;
 
+    void OnAllHandlesClosed();
+
     DECLARE_UV_ALLOC_CB_FOR_CLASS(BufferAlloc);
     DECLARE_UV_READ_CB_FOR_CLASS(ReadStdout);
     DECLARE_UV_READ_CB_FOR_CLASS(ReadStderr);
     DECLARE_UV_EXIT_CB_FOR_CLASS(ProcessExit);
-    DECLARE_UV_CLOSE_CB_FOR_CLASS(Close);
 
     DISALLOW_COPY_AND_ASSIGN(Subprocess);
 };

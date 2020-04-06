@@ -48,8 +48,6 @@ void MessageConnection::ScheduleClose() {
         return;
     }
     DCHECK(state_ == kHandshake || state_ == kRunning);
-    closed_uv_handles_ = 0;
-    total_uv_handles_ = 1;
     uv_close(UV_AS_HANDLE(&uv_pipe_handle_), &MessageConnection::CloseCallback);
     state_ = kClosing;
 }
@@ -122,7 +120,7 @@ void MessageConnection::WriteMessage(const Message& message) {
         pending_messages_.push_back(message);
     }
     io_worker_->ScheduleFunction(
-        this, absl::bind_front(&MessageConnection::SendPendingMessages, this));
+        this, std::bind(&MessageConnection::SendPendingMessages, this));
 }
 
 UV_ALLOC_CB_FOR_CLASS(MessageConnection, BufferAlloc) {
@@ -195,12 +193,9 @@ UV_WRITE_CB_FOR_CLASS(MessageConnection, WriteMessage) {
 }
 
 UV_CLOSE_CB_FOR_CLASS(MessageConnection, Close) {
-    DCHECK_LT(closed_uv_handles_, total_uv_handles_);
-    closed_uv_handles_++;
-    if (closed_uv_handles_ == total_uv_handles_) {
-        state_ = kClosed;
-        io_worker_->OnConnectionClose(this);
-    }
+    DCHECK(state_ == kClosing);
+    state_ = kClosed;
+    io_worker_->OnConnectionClose(this);
 }
 
 }  // namespace gateway

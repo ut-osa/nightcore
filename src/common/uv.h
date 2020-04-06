@@ -183,3 +183,44 @@ inline bool WithinEventLoop(uv_loop_t* uv_loop) {
         self->On##FnName(exit_status, term_signal);                           \
     }                                                                         \
     void ClassName::On##FnName(int64_t exit_status, int term_signal)
+
+
+namespace faas {
+namespace uv {
+
+class HandleScope : public Base {
+public:
+    HandleScope();
+    ~HandleScope();
+
+    // finish_callback is invoked when all handles are closed
+    void Init(uv_loop_t* loop, std::function<void()> finish_callback);
+
+    void AddHandle(uv_handle_t* handle);
+    void CloseHandle(uv_handle_t* handle);
+
+    void AddHandle(uv_stream_t* handle) { AddHandle(UV_AS_HANDLE(handle)); }
+    void AddHandle(uv_pipe_t* handle) { AddHandle(UV_AS_HANDLE(handle)); }
+    void AddHandle(uv_tcp_t* handle) { AddHandle(UV_AS_HANDLE(handle)); }
+    void AddHandle(uv_async_t* handle) { AddHandle(UV_AS_HANDLE(handle)); }
+    void AddHandle(uv_process_t* handle) { AddHandle(UV_AS_HANDLE(handle)); }
+
+    void CloseHandle(uv_stream_t* handle) { CloseHandle(UV_AS_HANDLE(handle)); }
+    void CloseHandle(uv_pipe_t* handle) { CloseHandle(UV_AS_HANDLE(handle)); }
+    void CloseHandle(uv_tcp_t* handle) { CloseHandle(UV_AS_HANDLE(handle)); }
+    void CloseHandle(uv_async_t* handle) { CloseHandle(UV_AS_HANDLE(handle)); }
+    void CloseHandle(uv_process_t* handle) { CloseHandle(UV_AS_HANDLE(handle)); }
+
+private:
+    uv_loop_t* loop_;
+    std::function<void()> finish_callback_;
+    absl::flat_hash_set<uv_handle_t*> handles_;
+    int num_handles_on_closing_;
+
+    DECLARE_UV_CLOSE_CB_FOR_CLASS(HandleClose);
+
+    DISALLOW_COPY_AND_ASSIGN(HandleScope);
+};
+
+}  // namespace uv
+}  // namespace faas

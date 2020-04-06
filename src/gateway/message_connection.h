@@ -38,8 +38,6 @@ private:
     uint16_t func_id_;
     uint16_t client_id_;
     uv_pipe_t uv_pipe_handle_;
-    int closed_uv_handles_;
-    int total_uv_handles_;
 
     std::string log_header_;
 

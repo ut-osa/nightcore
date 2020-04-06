@@ -132,8 +132,6 @@ void GrpcConnection::ScheduleClose() {
         call_context->OnStreamClose();
     }
     grpc_calls_.clear();
-    closed_uv_handles_ = 0;
-    total_uv_handles_ = 1;
     uv_close(UV_AS_HANDLE(&uv_tcp_handle_), &GrpcConnection::CloseCallback);
     state_ = kClosing;
 }
@@ -198,12 +196,9 @@ UV_ALLOC_CB_FOR_CLASS(GrpcConnection, BufferAlloc) {
 }
 
 UV_CLOSE_CB_FOR_CLASS(GrpcConnection, Close) {
-    DCHECK_LT(closed_uv_handles_, total_uv_handles_);
-    closed_uv_handles_++;
-    if (closed_uv_handles_ == total_uv_handles_) {
-        state_ = kClosed;
-        io_worker_->OnConnectionClose(this);
-    }
+    DCHECK(state_ == kClosing);
+    state_ = kClosed;
+    io_worker_->OnConnectionClose(this);
 }
 
 GrpcConnection::H2StreamContext* GrpcConnection::H2NewStreamContext(int stream_id) {
@@ -424,7 +419,7 @@ void GrpcConnection::OnGrpcCallFinish(int32_t stream_id) {
 
 void GrpcConnection::GrpcCallFinish(GrpcCallContext* call_context) {
     io_worker_->ScheduleFunction(
-        this, absl::bind_front(
+        this, std::bind(
             &GrpcConnection::OnGrpcCallFinish,
             this, call_context->h2_stream_id_));
 }

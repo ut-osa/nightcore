@@ -61,8 +61,6 @@ void HttpConnection::ScheduleClose() {
         async_request_context_ = nullptr;
         within_async_request_ = false;
     }
-    closed_uv_handles_ = 0;
-    total_uv_handles_ = 1;
     uv_close(UV_AS_HANDLE(&uv_tcp_handle_), &HttpConnection::CloseCallback);
     state_ = kClosing;
 }
@@ -128,14 +126,8 @@ UV_ALLOC_CB_FOR_CLASS(HttpConnection, BufferAlloc) {
 
 UV_CLOSE_CB_FOR_CLASS(HttpConnection, Close) {
     DCHECK(state_ == kClosing);
-    DCHECK_LT(closed_uv_handles_, total_uv_handles_);
-    closed_uv_handles_++;
-    if (closed_uv_handles_ == total_uv_handles_) {
-        state_ = kClosed;
-        IOWorker* io_worker = io_worker_;
-        io_worker_ = nullptr;
-        io_worker->OnConnectionClose(this);
-    }
+    state_ = kClosed;
+    io_worker_->OnConnectionClose(this);
 }
 
 void HttpConnection::HttpParserOnMessageBegin() {
@@ -287,7 +279,7 @@ void HttpConnection::OnAsyncRequestFinish() {
 
 void HttpConnection::AsyncRequestFinish(HttpAsyncRequestContext* context) {
     io_worker_->ScheduleFunction(
-        this, absl::bind_front(&HttpConnection::OnAsyncRequestFinish, this));
+        this, std::bind(&HttpConnection::OnAsyncRequestFinish, this));
 }
 
 void HttpConnection::SendHttpResponse() {

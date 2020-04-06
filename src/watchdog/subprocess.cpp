@@ -59,6 +59,7 @@ bool Subprocess::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool,
                        ExitCallback exit_callback) {
     read_buffer_pool_ = read_buffer_pool;
     exit_callback_ = exit_callback;
+    handle_scope_.Init(uv_loop, std::bind(&Subprocess::OnAllHandlesClosed, this));
     uv_process_options_t options;
     memset(&options, 0, sizeof(uv_process_options_t));
     options.exit_cb = &Subprocess::ProcessExitCallback;
@@ -83,8 +84,6 @@ bool Subprocess::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool,
     std::vector<uv_stdio_container_t> stdio(num_pipes);
     uv_pipe_handles_.resize(num_pipes);
     pipe_closed_.assign(num_pipes, false);
-    closed_uv_handles_ = 0;
-    total_uv_handles_ = 1;
     for (int i = 0; i < num_pipes; i++) {
         uv_pipe_t* uv_pipe = &uv_pipe_handles_[i];
         if (i < kNumStdPipes && std_fds_[i] != -1) {
@@ -94,9 +93,9 @@ bool Subprocess::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool,
         } else {
             UV_DCHECK_OK(uv_pipe_init(uv_loop, uv_pipe, 0));
             uv_pipe->data = this;
+            handle_scope_.AddHandle(uv_pipe);
             stdio[i].flags = static_cast<uv_stdio_flags>(UV_CREATE_PIPE | pipe_types_[i]);
             stdio[i].data.stream = UV_AS_STREAM(uv_pipe);
-            total_uv_handles_++;
         }
     }
     options.stdio_count = num_pipes;
@@ -105,6 +104,7 @@ bool Subprocess::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool,
     if (uv_spawn(uv_loop, &uv_process_handle_, &options) != 0) {
         return false;
     }
+    handle_scope_.AddHandle(&uv_process_handle_);
     if (std_fds_[kStdout] == -1) {
         UV_DCHECK_OK(uv_read_start(UV_AS_STREAM(&uv_pipe_handles_[kStdout]),
                                    &Subprocess::BufferAllocCallback, &Subprocess::ReadStdoutCallback));
@@ -147,13 +147,17 @@ void Subprocess::ClosePipe(int fd) {
     }
     pipe_closed_[fd] = true;
     uv_pipe_t* uv_pipe = &uv_pipe_handles_[fd];
-    uv_pipe->data = this;
-    uv_close(UV_AS_HANDLE(uv_pipe), &Subprocess::CloseCallback);
+    handle_scope_.CloseHandle(uv_pipe);
 }
 
 bool Subprocess::PipeClosed(int fd) {
     DCHECK(state_ != kCreated);
     return pipe_closed_[fd];
+}
+
+void Subprocess::OnAllHandlesClosed() {
+    DCHECK(state_ == kExited);
+    exit_callback_(exit_status_, stdout_.to_span(), stderr_.to_span());
 }
 
 UV_ALLOC_CB_FOR_CLASS(Subprocess, BufferAlloc) {
@@ -209,17 +213,8 @@ UV_EXIT_CB_FOR_CLASS(Subprocess, ProcessExit) {
     for (size_t i = 0; i < uv_pipe_handles_.size(); i++) {
         ClosePipe(i);
     }
-    uv_close(UV_AS_HANDLE(&uv_process_handle_), &Subprocess::CloseCallback);
+    handle_scope_.CloseHandle(&uv_process_handle_);
     state_ = kExited;
-}
-
-UV_CLOSE_CB_FOR_CLASS(Subprocess, Close) {
-    DCHECK_LT(closed_uv_handles_, total_uv_handles_);
-    closed_uv_handles_++;
-    if (closed_uv_handles_ == total_uv_handles_) {
-        state_ = kClosed;
-        exit_callback_(exit_status_, stdout_.to_span(), stderr_.to_span());
-    }
 }
 
 }  // namespace watchdog

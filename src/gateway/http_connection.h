@@ -34,8 +34,6 @@ private:
     IOWorker* io_worker_;
     uv_tcp_t uv_tcp_handle_;
     State state_;
-    int closed_uv_handles_;
-    int total_uv_handles_;
 
     std::string log_header_;
 
