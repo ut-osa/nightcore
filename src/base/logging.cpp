@@ -31,6 +31,7 @@ pid_t gettid() {
 #endif  // __FAAS_SRC
 
 #define __PREDICT_FALSE(x) __builtin_expect(x, 0)
+#define __ATTRIBUTE_UNUSED __attribute__((unused))
 
 namespace faas {
 namespace logging {
@@ -61,7 +62,7 @@ void Init(int level) {
     set_vlog_level(level);
 }
 
-static constexpr const char* kLogSeverityNames[4] = {
+__ATTRIBUTE_UNUSED static constexpr const char* kLogSeverityNames[4] = {
     "INFO", "WARN", "ERROR", "FATAL"
 };
 
