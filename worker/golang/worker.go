@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"sync/atomic"
 )
@@ -37,20 +39,21 @@ type FuncInvocation struct {
 
 func newWorker(config WorkerConfig) (*Worker, error) {
 	w := new(Worker)
-	funcLibrary, err := newFuncLibrary(config.funcLibraryPath)
-	if err != nil {
-		return nil, err
-	}
-	w.funcLibrary = funcLibrary
 	w.funcId = uint16(config.funcId)
 	funcConfig, err := newFuncConfig(config.funcConfigPath)
 	if err != nil {
 		return nil, err
 	}
 	w.funcConfig = funcConfig
-	if w.funcConfig.findByFuncId(w.funcId) == nil {
+	funcConfigEntry := w.funcConfig.findByFuncId(w.funcId)
+	if funcConfigEntry == nil {
 		return nil, fmt.Errorf("Cannot find func_id %d in func_config file", w.funcId)
 	}
+	funcLibrary, err := newFuncLibrary(config.funcLibraryPath, funcConfigEntry)
+	if err != nil {
+		return nil, err
+	}
+	w.funcLibrary = funcLibrary
 	shm, err := newSharedMemory(config.shmBasePath)
 	if err != nil {
 		return nil, err
@@ -76,7 +79,14 @@ func (w *Worker) handshakeWithGateway() error {
 
 // Implement types.Environment
 func (w *Worker) InvokeFunc(ctx context.Context, funcName string, input []byte) ([]byte, error) {
+	if strings.HasPrefix(funcName, "grpc:") {
+		return nil, fmt.Errorf("Function handler should use GrpcCall to invoke gRPC methods")
+	}
 	return w.invokeFunc(ctx, funcName, input)
+}
+
+func (w *Worker) GrpcCall(ctx context.Context, service string, method string, request []byte) ([]byte, error) {
+	return w.grpcCall(ctx, service, method, request)
 }
 
 func (w *Worker) serve() {
@@ -172,6 +182,22 @@ func (w *Worker) invokeFunc(ctx context.Context, funcName string, input []byte) 
 	w.shm.close(outputShm)
 	w.shm.remove(fmt.Sprintf("%d.o", fullFuncCallId(funcCall)))
 	return output, nil
+}
+
+func (w *Worker) grpcCall(ctx context.Context, service string, method string, request []byte) ([]byte, error) {
+	funcName := "grpc:" + service
+	funcConfigEntry := w.funcConfig.findByFuncName(funcName)
+	if funcConfigEntry == nil {
+		return nil, fmt.Errorf("Cannot find gRPC service %s", service)
+	}
+	if !funcConfigEntry.hasGrpcMethod(method) {
+		return nil, fmt.Errorf("Cannot find method %s for gRPC service %s", method, service)
+	}
+	var input bytes.Buffer
+	input.WriteString(method)
+	input.WriteByte('\x00')
+	input.Write(request)
+	return w.invokeFunc(ctx, funcName, input.Bytes())
 }
 
 func (w *Worker) onWatchdogMessage(message Message) {
