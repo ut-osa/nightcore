@@ -24,7 +24,7 @@ mkdir -p ${DEPS_INSTALL_PATH}
 # Build abseil-cpp
 cd $BASE_DIR/deps/abseil-cpp && rm -rf build && mkdir -p build && cd build && \
   cmake -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DCMAKE_CXX_STANDARD=17 \
-        -DCMAKE_INSTALL_PREFIX=${DEPS_INSTALL_PATH} .. && \
+        -DCMAKE_INSTALL_PREFIX=${DEPS_INSTALL_PATH} -DCMAKE_INSTALL_LIBDIR=lib .. && \
   make -j$(nproc) install && \
   rm -rf $BASE_DIR/deps/abseil-cpp/build
 
@@ -37,7 +37,7 @@ cd $BASE_DIR/deps/http-parser && make clean && make package && \
 # Build libuv
 cd $BASE_DIR/deps/libuv && rm -rf build && mkdir -p build && cd build && \
   cmake -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DLIBUV_BUILD_TESTS=OFF \
-        -DCMAKE_INSTALL_PREFIX=${DEPS_INSTALL_PATH} .. && \
+        -DCMAKE_INSTALL_PREFIX=${DEPS_INSTALL_PATH} -DCMAKE_INSTALL_LIBDIR=lib .. && \
   make -j$(nproc) install && \
   rm -rf $BASE_DIR/deps/libuv/build
 
@@ -45,6 +45,6 @@ cd $BASE_DIR/deps/libuv && rm -rf build && mkdir -p build && cd build && \
 cd $BASE_DIR/deps/nghttp2 && rm -rf build && mkdir -p build && cd build && \
   cmake -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DENABLE_LIB_ONLY=ON \
         -DENABLE_ASIO_LIB=OFF -DENABLE_STATIC_LIB=ON -DWITH_JEMALLOC=OFF \
-        -DCMAKE_INSTALL_PREFIX=${DEPS_INSTALL_PATH} .. && \
+        -DCMAKE_INSTALL_PREFIX=${DEPS_INSTALL_PATH} -DCMAKE_INSTALL_LIBDIR=lib .. && \
   make -j$(nproc) install && \
   rm -rf $BASE_DIR/deps/nghttp2/build

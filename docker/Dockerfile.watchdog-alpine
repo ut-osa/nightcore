@@ -1,0 +1,11 @@
+FROM alpine as builder
+RUN apk add --update --no-cache linux-headers bash findutils make gcc g++ cmake
+
+WORKDIR /faas
+COPY . .
+RUN ./build_deps.sh && make -j $(nproc) release
+
+FROM alpine as release
+RUN apk add --update --no-cache libstdc++
+WORKDIR /faas/bin
+COPY --from=builder /faas/bin/release/watchdog /faas/bin/watchdog

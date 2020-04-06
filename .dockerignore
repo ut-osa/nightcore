@@ -1,0 +1,16 @@
+/.git/
+/tmp/
+
+/bin/
+/build/
+
+/deps/out
+/deps/abseil-cpp/build/
+/deps/libuv/build/
+/deps/nghttp2/build/
+/deps/json/benchmarks/
+/deps/json/test/
+
+/worker/golang/build/
+/worker/nodejs/build/
+/worker/nodejs/node_modules/
