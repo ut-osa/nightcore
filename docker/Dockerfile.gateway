@@ -18,4 +18,4 @@ WORKDIR /faas
 COPY --from=builder /faas/bin/release/gateway /faas/bin/gateway
 COPY --from=builder /usr/local/lib/libjemalloc.so /faas/lib/libjemalloc.so
 ENV LD_PRELOAD=/faas/lib/libjemalloc.so
-ENTRYPOINT /faas/bin/gateway
+ENTRYPOINT ["/faas/bin/gateway"]

@@ -11,3 +11,6 @@ TAG=git-$GIT_HASH-$DATE
   docker build -t zjia/faas-watchdog-bionic:$TAG -f ./docker/Dockerfile.watchdog-bionic . )
 ( cd $ROOT_DIR &&
   docker build -t zjia/faas-watchdog-alpine:$TAG -f ./docker/Dockerfile.watchdog-alpine . )
+( cd $ROOT_DIR &&
+  docker build -t zjia/faas-worker-golang:$TAG -f ./docker/Dockerfile.worker-golang \
+               --build-arg WATCHDOG_TAG=$TAG . )
