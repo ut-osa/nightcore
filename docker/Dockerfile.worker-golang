@@ -7,15 +7,19 @@ RUN apt update && apt upgrade -y && \
 ARG GO_VER=1.13.9
 WORKDIR /
 RUN wget https://dl.google.com/go/go${GO_VER}.linux-amd64.tar.gz && \
-    tar -xzf go${GO_VER}.linux-amd64.tar.gz
+    tar -xzf go${GO_VER}.linux-amd64.tar.gz -C /usr/local && \
+    rm go${GO_VER}.linux-amd64.tar.gz
+ENV GOPATH=/go
+ENV PATH=/usr/local/go/bin:$PATH
 
-COPY . /faas
-WORKDIR /faas/worker/golang
-RUN GOPATH=/go PATH=/go/bin:$PATH ./build.sh
+COPY ./worker/golang $GOPATH/src/cs.utexas.edu/zjia/faas
+WORKDIR $GOPATH/src/cs.utexas.edu/zjia/faas
+ENV GO111MODULE=on
+RUN go build -a -ldflags "-s -w" -o /faas/bin/worker_golang
 
 FROM zjia/faas-watchdog-bionic:${WATCHDOG_TAG} as release
 WORKDIR /faas/bin
-COPY --from=builder /faas/worker/golang/build/main /faas/bin/worker_golang
-COPY --from=builder /faas/docker/golang_func_wrapper /faas/bin/golang_func_wrapper
+COPY --from=builder /faas/bin/worker_golang /faas/bin/worker_golang
+COPY ./docker/golang_func_wrapper /faas/bin/golang_func_wrapper
 RUN chmod +x /faas/bin/golang_func_wrapper
 ENTRYPOINT ["/faas/bin/golang_func_wrapper"]
