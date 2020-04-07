@@ -1,6 +1,7 @@
 #include "watchdog/func_worker.h"
 
 #include "common/time.h"
+#include "utils/fs.h"
 #include "watchdog/func_runner.h"
 #include "watchdog/watchdog.h"
 
@@ -30,12 +31,12 @@ void FuncWorker::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool) 
     read_buffer_pool_ = read_buffer_pool;
     input_pipe_fd_ = subprocess_.CreateReadablePipe();
     output_pipe_fd_ = subprocess_.CreateWritablePipe();
-    subprocess_.AddEnvVariable("GATEWAY_IPC_PATH", watchdog_->gateway_ipc_path());
+    subprocess_.AddEnvVariable("GATEWAY_IPC_PATH", fs_utils::GetRealPath(watchdog_->gateway_ipc_path()));
     subprocess_.AddEnvVariable("FUNC_ID", watchdog_->func_id());
     subprocess_.AddEnvVariable("INPUT_PIPE_FD", input_pipe_fd_);
     subprocess_.AddEnvVariable("OUTPUT_PIPE_FD", output_pipe_fd_);
-    subprocess_.AddEnvVariable("SHARED_MEMORY_PATH", watchdog_->shared_mem_path());
-    subprocess_.AddEnvVariable("FUNC_CONFIG_FILE", watchdog_->func_config_file());
+    subprocess_.AddEnvVariable("SHARED_MEMORY_PATH", fs_utils::GetRealPath(watchdog_->shared_mem_path()));
+    subprocess_.AddEnvVariable("FUNC_CONFIG_FILE", fs_utils::GetRealPath(watchdog_->func_config_file()));
     subprocess_.AddEnvVariable("WORKER_ID", worker_id_);
     subprocess_.AddEnvVariable("GOMAXPROCS", watchdog_->go_max_procs());
     if (!watchdog_->func_worker_output_dir().empty()) {
@@ -47,6 +48,9 @@ void FuncWorker::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool) 
         subprocess_.SetStandardFile(Subprocess::kStderr,
                                     absl::StrFormat("%s/%s_worker_%d.stderr",
                                                     output_dir, func_name, worker_id_));
+    }
+    if (!watchdog_->fprocess_working_dir().empty()) {
+        subprocess_.SetWorkingDir(watchdog_->fprocess_working_dir());
     }
     CHECK(subprocess_.Start(uv_loop, read_buffer_pool,
                             absl::bind_front(&FuncWorker::OnSubprocessExit, this)))

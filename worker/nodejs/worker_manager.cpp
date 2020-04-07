@@ -20,26 +20,13 @@ std::string v8_string_to_std_string(const v8::Local<v8::Value>& str) {
 
 Nan::Persistent<v8::Function> WorkerManager::constructor;
 
-WorkerManager::WorkerManager() : inner_(new faas::worker_lib::Manager()) {
-    inner_->SetSendGatewayDataCallback([this] (std::span<const char> data) {
-        SendGatewayDataCallback(data);
-    });
-    inner_->SetSendWatchdogDataCallback([this] (std::span<const char> data) {
-        SendWatchdogDataCallback(data);
-    });
-    inner_->SetIncomingFuncCallCallback([this] (uint32_t handle, std::span<const char> input) {
-        IncomingFuncCallCallback(handle, input);
-    });
-    inner_->SetOutcomingFuncCallCompleteCallback([this] (uint32_t handle, bool success,
-                                                         std::span<const char> output) {
-        OutcomingFuncCallCompleteCallback(handle, success, output);
-    });
-}
+WorkerManager::WorkerManager() : inner_(new faas::worker_lib::Manager()) {}
 
 WorkerManager::~WorkerManager() {
     send_gateway_data_callback_.Reset();
     send_watchdog_data_callback_.Reset();
     incoming_func_call_callback_.Reset();
+    incoming_grpc_call_callback_.Reset();
     outcoming_func_call_complete_callback_.Reset();
 }
 
@@ -55,10 +42,10 @@ void WorkerManager::Init(v8::Local<v8::Object> exports) {
 
     // Prototype
     Nan::SetPrototypeMethod(tpl, "start", Start);
-
     Nan::SetPrototypeMethod(tpl, "onGatewayIOError", OnGatewayIOError);
     Nan::SetPrototypeMethod(tpl, "onWatchdogIOError", OnWatchdogIOError);
 
+    Nan::SetPrototypeMethod(tpl, "isGrpcService", IsGrpcService);
     Nan::SetPrototypeMethod(tpl, "watchdogInputPipeFd", WatchdogInputPipeFd);
     Nan::SetPrototypeMethod(tpl, "watchdogOutputPipeFd", WatchdogOutputPipeFd);
     Nan::SetPrototypeMethod(tpl, "gatewayIpcPath", GatewayIpcPath);
@@ -66,11 +53,13 @@ void WorkerManager::Init(v8::Local<v8::Object> exports) {
     Nan::SetPrototypeMethod(tpl, "setSendGatewayDataCallback", SetSendGatewayDataCallback);
     Nan::SetPrototypeMethod(tpl, "setSendWatchdogDataCallback", SetSendWatchdogDataCallback);
     Nan::SetPrototypeMethod(tpl, "setIncomingFuncCallCallback", SetIncomingFuncCallCallback);
+    Nan::SetPrototypeMethod(tpl, "setIncomingGrpcCallCallback", SetIncomingGrpcCallCallback);
     Nan::SetPrototypeMethod(tpl, "setOutcomingFuncCallCompleteCallback", SetOutcomingFuncCallCompleteCallback);
 
     Nan::SetPrototypeMethod(tpl, "onRecvGatewayData", OnRecvGatewayData);
     Nan::SetPrototypeMethod(tpl, "onRecvWatchdogData", OnRecvWatchdogData);
     Nan::SetPrototypeMethod(tpl, "onOutcomingFuncCall", OnOutcomingFuncCall);
+    Nan::SetPrototypeMethod(tpl, "onOutcomingGrpcCall", OnOutcomingGrpcCall);
     Nan::SetPrototypeMethod(tpl, "onIncomingFuncCallComplete", OnIncomingFuncCallComplete);
 
     constructor.Reset(tpl->GetFunction(context).ToLocalChecked());
@@ -133,6 +122,16 @@ void WorkerManager::OnWatchdogIOError(const Nan::FunctionCallbackInfo<v8::Value>
     }
 }
 
+void WorkerManager::IsGrpcService(const Nan::FunctionCallbackInfo<v8::Value>& info) {
+    Nan::HandleScope scope;
+    if (info.Length() > 0) {
+        Nan::ThrowTypeError("isGrpcService() must be called no argument");
+        return;
+    }
+    WorkerManager* obj = ObjectWrap::Unwrap<WorkerManager>(info.Holder());
+    info.GetReturnValue().Set(Nan::New(obj->inner_->is_grpc_service()));
+}
+
 void WorkerManager::WatchdogInputPipeFd(const Nan::FunctionCallbackInfo<v8::Value>& info) {
     Nan::HandleScope scope;
     if (info.Length() > 0) {
@@ -172,6 +171,9 @@ void WorkerManager::SetSendGatewayDataCallback(const Nan::FunctionCallbackInfo<v
     v8::Local<v8::Function> callback = info[0].As<v8::Function>();
     WorkerManager* obj = ObjectWrap::Unwrap<WorkerManager>(info.Holder());
     obj->send_gateway_data_callback_.Reset(callback);
+    obj->inner_->SetSendGatewayDataCallback([obj] (std::span<const char> data) {
+        obj->SendGatewayDataCallback(data);
+    });
 }
 
 void WorkerManager::SetSendWatchdogDataCallback(const Nan::FunctionCallbackInfo<v8::Value>& info) {
@@ -183,6 +185,9 @@ void WorkerManager::SetSendWatchdogDataCallback(const Nan::FunctionCallbackInfo<
     v8::Local<v8::Function> callback = info[0].As<v8::Function>();
     WorkerManager* obj = ObjectWrap::Unwrap<WorkerManager>(info.Holder());
     obj->send_watchdog_data_callback_.Reset(callback);
+    obj->inner_->SetSendWatchdogDataCallback([obj] (std::span<const char> data) {
+        obj->SendWatchdogDataCallback(data);
+    });
 }
 
 void WorkerManager::SetIncomingFuncCallCallback(const Nan::FunctionCallbackInfo<v8::Value>& info) {
@@ -194,6 +199,24 @@ void WorkerManager::SetIncomingFuncCallCallback(const Nan::FunctionCallbackInfo<
     v8::Local<v8::Function> callback = info[0].As<v8::Function>();
     WorkerManager* obj = ObjectWrap::Unwrap<WorkerManager>(info.Holder());
     obj->incoming_func_call_callback_.Reset(callback);
+    obj->inner_->SetIncomingFuncCallCallback([obj] (uint32_t handle, std::span<const char> input) {
+        obj->IncomingFuncCallCallback(handle, input);
+    });
+}
+
+void WorkerManager::SetIncomingGrpcCallCallback(const Nan::FunctionCallbackInfo<v8::Value>& info) {
+    Nan::HandleScope scope;
+    if (info.Length() != 1 || !info[0]->IsFunction()) {
+        Nan::ThrowTypeError("setIncomingGrpcCallCallback() must be called with callback function");
+        return;
+    }
+    v8::Local<v8::Function> callback = info[0].As<v8::Function>();
+    WorkerManager* obj = ObjectWrap::Unwrap<WorkerManager>(info.Holder());
+    obj->incoming_grpc_call_callback_.Reset(callback);
+    obj->inner_->SetIncomingGrpcCallCallback([obj] (uint32_t handle, std::string_view method,
+                                                    std::span<const char> request) {
+        obj->IncomingGrpcCallCallback(handle, method, request);
+    });
 }
 
 void WorkerManager::SetOutcomingFuncCallCompleteCallback(const Nan::FunctionCallbackInfo<v8::Value>& info) {
@@ -205,6 +228,10 @@ void WorkerManager::SetOutcomingFuncCallCompleteCallback(const Nan::FunctionCall
     v8::Local<v8::Function> callback = info[0].As<v8::Function>();
     WorkerManager* obj = ObjectWrap::Unwrap<WorkerManager>(info.Holder());
     obj->outcoming_func_call_complete_callback_.Reset(callback);
+    obj->inner_->SetOutcomingFuncCallCompleteCallback([obj] (uint32_t handle, bool success,
+                                                             std::span<const char> output) {
+        obj->OutcomingFuncCallCompleteCallback(handle, success, output);
+    });
 }
 
 void WorkerManager::OnRecvGatewayData(const Nan::FunctionCallbackInfo<v8::Value>& info) {
@@ -238,11 +265,24 @@ void WorkerManager::OnOutcomingFuncCall(const Nan::FunctionCallbackInfo<v8::Valu
     }
     v8::Local<v8::Context> context = info.GetIsolate()->GetCurrentContext();
     WorkerManager* obj = ObjectWrap::Unwrap<WorkerManager>(info.Holder());
-    Nan::Utf8String func_name(info[0]);
-    v8::Local<v8::Value> input = info[1];
     uint32_t handle;
-    if (obj->inner_->OnOutcomingFuncCall(std::string_view(*func_name, func_name.length()),
-                                         node_buffer_to_span(input), &handle)) {
+    if (obj->inner_->OnOutcomingFuncCall(v8_string_to_std_string(info[0]),
+                                         node_buffer_to_span(info[1]), &handle)) {
+        info.GetReturnValue().Set(Nan::New(handle));
+    }
+}
+
+void WorkerManager::OnOutcomingGrpcCall(const Nan::FunctionCallbackInfo<v8::Value>& info) {
+    Nan::HandleScope scope;
+    if (info.Length() != 3 || !info[0]->IsString() || !info[1]->IsString() || !node::Buffer::HasInstance(info[2])) {
+        Nan::ThrowTypeError("onOutcomingGrpcCall() must be called with (service, method, request)");
+        return;
+    }
+    v8::Local<v8::Context> context = info.GetIsolate()->GetCurrentContext();
+    WorkerManager* obj = ObjectWrap::Unwrap<WorkerManager>(info.Holder());
+    uint32_t handle;
+    if (obj->inner_->OnOutcomingGrpcCall(v8_string_to_std_string(info[0]), v8_string_to_std_string(info[1]),
+                                         node_buffer_to_span(info[2]), &handle)) {
         info.GetReturnValue().Set(Nan::New(handle));
     }
 }
@@ -263,10 +303,6 @@ void WorkerManager::OnIncomingFuncCallComplete(const Nan::FunctionCallbackInfo<v
 
 void WorkerManager::SendGatewayDataCallback(std::span<const char> data) {
     Nan::HandleScope scope;
-    if (send_gateway_data_callback_.IsEmpty()) {
-        Nan::ThrowError("SendGatewayDataCallback is not set");
-        return;
-    }
     v8::Local<v8::Function> callback = Nan::New(send_gateway_data_callback_);
     v8::Local<v8::Value> argv[] = {
         Nan::CopyBuffer(data.data(), data.size()).ToLocalChecked()
@@ -276,10 +312,6 @@ void WorkerManager::SendGatewayDataCallback(std::span<const char> data) {
 
 void WorkerManager::SendWatchdogDataCallback(std::span<const char> data) {
     Nan::HandleScope scope;
-    if (send_watchdog_data_callback_.IsEmpty()) {
-        Nan::ThrowError("SendWatchdogDataCallback is not set");
-        return;
-    }
     v8::Local<v8::Function> callback = Nan::New(send_watchdog_data_callback_);
     v8::Local<v8::Value> argv[] = {
         Nan::CopyBuffer(data.data(), data.size()).ToLocalChecked()
@@ -289,10 +321,6 @@ void WorkerManager::SendWatchdogDataCallback(std::span<const char> data) {
 
 void WorkerManager::IncomingFuncCallCallback(uint32_t handle, std::span<const char> input) {
     Nan::HandleScope scope;
-    if (incoming_func_call_callback_.IsEmpty()) {
-        Nan::ThrowError("IncomingFuncCallCallback is not set");
-        return;
-    }
     v8::Local<v8::Function> callback = Nan::New(incoming_func_call_callback_);
     v8::Local<v8::Value> argv[] = {
         Nan::New(handle),
@@ -301,13 +329,21 @@ void WorkerManager::IncomingFuncCallCallback(uint32_t handle, std::span<const ch
     Nan::MakeCallback(Nan::GetCurrentContext()->Global(), callback, 2, argv);
 }
 
+void WorkerManager::IncomingGrpcCallCallback(uint32_t handle, std::string_view method,
+                                             std::span<const char> request) {
+    Nan::HandleScope scope;
+    v8::Local<v8::Function> callback = Nan::New(incoming_grpc_call_callback_);
+    v8::Local<v8::Value> argv[] = {
+        Nan::New(handle),
+        Nan::New(method.data(), method.size()).ToLocalChecked(),
+        Nan::CopyBuffer(request.data(), request.size()).ToLocalChecked()
+    };
+    Nan::MakeCallback(Nan::GetCurrentContext()->Global(), callback, 3, argv);
+}
+
 void WorkerManager::OutcomingFuncCallCompleteCallback(uint32_t handle, bool success,
                                                       std::span<const char> output) {
     Nan::HandleScope scope;
-    if (outcoming_func_call_complete_callback_.IsEmpty()) {
-        Nan::ThrowError("OutcomingFuncCallCompleteCallback is not set");
-        return;
-    }
     v8::Local<v8::Function> callback = Nan::New(outcoming_func_call_complete_callback_);
     v8::Local<v8::Value> argv[] = {
         Nan::New(handle),

@@ -16,7 +16,7 @@ using protocol::HandshakeMessage;
 using protocol::HandshakeResponse;
 
 Manager::Manager()
-    : started_(false), func_id_(utils::GetEnvVariableAsInt("FUNC_ID", -1)), client_id_(-1),
+    : started_(false), client_id_(-1),
       watchdog_input_pipe_fd_(utils::GetEnvVariableAsInt("INPUT_PIPE_FD", -1)),
       watchdog_output_pipe_fd_(utils::GetEnvVariableAsInt("OUTPUT_PIPE_FD", -1)),
       gateway_ipc_path_(utils::GetEnvVariable("GATEWAY_IPC_PATH", "/tmp/faas_gateway")),
@@ -25,11 +25,17 @@ Manager::Manager()
       send_gateway_data_callback_set_(false),
       send_watchdog_data_callback_set_(false),
       incoming_func_call_callback_set_(false),
+      incoming_grpc_call_callback_set_(false),
       outcoming_func_call_complete_callback_set_(false),
       processing_delay_stat_(
           stat::StatisticsCollector<uint32_t>::StandardReportCallback("processing_delay")) {
     if (!func_config_.Load(utils::GetEnvVariable("FUNC_CONFIG_FILE"))) {
         LOG(FATAL) << "Failed to load function config file";
+    }
+    int func_id = utils::GetEnvVariableAsInt("FUNC_ID", -1);
+    my_func_config_ = func_config_.find_by_func_id(func_id);
+    if (my_func_config_ == nullptr) {
+        LOG(FATAL) << "Cannot find function with func_id " << func_id;
     }
     LOG(INFO) << "worker_lib::Manager created";
 }
@@ -59,12 +65,16 @@ void Manager::OnWatchdogIOError(std::string_view message) {
 void Manager::Start() {
     DCHECK(send_gateway_data_callback_set_);
     DCHECK(send_watchdog_data_callback_set_);
-    DCHECK(incoming_func_call_callback_set_);
+    if (my_func_config_->is_grpc_service) {
+        DCHECK(incoming_grpc_call_callback_set_);
+    } else {
+        DCHECK(incoming_func_call_callback_set_);
+    }
     DCHECK(outcoming_func_call_complete_callback_set_);
     started_ = true;
     HandshakeMessage message = {
         .role = static_cast<uint16_t>(Role::FUNC_WORKER),
-        .func_id = static_cast<uint16_t>(func_id_)
+        .func_id = static_cast<uint16_t>(my_func_config_->func_id)
     };
     send_gateway_data_callback_(std::span<const char>(
         reinterpret_cast<const char*>(&message), sizeof(HandshakeMessage)));
@@ -136,6 +146,51 @@ bool Manager::OnOutcomingFuncCall(std::string_view func_name, std::span<const ch
         utils::SharedMemory::InputPath(func_call.full_call_id), input.size());
     context->output_region = nullptr;
     memcpy(context->input_region->base(), input.data(), input.size());
+    outcoming_func_calls_[*handle] = std::move(context);
+    Message message = {
+#ifdef __FAAS_ENABLE_PROFILING
+        .send_timestamp = GetMonotonicMicroTimestamp(),
+        .processing_time = 0,
+#endif
+        .message_type = static_cast<uint16_t>(MessageType::INVOKE_FUNC),
+        .func_call = func_call
+    };
+    send_gateway_data_callback_(std::span<const char>(
+        reinterpret_cast<const char*>(&message), sizeof(Message)));
+    return true;
+}
+
+bool Manager::OnOutcomingGrpcCall(std::string_view service, std::string_view method,
+                                  std::span<const char> request, uint32_t* handle) {
+    DCHECK(started_);
+    DCHECK(client_id_ != -1) << "Handshake not done";
+    std::string func_name = std::string("grpc:") + std::string(service);
+    const FuncConfig::Entry* func_entry = func_config_.find_by_func_name(func_name);
+    if (func_entry == nullptr) {
+        LOG(ERROR) << "Cannot find gRPC service " << service;
+        return false;
+    }
+    if (func_entry->grpc_methods.count(std::string(method)) == 0) {
+        LOG(ERROR) << "gRPC service " << service << " cannot process method " << method;
+        return false;
+    }
+    *handle = next_handle_value_++;
+    FuncCall func_call;
+    func_call.func_id = static_cast<uint16_t>(func_entry->func_id);
+    func_call.client_id = client_id_;
+    func_call.call_id = *handle;
+    auto context = std::make_unique<OutcomingFuncCallContext>();
+    context->func_call = func_call;
+    context->input_region = shared_memory_.Create(
+        utils::SharedMemory::InputPath(func_call.full_call_id),
+        method.size() + 1 + request.size());
+    context->output_region = nullptr;
+    char* buffer = context->input_region->base();
+    memcpy(buffer, method.data(), method.size());
+    buffer[method.size()] = '\0';
+    if (request.size() > 0) {
+        memcpy(buffer + method.size() + 1, request.data(), request.size());
+    }
     outcoming_func_calls_[*handle] = std::move(context);
     Message message = {
 #ifdef __FAAS_ENABLE_PROFILING
@@ -244,7 +299,30 @@ void Manager::OnIncomingFuncCall(FuncCall func_call) {
     context->start_timestamp = GetMonotonicMicroTimestamp();
     uint32_t handle = next_handle_value_++;
     incoming_func_calls_[handle] = std::move(context);
-    incoming_func_call_callback_(handle, input_region->to_span());
+    if (my_func_config_->is_grpc_service) {
+        std::span<const char> input = input_region->to_span();
+        size_t pos = 0;
+        while (pos < input.size() && input[pos] != '\0') {
+            pos++;
+        }
+        if (pos == input.size()) {
+            LOG(ERROR) << "Invalid input bytes";
+            OnIncomingFuncCallComplete(handle, false, std::span<const char>());
+            input_region->Close();
+            return;
+        }
+        std::string method(input.data(), pos);
+        if (my_func_config_->grpc_methods.count(method) == 0) {
+            LOG(ERROR) << "gRPC service " << my_func_config_->grpc_service_name
+                       << " cannot process method " << method;
+            OnIncomingFuncCallComplete(handle, false, std::span<const char>());
+            input_region->Close();
+            return;
+        }
+        incoming_grpc_call_callback_(handle, method, input.subspan(pos + 1));
+    } else {
+        incoming_func_call_callback_(handle, input_region->to_span());
+    }
     input_region->Close();
 }
 

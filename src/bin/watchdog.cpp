@@ -12,9 +12,11 @@ ABSL_FLAG(std::string, shared_mem_path, "/dev/shm/faas",
 ABSL_FLAG(std::string, func_config_file, "", "Path to function config file");
 ABSL_FLAG(int, func_id, -1, "Function ID of this watchdog process");
 ABSL_FLAG(std::string, fprocess, "", "Function process");
+ABSL_FLAG(std::string, fprocess_working_dir, "",
+          "Working directory of function processes");
 ABSL_FLAG(int, run_mode, 1, "Function run mode");
 ABSL_FLAG(int, min_num_func_workers, 1, "Minimum number of function workers");
-ABSL_FLAG(int, max_num_func_workers, 2, "Maximum number of function workers");
+ABSL_FLAG(int, max_num_func_workers, 1, "Maximum number of function workers");
 ABSL_FLAG(std::string, func_worker_output_dir, "",
           "If not empty, stdout and stderr of function workers will be saved "
           "in the given directory");
@@ -36,6 +38,7 @@ int main(int argc, char* argv[]) {
     watchdog->set_gateway_ipc_path(absl::GetFlag(FLAGS_gateway_ipc_path));
     watchdog->set_func_id(absl::GetFlag(FLAGS_func_id));
     watchdog->set_fprocess(absl::GetFlag(FLAGS_fprocess));
+    watchdog->set_fprocess_working_dir(absl::GetFlag(FLAGS_fprocess_working_dir));
     watchdog->set_shared_mem_path(absl::GetFlag(FLAGS_shared_mem_path));
     watchdog->set_run_mode(absl::GetFlag(FLAGS_run_mode));
     watchdog->set_min_num_func_workers(absl::GetFlag(FLAGS_min_num_func_workers));

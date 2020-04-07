@@ -120,7 +120,7 @@ void MessageConnection::WriteMessage(const Message& message) {
         pending_messages_.push_back(message);
     }
     io_worker_->ScheduleFunction(
-        this, std::bind(&MessageConnection::SendPendingMessages, this));
+        this, absl::bind_front(&MessageConnection::SendPendingMessages, this));
 }
 
 UV_ALLOC_CB_FOR_CLASS(MessageConnection, BufferAlloc) {

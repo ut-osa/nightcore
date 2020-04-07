@@ -45,6 +45,11 @@ int Subprocess::CreateWritablePipe() {
     return static_cast<int>(pipe_types_.size()) - 1;
 }
 
+void Subprocess::SetWorkingDir(std::string_view path) {
+    DCHECK(state_ == kCreated);
+    working_dir_ = std::string(path);
+}
+
 void Subprocess::AddEnvVariable(std::string_view name, std::string_view value) {
     DCHECK(state_ == kCreated);
     env_variables_.push_back(absl::StrFormat("%s=%s", name, value));
@@ -59,7 +64,7 @@ bool Subprocess::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool,
                        ExitCallback exit_callback) {
     read_buffer_pool_ = read_buffer_pool;
     exit_callback_ = exit_callback;
-    handle_scope_.Init(uv_loop, std::bind(&Subprocess::OnAllHandlesClosed, this));
+    handle_scope_.Init(uv_loop, absl::bind_front(&Subprocess::OnAllHandlesClosed, this));
     uv_process_options_t options;
     memset(&options, 0, sizeof(uv_process_options_t));
     options.exit_cb = &Subprocess::ProcessExitCallback;
@@ -79,6 +84,9 @@ bool Subprocess::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool,
     }
     env_ptrs.push_back(nullptr);
     options.env = const_cast<char**>(env_ptrs.data());
+    if (!working_dir_.empty()) {
+        options.cwd = working_dir_.c_str();
+    }
     int num_pipes = pipe_types_.size();
     DCHECK_GE(num_pipes, 3);
     std::vector<uv_stdio_container_t> stdio(num_pipes);

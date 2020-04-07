@@ -22,6 +22,7 @@ public:
     void OnWatchdogIOError(int errnum);
     void OnWatchdogIOError(std::string_view message);
 
+    bool is_grpc_service() const { return my_func_config_->is_grpc_service; }
     int watchdog_input_pipe_fd() const { return watchdog_input_pipe_fd_; }
     int watchdog_output_pipe_fd() const { return watchdog_output_pipe_fd_; }
     std::string_view gateway_ipc_path() const { return gateway_ipc_path_; }
@@ -29,6 +30,9 @@ public:
     typedef std::function<void(std::span<const char> /* data */)> SendDataCallback;
     typedef std::function<void(uint32_t /* handle */, std::span<const char> /* input */)>
             IncomingFuncCallCallback;
+    typedef std::function<void(uint32_t /* handle */, std::string_view /* method */,
+                               std::span<const char> /* request */)>
+            IncomingGrpcCallCallback;
     typedef std::function<void(uint32_t /* handle */, bool /* success */,
                                std::span<const char> /* output */)>
             OutcomingFuncCallCompleteCallback;
@@ -45,6 +49,10 @@ public:
         incoming_func_call_callback_set_ = true;
         incoming_func_call_callback_ = callback;
     }
+    void SetIncomingGrpcCallCallback(IncomingGrpcCallCallback callback) {
+        incoming_grpc_call_callback_set_ = true;
+        incoming_grpc_call_callback_ = callback;
+    }
     void SetOutcomingFuncCallCompleteCallback(OutcomingFuncCallCompleteCallback callback) {
         outcoming_func_call_complete_callback_set_ = true;
         outcoming_func_call_complete_callback_ = callback;
@@ -53,12 +61,14 @@ public:
     void OnRecvGatewayData(std::span<const char> data);
     void OnRecvWatchdogData(std::span<const char> data);
     bool OnOutcomingFuncCall(std::string_view func_name, std::span<const char> input, uint32_t* handle);
+    bool OnOutcomingGrpcCall(std::string_view service, std::string_view method,
+                             std::span<const char> request, uint32_t* handle);
     void OnIncomingFuncCallComplete(uint32_t handle, bool success, std::span<const char> output);
 
 private:
     bool started_;
     FuncConfig func_config_;
-    int func_id_;
+    const FuncConfig::Entry* my_func_config_;
     int client_id_;
     int watchdog_input_pipe_fd_;
     int watchdog_output_pipe_fd_;
@@ -72,6 +82,8 @@ private:
     SendDataCallback send_watchdog_data_callback_;
     bool incoming_func_call_callback_set_;
     IncomingFuncCallCallback incoming_func_call_callback_;
+    bool incoming_grpc_call_callback_set_;
+    IncomingGrpcCallCallback incoming_grpc_call_callback_;
     bool outcoming_func_call_complete_callback_set_;
     OutcomingFuncCallCompleteCallback outcoming_func_call_complete_callback_;
 

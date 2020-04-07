@@ -35,6 +35,9 @@ public:
     void set_fprocess(std::string_view fprocess) {
         fprocess_ = std::string(fprocess);
     }
+    void set_fprocess_working_dir(std::string_view path) {
+        fprocess_working_dir_ = std::string(path);
+    }
     void set_shared_mem_path(std::string_view path) {
         shared_mem_path_ = std::string(path);
     }
@@ -60,6 +63,7 @@ public:
     std::string_view gateway_ipc_path() const { return gateway_ipc_path_; }
     int func_id() const { return func_id_; }
     std::string_view fprocess() const { return fprocess_; }
+    std::string_view fprocess_working_dir() const { return fprocess_working_dir_; }
     std::string_view shared_mem_path() const { return shared_mem_path_; }
     std::string_view func_config_file() const { return func_config_file_; }
     std::string_view func_worker_output_dir() const { return func_worker_output_dir_; }
@@ -92,6 +96,7 @@ private:
     std::string gateway_ipc_path_;
     int func_id_;
     std::string fprocess_;
+    std::string fprocess_working_dir_;
     std::string shared_mem_path_;
     std::string func_config_file_;
     RunMode run_mode_;

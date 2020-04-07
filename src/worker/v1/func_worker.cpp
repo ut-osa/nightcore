@@ -19,7 +19,7 @@ using protocol::HandshakeResponse;
 FuncWorker::FuncWorker()
     : func_id_(-1), input_pipe_fd_(-1), output_pipe_fd_(-1),
       gateway_sock_fd_(-1), gateway_disconnected_(false),
-      gateway_ipc_thread_("GatewayIpc", std::bind(&FuncWorker::GatewayIpcThreadMain, this)),
+      gateway_ipc_thread_("GatewayIpc", absl::bind_front(&FuncWorker::GatewayIpcThreadMain, this)),
       next_call_id_(0),
       gateway_message_delay_stat_(
           stat::StatisticsCollector<uint32_t>::StandardReportCallback("gateway_message_delay")),

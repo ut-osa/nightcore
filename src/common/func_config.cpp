@@ -98,8 +98,11 @@ bool FuncConfig::Load(std::string_view json_path) {
             auto entry = std::make_unique<Entry>();
             entry->func_name = func_name;
             entry->func_id = func_id;
+            entry->is_grpc_service = false;
             if (StartsWith(func_name, "grpc:")) {
                 std::string_view service_name = StripPrefix(func_name, "grpc:");
+                entry->is_grpc_service = true;
+                entry->grpc_service_name = std::string(service_name);
                 LOG(INFO) << "Load configuration for gRPC service " << service_name
                           << "[" << func_id << "]";
                 const json& grpc_methods = item.at("grpcMethods");

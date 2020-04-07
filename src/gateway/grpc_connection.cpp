@@ -419,7 +419,7 @@ void GrpcConnection::OnGrpcCallFinish(int32_t stream_id) {
 
 void GrpcConnection::GrpcCallFinish(GrpcCallContext* call_context) {
     io_worker_->ScheduleFunction(
-        this, std::bind(
+        this, absl::bind_front(
             &GrpcConnection::OnGrpcCallFinish,
             this, call_context->h2_stream_id_));
 }

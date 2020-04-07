@@ -31,6 +31,7 @@ public:
     int CreateReadablePipe();
     int CreateWritablePipe();
 
+    void SetWorkingDir(std::string_view path);
     void AddEnvVariable(std::string_view name, std::string_view value);
     void AddEnvVariable(std::string_view name, int value);
 
@@ -62,6 +63,7 @@ private:
 
     std::vector<int> std_fds_;
     std::vector<uv_stdio_flags> pipe_types_;
+    std::string working_dir_;
     std::vector<std::string> env_variables_;
 
     uv_process_t uv_process_handle_;

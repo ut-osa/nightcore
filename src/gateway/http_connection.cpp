@@ -279,7 +279,7 @@ void HttpConnection::OnAsyncRequestFinish() {
 
 void HttpConnection::AsyncRequestFinish(HttpAsyncRequestContext* context) {
     io_worker_->ScheduleFunction(
-        this, std::bind(&HttpConnection::OnAsyncRequestFinish, this));
+        this, absl::bind_front(&HttpConnection::OnAsyncRequestFinish, this));
 }
 
 void HttpConnection::SendHttpResponse() {

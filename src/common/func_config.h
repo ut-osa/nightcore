@@ -14,6 +14,8 @@ public:
     struct Entry {
         std::string func_name;
         int func_id;
+        bool is_grpc_service;
+        std::string grpc_service_name;
         std::unordered_set<std::string> grpc_methods;
     };
 

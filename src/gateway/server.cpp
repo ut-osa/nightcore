@@ -26,7 +26,7 @@ constexpr size_t Server::kMessageConnectionBufferSize;
 Server::Server()
     : state_(kCreated), port_(-1), grpc_port_(-1), listen_backlog_(kDefaultListenBackLog),
       num_http_workers_(kDefaultNumHttpWorkers), num_ipc_workers_(kDefaultNumIpcWorkers),
-      event_loop_thread_("Server/EL", std::bind(&Server::EventLoopThreadMain, this)),
+      event_loop_thread_("Server/EL", absl::bind_front(&Server::EventLoopThreadMain, this)),
       next_http_connection_id_(0), next_grpc_connection_id_(0),
       next_http_worker_id_(0), next_ipc_worker_id_(0), next_client_id_(1), next_call_id_(0),
       message_delay_stat_(

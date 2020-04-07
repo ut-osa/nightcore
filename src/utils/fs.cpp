@@ -38,6 +38,13 @@ bool IsDirectory(std::string_view path) {
     return S_ISDIR(statbuf.st_mode) != 0;
 }
 
+std::string GetRealPath(std::string_view path) {
+    char* result = realpath(std::string(path).c_str(), nullptr);
+    std::string result_str(result);
+    free(result);
+    return result_str;
+}
+
 bool MakeDirectory(std::string_view path, mode_t mode) {
     return mkdir(std::string(path).c_str(), mode) == 0;
 }

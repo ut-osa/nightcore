@@ -25,7 +25,7 @@ constexpr int Watchdog::kDefaultGoMaxProcs;
 Watchdog::Watchdog()
     : state_(kCreated), func_id_(-1), go_max_procs_(kDefaultGoMaxProcs), client_id_(0),
       event_loop_thread_("Watchdog/EL",
-                         std::bind(&Watchdog::EventLoopThreadMain, this)),
+                         absl::bind_front(&Watchdog::EventLoopThreadMain, this)),
       gateway_connection_(this), next_func_worker_id_(0),
       gateway_message_delay_stat_(
           stat::StatisticsCollector<uint32_t>::StandardReportCallback("gateway_message_delay")),
