@@ -67,15 +67,14 @@ bool ReadContents(std::string_view path, std::string* contents) {
     if (fin == nullptr) {
         return false;
     }
+    auto close_file = gsl::finally([fin] { fclose(fin); });
     struct stat statbuf;
     if (!Stat(path, &statbuf)) {
-        fclose(fin);
         return false;
     }
     size_t size = static_cast<size_t>(statbuf.st_size);
     contents->resize(size);
     size_t nread = fread(const_cast<char*>(contents->data()), 1, size, fin);
-    fclose(fin);
     return nread == size;
 }
 

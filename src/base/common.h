@@ -38,6 +38,9 @@
 #include <fmt/core.h>
 #include <fmt/format.h>
 
+// Guidelines Support Library (GSL)
+#include <gsl/gsl>
+
 #ifdef __FAAS_SRC
 #define __FAAS_HAVE_ABSL
 #endif

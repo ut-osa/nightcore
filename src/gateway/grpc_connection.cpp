@@ -137,31 +137,12 @@ void GrpcConnection::ScheduleClose() {
 }
 
 UV_READ_CB_FOR_CLASS(GrpcConnection, RecvData) {
-    if (nread > 0) {
-        const uint8_t* data = reinterpret_cast<const uint8_t*>(buf->base);
-        size_t length = static_cast<size_t>(nread);
-        ssize_t ret = nghttp2_session_mem_recv(h2_session_, data, length);
-        if (ret >= 0) {
-            if (static_cast<size_t>(ret) != length) {
-                HLOG(FATAL) << "nghttp2_session_mem_recv does not consume all input data";
-            }
-            H2SendPendingDataIfNecessary();
-        } else {
-            // ret < 0
-            switch (ret) {
-            case NGHTTP2_ERR_CALLBACK_FAILURE:
-                break;
-            case NGHTTP2_ERR_BAD_CLIENT_MAGIC:
-            case NGHTTP2_ERR_FLOODED:
-                HLOG(WARNING) << "nghttp2 failed with error: " << nghttp2_strerror(ret)
-                              << ", will close the connection";
-                ScheduleClose();
-                break;
-            default:
-                HLOG(FATAL) << "nghttp2 call returns with error: " << nghttp2_strerror(ret);
-            }
+    auto return_buffer = gsl::finally([this, buf] {
+        if (buf->base != 0) {
+            io_worker_->ReturnReadBuffer(buf);
         }
-    } else if (nread < 0) {
+    });
+    if (nread < 0) {
         if (nread == UV_EOF || nread == UV_ECONNRESET) {
             HLOG(INFO) << "gRPC connection closed by client";
         } else {
@@ -169,23 +150,51 @@ UV_READ_CB_FOR_CLASS(GrpcConnection, RecvData) {
                           << uv_strerror(nread);
         }
         ScheduleClose();
+        return;
     }
-    if (buf->base != 0) {
-        io_worker_->ReturnReadBuffer(buf);
+    if (nread == 0) {
+        HLOG(WARNING) << "nread=0, will do nothing";
+        return;
+    }
+    const uint8_t* data = reinterpret_cast<const uint8_t*>(buf->base);
+    size_t length = static_cast<size_t>(nread);
+    ssize_t ret = nghttp2_session_mem_recv(h2_session_, data, length);
+    if (ret >= 0) {
+        if (static_cast<size_t>(ret) != length) {
+            HLOG(FATAL) << "nghttp2_session_mem_recv does not consume all input data";
+        }
+        H2SendPendingDataIfNecessary();
+    } else {
+        // ret < 0
+        switch (ret) {
+        case NGHTTP2_ERR_CALLBACK_FAILURE:
+            break;
+        case NGHTTP2_ERR_BAD_CLIENT_MAGIC:
+        case NGHTTP2_ERR_FLOODED:
+            HLOG(WARNING) << "nghttp2 failed with error: " << nghttp2_strerror(ret)
+                            << ", will close the connection";
+            ScheduleClose();
+            break;
+        default:
+            HLOG(FATAL) << "nghttp2 call returns with error: " << nghttp2_strerror(ret);
+        }
     }
 }
 
 UV_WRITE_CB_FOR_CLASS(GrpcConnection, DataWritten) {
-    bool req_is_for_mem_send = req == &write_req_for_mem_send_;
-    if (!req_is_for_mem_send) {
-        io_worker_->ReturnWriteBuffer(reinterpret_cast<char*>(req->data));
-        io_worker_->ReturnWriteRequest(req);
-    }
+    auto return_buffer = gsl::finally([this, req] {
+        if (req != &write_req_for_mem_send_) {
+            io_worker_->ReturnWriteBuffer(reinterpret_cast<char*>(req->data));
+            io_worker_->ReturnWriteRequest(req);
+        }
+    });
     if (status != 0) {
         HLOG(ERROR) << "Failed to write data, will close this connection: "
                     << uv_strerror(status);
         ScheduleClose();
-    } else if (req_is_for_mem_send) {
+        return;
+    }
+    if (req == &write_req_for_mem_send_) {
         uv_write_for_mem_send_ongoing_ = false;
         H2SendPendingDataIfNecessary();
     }
