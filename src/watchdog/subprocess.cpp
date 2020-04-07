@@ -165,6 +165,7 @@ bool Subprocess::PipeClosed(int fd) {
 
 void Subprocess::OnAllHandlesClosed() {
     DCHECK(state_ == kExited);
+    state_ = kClosed;
     exit_callback_(exit_status_, stdout_.to_span(), stderr_.to_span());
 }
 

@@ -40,6 +40,10 @@ bool IsDirectory(std::string_view path) {
 
 std::string GetRealPath(std::string_view path) {
     char* result = realpath(std::string(path).c_str(), nullptr);
+    if (result == nullptr) {
+        LOG(WARNING) << path << " is not a valid path";
+        return std::string(path);
+    }
     std::string result_str(result);
     free(result);
     return result_str;
