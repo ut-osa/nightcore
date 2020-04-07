@@ -11,6 +11,7 @@ RUN wget https://github.com/jemalloc/jemalloc/releases/download/${JEMALLOC_VER}/
 
 WORKDIR /faas
 COPY . .
+ENV CXXFLAGS=-DDCHECK_ALWAYS_ON
 RUN ./build_deps.sh && make -j $(nproc) release
 
 FROM ubuntu:bionic as release

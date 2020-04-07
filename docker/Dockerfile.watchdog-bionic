@@ -4,6 +4,7 @@ RUN apt update && apt upgrade -y && \
 
 WORKDIR /faas
 COPY . .
+ENV CXXFLAGS=-DDCHECK_ALWAYS_ON
 RUN ./build_deps.sh && make -j $(nproc) release
 
 FROM ubuntu:bionic as release

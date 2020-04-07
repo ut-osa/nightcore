@@ -15,5 +15,5 @@ ENV PATH=/usr/local/go/bin:$PATH
 RUN mkdir -p $GOPATH && chmod 0777 $GOPATH
 COPY ./worker/golang $GOPATH/src/cs.utexas.edu/zjia/faas
 
-WORKDIR /root
+WORKDIR /root/app
 ENTRYPOINT ["go"]

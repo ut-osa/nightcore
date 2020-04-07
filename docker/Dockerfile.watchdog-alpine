@@ -3,6 +3,7 @@ RUN apk add --update --no-cache linux-headers bash findutils make gcc g++ cmake
 
 WORKDIR /faas
 COPY . .
+ENV CXXFLAGS=-DDCHECK_ALWAYS_ON
 RUN ./build_deps.sh && make -j $(nproc) release
 
 FROM alpine as release

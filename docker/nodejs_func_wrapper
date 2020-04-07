@@ -1,6 +1,7 @@
 #!/bin/bash
 
-GO_PLUGIN=$1
+NODE_EXEC=/usr/local/bin/node
+NODE_ENTRY=$1
 FUNC_ID=$2
 WORKING_DIR=$(dirname $1)
 
@@ -11,8 +12,7 @@ DEFAULT_FUNC_WORKER_OUTPUT_DIR="/tmp/faas/func_output_${FUNC_ID}"
     --shared_mem_path=${SHARED_MEM_PATH:-"/tmp/faas/shm"} \
     --func_config_file=${FUNC_CONFIG_FILE:-"/tmp/faas/func_config.json"} \
     --func_id=${FUNC_ID} --run_mode=4 \
-    --fprocess="/faas/bin/worker_golang $GO_PLUGIN" \
+    --fprocess="$NODE_EXEC $NODE_ENTRY" \
     --fprocess_working_dir=$WORKING_DIR \
     --max_num_func_workers=${NUM_FUNC_WORKERS:-"1"} \
-    --func_worker_output_dir=${FUNC_WORKER_OUTPUT_DIR:-$DEFAULT_FUNC_WORKER_OUTPUT_DIR} \
-    --go_max_procs=${GO_MAX_PROCS:-"1"}
+    --func_worker_output_dir=${FUNC_WORKER_OUTPUT_DIR:-$DEFAULT_FUNC_WORKER_OUTPUT_DIR}
