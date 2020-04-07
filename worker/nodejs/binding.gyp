@@ -15,10 +15,11 @@
       "include_dirs": [
         "<!(node -e \"require('nan')\")",
         "./src",
-        "./deps/json/single_include",
-        "./deps/GSL/include"
+        "./deps/fmt/include",
+        "./deps/GSL/include",
+        "./deps/json/single_include"
       ],
-      "defines": [ "__FAAS_NODE_ADDON", "DCHECK_ALWAYS_ON" ],
+      "defines": [ "FMT_HEADER_ONLY", "__FAAS_NODE_ADDON", "DCHECK_ALWAYS_ON" ],
       "cflags_cc": [ "-std=c++17" ]
     }
   ]

@@ -344,7 +344,7 @@ public:
 
     void WriteOutput(utils::SharedMemory* shared_memory) {
         output_region_ = shared_memory->OpenReadOnly(
-            absl::StrCat(call_.full_call_id, ".o"));
+            shared_memory->OutputPath(call_.full_call_id));
         if (http_context_ != nullptr) {
             http_context_->AppendToResponseBody(output_region_->to_span());
         }

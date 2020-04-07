@@ -34,6 +34,10 @@
 #include <unordered_map>
 #include <unordered_set>
 
+// fmtlib
+#include <fmt/core.h>
+#include <fmt/format.h>
+
 #ifdef __FAAS_SRC
 #define __FAAS_HAVE_ABSL
 #endif

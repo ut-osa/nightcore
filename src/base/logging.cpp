@@ -14,6 +14,9 @@
 #include <time.h>
 #include <signal.h>
 
+#include <fmt/format.h>
+#include <fmt/core.h>
+
 #ifdef __FAAS_SRC
 
 #include <absl/synchronization/notification.h>
@@ -81,7 +84,7 @@ LogMessage::LogMessage(const char* file, int line, LogSeverity severity, bool ap
         abort();
     }
     constexpr int kBufferSize = 1 /* severity char */ + 14 /* datetime */ + 6 /* usec */
-                              + 1 /* space */ + 8 /* thread name */ + 2 /* space & \0 */;
+                              + 1 /* space */ + 8 /* thread name */ + 1 /* \0 */;
     char buffer[kBufferSize];
     buffer[0] = kLogSeverityShortNames[severity_];
     struct tm datetime;
@@ -94,11 +97,11 @@ LogMessage::LogMessage(const char* file, int line, LogSeverity severity, bool ap
     buffer[14] = '.';
     sprintf(buffer+15, "%06d", static_cast<int>(time_stamp.tv_nsec / 1000));
 #ifdef __FAAS_SRC
-    sprintf(buffer+21, " %-8.8s ", base::Thread::current()->name());
+    sprintf(buffer+21, " %-8.8s", base::Thread::current()->name());
 #else
-    sprintf(buffer+21, " %d ", static_cast<int>(gettid()));
+    sprintf(buffer+21, " %d", static_cast<int>(gettid()));
 #endif
-    stream() << buffer << filename << ":" << line << "] ";
+    stream() << fmt::format("{} {}:{}] ", buffer, filename, line);
 }
 
 LogMessage::~LogMessage() {
@@ -111,7 +114,7 @@ LogMessage::~LogMessage() {
 }
 
 LogMessageFatal::LogMessageFatal(const char* file, int line, const std::string& result)
-    : LogMessage(file, line, FATAL) { stream() << "Check failed: " << result << " "; }
+    : LogMessage(file, line, FATAL) { stream() << fmt::format("Check failed: {} ", result); }
 
 LogMessageFatal::~LogMessageFatal() {
     AppendErrStrIfNecessary();
@@ -131,7 +134,7 @@ void LogMessage::SendToLog(const std::string& message_text) {
 
 void LogMessage::AppendErrStrIfNecessary() {
     if (append_err_str_) {
-        stream() << ": " << strerror(append_err_str_) << " [" << preserved_errno_ << "]";
+        stream() << fmt::format(": {} [{}]", strerror(append_err_str_), preserved_errno_);
     }
 }
 
@@ -153,27 +156,27 @@ std::string* CheckOpMessageBuilder::NewString() {
 template <>
 void MakeCheckOpValueString(std::ostream* os, const char& v) {
     if (v >= 32 && v <= 126) {
-        (*os) << "'" << v << "'";
+        (*os) << fmt::format("'{}'", v);
     } else {
-        (*os) << "char value " << static_cast<int16_t>(v);
+        (*os) << fmt::format("char value {}", static_cast<int16_t>(v));
     }
 }
 
 template <>
 void MakeCheckOpValueString(std::ostream* os, const signed char& v) {
     if (v >= 32 && v <= 126) {
-      (*os) << "'" << v << "'";
+      (*os) << fmt::format("'{}'", static_cast<char>(v));
     } else {
-      (*os) << "signed char value " << static_cast<int16_t>(v);
+      (*os) << fmt::format("signed char value {}", static_cast<int16_t>(v));
     }
 }
 
 template <>
 void MakeCheckOpValueString(std::ostream* os, const unsigned char& v) {
     if (v >= 32 && v <= 126) {
-        (*os) << "'" << v << "'";
+        (*os) << fmt::format("'{}'", static_cast<char>(v));
     } else {
-        (*os) << "unsigned char value " << static_cast<uint16_t>(v);
+        (*os) << fmt::format("unsigned value {}", static_cast<int16_t>(v));
     }
 }
 

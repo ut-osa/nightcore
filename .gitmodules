@@ -16,3 +16,6 @@
 [submodule "deps/GSL"]
 	path = deps/GSL
 	url = https://github.com/microsoft/GSL.git
+[submodule "deps/fmt"]
+	path = deps/fmt
+	url = https://github.com/fmtlib/fmt.git
