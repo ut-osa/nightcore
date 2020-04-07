@@ -7,12 +7,12 @@ DEPS_INSTALL_PATH=$BASE_DIR/deps/out
 
 while [ ! $# -eq 0 ]
 do
-	case "$1" in
-		--debug)
+  case "$1" in
+    --debug)
       CMAKE_BUILD_TYPE="Debug"
-			;;
-	esac
-	shift
+      ;;
+  esac
+  shift
 done
 
 export CFLAGS="-fdata-sections -ffunction-sections"
