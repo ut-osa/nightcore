@@ -9,7 +9,7 @@ DEFAULT_FUNC_WORKER_OUTPUT_DIR="/tmp/faas/func_output_${FUNC_ID}"
 /faas/bin/watchdog \
     --gateway_ipc_path=${GATEWAY_IPC_PATH:-"/tmp/faas/gateway.sock"} \
     --shared_mem_path=${SHARED_MEM_PATH:-"/tmp/faas/shm"} \
-    --func_config_file=${FUNC_CONFIG_FILE:-"/tmp/faas/func_config.json"} \
+    --func_config_file=${FUNC_CONFIG_FILE:-"/faas/share/func_config.json"} \
     --func_id=${FUNC_ID} --run_mode=4 \
     --fprocess="/faas/bin/worker_golang $GO_PLUGIN" \
     --fprocess_working_dir=$WORKING_DIR \
