@@ -67,7 +67,7 @@ def _incoming_func_call_callback(manager):
         success, output = False, b''
         try:
             output_ = __func_handler(input_)
-            if isinstance(output, bytes):
+            if isinstance(output_, bytes):
                 success, output = True, output_
             else:
                 logging.error('Function handler returns non-byte object')
