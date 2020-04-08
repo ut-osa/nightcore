@@ -19,3 +19,6 @@
 [submodule "deps/fmt"]
 	path = deps/fmt
 	url = https://github.com/fmtlib/fmt.git
+[submodule "deps/pybind11"]
+	path = deps/pybind11
+	url = https://github.com/pybind/pybind11.git

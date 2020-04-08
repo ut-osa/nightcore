@@ -7,6 +7,16 @@
 #define __FAAS_CXX_NO_EXCEPTIONS
 #endif
 
+#ifdef __FAAS_PYTHON_BINDING
+#if !defined(__FAAS_USED_IN_BINDING) && !defined(__FAAS_PYTHON_BINDING_SRC)
+#error Need the source file to have __FAAS_USED_IN_BINDING defined
+#endif
+#include <Python.h>
+#if PY_VERSION_HEX < 0x03070000
+#error FaaS Python binding requires Python 3.7+
+#endif
+#endif
+
 // C includes
 #include <stdio.h>
 #include <string.h>

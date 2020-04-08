@@ -7,6 +7,12 @@
 /worker/golang/build/
 /worker/nodejs/build/
 /worker/nodejs/node_modules/
+/worker/python/.release_time
+/worker/python/build/
+/worker/python/faas/_faas_native.*.so
+
+# Python related
+/worker/python/faas/__pycache__/
 
 # Editor related
 /.vscode/

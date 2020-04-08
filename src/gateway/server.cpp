@@ -258,16 +258,19 @@ void Server::ReturnConnection(Connection* connection) {
         MessageConnection* message_connection = static_cast<MessageConnection*>(connection);
         {
             absl::MutexLock lk(&message_connection_mu_);
-            DCHECK(message_connections_by_client_id_.contains(message_connection->client_id()));
-            message_connections_by_client_id_.erase(message_connection->client_id());
-            if (message_connection->role() == Role::WATCHDOG) {
-                uint16_t func_id = message_connection->func_id();
-                if (watchdog_connections_by_func_id_.contains(func_id)) {
-                    if (watchdog_connections_by_func_id_[func_id] == connection) {
-                        watchdog_connections_by_func_id_.erase(func_id);
+            if (message_connection->client_id() > 0) {
+                // Non-zero client_id indicates handshake has done
+                DCHECK(message_connections_by_client_id_.contains(message_connection->client_id()));
+                message_connections_by_client_id_.erase(message_connection->client_id());
+                if (message_connection->role() == Role::WATCHDOG) {
+                    uint16_t func_id = message_connection->func_id();
+                    if (watchdog_connections_by_func_id_.contains(func_id)) {
+                        if (watchdog_connections_by_func_id_[func_id] == connection) {
+                            watchdog_connections_by_func_id_.erase(func_id);
+                        }
+                    } else {
+                        HLOG(WARNING) << "Cannot find watchdog connection of func_id " << func_id;
                     }
-                } else {
-                    HLOG(WARNING) << "Cannot find watchdog connection of func_id " << func_id;
                 }
             }
             message_connections_.erase(message_connection);

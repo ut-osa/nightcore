@@ -27,11 +27,24 @@ private:
     DISALLOW_COPY_AND_ASSIGN(Mutex);
 };
 
+#elif defined(__FAAS_PYTHON_BINDING)
+// Python environment can safely use an no-op mutex
+
+class Mutex {
+public:
+    Mutex() {}
+    ~Mutex() {}
+    void Lock() {}
+    void Unlock() {}
+private:
+    DISALLOW_COPY_AND_ASSIGN(Mutex);
+};
+
 #else
 
 #error No polyfill implementation available
 
-#endif  // __FAAS_NODE_ADDON
+#endif
 
 class MutexLock {
 public:
