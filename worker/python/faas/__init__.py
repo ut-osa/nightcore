@@ -1,6 +1,7 @@
 import os
 import logging
 import asyncio
+from collections import namedtuple
 
 from . import _faas_native
 __func_handler = None
@@ -47,47 +48,53 @@ class WatchdogInputPipeProtocol(asyncio.Protocol):
         self._manager.on_watchdog_io_error('Disconnected: ' + str(exc))
 
 
+def _task_complete_callback(manager, handle):
+    def func(task):
+        success, output = False, b''
+        e = task.exception()
+        if e is not None:
+            logging.warning('Function handler raises exception: %s' % str(e))
+        elif isinstance(task.result(), bytes):
+            success, output = True, task.result()
+        else:
+            logging.error('Function handler returns non-byte object')
+        manager.on_incoming_func_call_complete(handle, success, output)
+    return func
+
+
+def _run_func_handler_sync(manager, handle, input_, method=None):
+    global __func_handler
+    success, output = False, b''
+    try:
+        if method is None:
+            output_ = __func_handler(input_)
+        else:
+            # gRPC service
+            output_ =  __func_handler(method, input_)
+        if isinstance(output_, bytes):
+            success, output = True, output_
+        else:
+            logging.error('Function handler returns non-byte object')
+    except Exception as e:
+        logging.warning('Function handler raises exception: %s' % str(e))
+    manager.on_incoming_func_call_complete(handle, success, output)
+
+
 def _incoming_func_call_callback(manager):
     global __func_handler
-
-    def task_complete_callback(handle):
-        def func(task):
-            success, output = False, b''
-            e = task.exception()
-            if e is not None:
-                logging.warning('Function handler raises exception: %s' % str(e))
-            elif isinstance(task.result(), bytes):
-                success, output = True, task.result()
-            else:
-                logging.error('Function handler returns non-byte object')
-            manager.on_incoming_func_call_complete(handle, success, output)
-        return func
-
-    def run_sync(handle, input_):
-        success, output = False, b''
-        try:
-            output_ = __func_handler(input_)
-            if isinstance(output_, bytes):
-                success, output = True, output_
-            else:
-                logging.error('Function handler returns non-byte object')
-        except Exception as e:
-            logging.warning('Function handler raises exception: %s' % str(e))
-        manager.on_incoming_func_call_complete(handle, success, output)
-
     def func(handle, input_):
         if asyncio.iscoroutinefunction(__func_handler):
             task = asyncio.create_task(__func_handler(input_))
-            task.add_done_callback(task_complete_callback(handle))
+            task.add_done_callback(_task_complete_callback(manager, handle))
         else:
-            run_sync(handle, input_)
-
+            _run_func_handler_sync(manager, handle, input_)
     return func
 
 
 def _incoming_grpc_call_callback(manager):
+    global __func_handler
     def func(handle, method, request):
-        raise Exception('Not implemented')
+        _run_func_handler_sync(manager, handle, request, method=method)
     return func
 
 
@@ -120,8 +127,45 @@ async def invoke_func(func_name, input_):
     return await fut
 
 
+class _GrpcServerImpl(object):
+    def __init__(self, manager):
+        self._service_name = manager.grpc_service_name
+        self._rpc_handlers = []
+
+    def add_generic_rpc_handlers(self, generic_handlers):
+        for handler in generic_handlers:
+            if handler.service_name() != self._service_name:
+                raise FaasError('Cannot register gRPC service %s' % handler.service_name())
+            self._rpc_handlers.append(handler)
+
+    def handle_request(self, method, request_bytes):
+        call_details = namedtuple('_HandlerCallDetails', ['method', 'invocation_metadata'])
+        call_details.method = '/{}/{}'.format(self._service_name, method)
+        rpc_method_handler = None
+        for rpc_handler in self._rpc_handlers:
+            rpc_method_handler = rpc_handler.service(call_details)
+            if rpc_method_handler is not None:
+                break
+        if rpc_method_handler is None:
+            raise FaasError('Cannot find handler for method %s' % method)
+        if rpc_method_handler.request_streaming or rpc_method_handler.response_streaming:
+            raise FaasError('Cannot run streaming function handler')
+        request = rpc_method_handler.request_deserializer(request_bytes)
+        context = None
+        reply = rpc_method_handler.unary_unary(request, context)
+        return rpc_method_handler.response_serializer(reply)
+
+
+__grpc_server_impl = _GrpcServerImpl(__manager)
+def grpc_server():
+    global __grpc_server_impl
+    return __grpc_server_impl
+
+
 async def serve_forever():
     global __manager
+    global __func_handler
+    global __grpc_server_impl
 
     manager = __manager
     loop = asyncio.get_running_loop()
@@ -143,8 +187,11 @@ async def serve_forever():
         lambda data: watchdog_output_transport.write(data))
 
     if manager.is_grpc_service:
+        __func_handler = __grpc_server_impl.handle_request
         manager.set_incoming_grpc_call_callback(_incoming_grpc_call_callback(manager))
     else:
+        if __func_handler is None:
+            raise FaasError('Function handler not set')
         manager.set_incoming_func_call_callback(_incoming_func_call_callback(manager))
     manager.set_outcoming_func_call_complete_callback(
         _outcoming_func_call_complete_callback(manager))

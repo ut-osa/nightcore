@@ -23,6 +23,7 @@ public:
     void OnWatchdogIOError(std::string_view message);
 
     bool is_grpc_service() const { return my_func_config_->is_grpc_service; }
+    std::string_view grpc_service_name() const { return my_func_config_->grpc_service_name; }
     int watchdog_input_pipe_fd() const { return watchdog_input_pipe_fd_; }
     int watchdog_output_pipe_fd() const { return watchdog_output_pipe_fd_; }
     std::string_view gateway_ipc_path() const { return gateway_ipc_path_; }

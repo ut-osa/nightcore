@@ -54,6 +54,9 @@ void InitModule(py::module& m) {
     clz.def_property_readonly("is_grpc_service", [] (worker_lib::Manager* self) {
         return self->is_grpc_service();
     });
+    clz.def_property_readonly("grpc_service_name", [] (worker_lib::Manager* self) {
+        return self->grpc_service_name();
+    });
     clz.def_property_readonly("watchdog_input_pipe_fd", [] (worker_lib::Manager* self) {
         return self->watchdog_input_pipe_fd();
     });
