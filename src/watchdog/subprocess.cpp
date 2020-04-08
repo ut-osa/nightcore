@@ -174,6 +174,11 @@ UV_ALLOC_CB_FOR_CLASS(Subprocess, BufferAlloc) {
 }
 
 UV_READ_CB_FOR_CLASS(Subprocess, ReadStdout) {
+    auto reclaim_resource = gsl::finally([this, buf] {
+        if (buf->base != 0) {
+            read_buffer_pool_->Return(buf);
+        }
+    });
     if (nread < 0) {
         if (nread != UV_EOF) {
             HLOG(WARNING) << "Read error on stdout, will kill the process: "
@@ -182,20 +187,26 @@ UV_READ_CB_FOR_CLASS(Subprocess, ReadStdout) {
         } else {
             ClosePipe(kStdout);
         }
-    } else if (nread > 0) {
-        if (stdout_.length() + nread > max_stdout_size_) {
-            HLOG(WARNING) << "Exceed stdout size limit, will kill the process";
-            Kill();
-        } else {
-            stdout_.AppendData(buf->base, nread);
-        }
+        return;
     }
-    if (buf->base != 0) {
-        read_buffer_pool_->Return(buf);
+    if (nread == 0) {
+        HLOG(WARNING) << "nread=0, will do nothing";
+        return;
+    }
+    if (stdout_.length() + nread > max_stdout_size_) {
+        HLOG(WARNING) << "Exceed stdout size limit, will kill the process";
+        Kill();
+    } else {
+        stdout_.AppendData(buf->base, nread);
     }
 }
 
 UV_READ_CB_FOR_CLASS(Subprocess, ReadStderr) {
+    auto reclaim_resource = gsl::finally([this, buf] {
+        if (buf->base != 0) {
+            read_buffer_pool_->Return(buf);
+        }
+    });
     if (nread < 0) {
         if (nread != UV_EOF) {
             HLOG(WARNING) << "Read error on stderr, will kill the process: "
@@ -204,16 +215,17 @@ UV_READ_CB_FOR_CLASS(Subprocess, ReadStderr) {
         } else {
             ClosePipe(kStderr);
         }
-    } else if (nread > 0) {
-        if (stderr_.length() + nread > max_stderr_size_) {
-            HLOG(WARNING) << "Exceed stderr size limit, will kill the process";
-            Kill();
-        } else {
-            stderr_.AppendData(buf->base, nread);
-        }
+        return;
     }
-    if (buf->base != 0) {
-        read_buffer_pool_->Return(buf);
+    if (nread == 0) {
+        HLOG(WARNING) << "nread=0, will do nothing";
+        return;
+    }
+    if (stderr_.length() + nread > max_stderr_size_) {
+        HLOG(WARNING) << "Exceed stderr size limit, will kill the process";
+        Kill();
+    } else {
+        stderr_.AppendData(buf->base, nread);
     }
 }
 

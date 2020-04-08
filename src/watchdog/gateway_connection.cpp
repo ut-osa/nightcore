@@ -90,24 +90,32 @@ UV_ALLOC_CB_FOR_CLASS(GatewayConnection, BufferAlloc) {
 }
 
 UV_READ_CB_FOR_CLASS(GatewayConnection, ReadHandshakeResponse) {
+    auto reclaim_resource = gsl::finally([this, buf] {
+        if (buf->base != 0) {
+            buffer_pool_.Return(buf);
+        }
+    });
     if (nread < 0) {
         HLOG(WARNING) << "Read error on handshake, will close the connection: "
                       << uv_strerror(nread);
         ScheduleClose();
-    } else if (nread > 0) {
-        message_buffer_.AppendData(buf->base, nread);
-        DCHECK_LE(message_buffer_.length(), sizeof(HandshakeResponse));
-        if (message_buffer_.length() == sizeof(HandshakeResponse)) {
-            RecvHandshakeResponse();
-        }
+        return;
     }
-    if (buf->base != 0) {
-        buffer_pool_.Return(buf);
+    if (nread == 0) {
+        HLOG(WARNING) << "nread=0, will do nothing";
+        return;
+    }
+    message_buffer_.AppendData(buf->base, nread);
+    DCHECK_LE(message_buffer_.length(), sizeof(HandshakeResponse));
+    if (message_buffer_.length() == sizeof(HandshakeResponse)) {
+        RecvHandshakeResponse();
     }
 }
 
 UV_WRITE_CB_FOR_CLASS(GatewayConnection, WriteHandshake) {
-    write_req_pool_.Return(req);
+    auto reclaim_resource = gsl::finally([this, req] {
+        write_req_pool_.Return(req);
+    });
     if (status != 0) {
         HLOG(WARNING) << "Failed to write handshake message, will close the connection: "
                       << uv_strerror(status);
@@ -120,25 +128,33 @@ UV_WRITE_CB_FOR_CLASS(GatewayConnection, WriteHandshake) {
 }
 
 UV_READ_CB_FOR_CLASS(GatewayConnection, ReadMessage) {
+    auto reclaim_resource = gsl::finally([this, buf] {
+        if (buf->base != 0) {
+            buffer_pool_.Return(buf);
+        }
+    });
     if (nread < 0) {
         HLOG(WARNING) << "Read error, will close the connection: "
                       << uv_strerror(nread);
         ScheduleClose();
-    } else if (nread > 0) {
-        utils::ReadMessages<Message>(
-            &message_buffer_, buf->base, nread,
-            [this] (Message* message) {
-                watchdog_->OnRecvMessage(*message);
-            });
+        return;
     }
-    if (buf->base != 0) {
-        buffer_pool_.Return(buf);
+    if (nread == 0) {
+        HLOG(WARNING) << "nread=0, will do nothing";
+        return;
     }
+    utils::ReadMessages<Message>(
+        &message_buffer_, buf->base, nread,
+        [this] (Message* message) {
+            watchdog_->OnRecvMessage(*message);
+        });
 }
 
 UV_WRITE_CB_FOR_CLASS(GatewayConnection, WriteMessage) {
-    buffer_pool_.Return(reinterpret_cast<char*>(req->data));
-    write_req_pool_.Return(req);
+    auto reclaim_resource = gsl::finally([this, req] {
+        buffer_pool_.Return(reinterpret_cast<char*>(req->data));
+        write_req_pool_.Return(req);
+    });
     if (status != 0) {
         HLOG(WARNING) << "Failed to write response, will close the connection: "
                       << uv_strerror(status);

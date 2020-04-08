@@ -86,17 +86,12 @@ void HttpConnection::StopRecvData() {
 }
 
 UV_READ_CB_FOR_CLASS(HttpConnection, RecvData) {
-    if (nread > 0) {
-        const char* data = buf->base;
-        size_t length = static_cast<size_t>(nread);
-        size_t parsed = http_parser_execute(&http_parser_, &http_parser_settings_, data, length);
-        if (parsed < length) {
-            HLOG(WARNING) << "HTTP parsing failed: "
-                          << http_errno_name(static_cast<http_errno>(http_parser_.http_errno))
-                          << ",  will close the connection";
-            ScheduleClose();
+    auto reclaim_worker_resource = gsl::finally([this, buf] {
+        if (buf->base != 0) {
+            io_worker_->ReturnReadBuffer(buf);
         }
-    } else if (nread < 0) {
+    });
+    if (nread < 0) {
         if (nread == UV_EOF || nread == UV_ECONNRESET) {
             HLOG(INFO) << "HttpConnection closed by client";
         } else {
@@ -104,9 +99,20 @@ UV_READ_CB_FOR_CLASS(HttpConnection, RecvData) {
                           << uv_strerror(nread);
         }
         ScheduleClose();
+        return;
     }
-    if (buf->base != 0) {
-        io_worker_->ReturnReadBuffer(buf);
+    if (nread == 0) {
+        HLOG(WARNING) << "nread=0, will do nothing";
+        return;
+    }
+    const char* data = buf->base;
+    size_t length = static_cast<size_t>(nread);
+    size_t parsed = http_parser_execute(&http_parser_, &http_parser_settings_, data, length);
+    if (parsed < length) {
+        HLOG(WARNING) << "HTTP parsing failed: "
+                        << http_errno_name(static_cast<http_errno>(http_parser_.http_errno))
+                        << ",  will close the connection";
+        ScheduleClose();
     }
 }
 

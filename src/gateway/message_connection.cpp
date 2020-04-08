@@ -128,21 +128,27 @@ UV_ALLOC_CB_FOR_CLASS(MessageConnection, BufferAlloc) {
 }
 
 UV_READ_CB_FOR_CLASS(MessageConnection, ReadHandshake) {
+    auto reclaim_worker_resource = gsl::finally([this, buf] {
+        if (buf->base != 0) {
+            io_worker_->ReturnReadBuffer(buf);
+        }
+    });
     if (nread < 0) {
         HLOG(ERROR) << "Read error on handshake, will close this connection: "
                     << uv_strerror(nread);
         ScheduleClose();
-    } else if (nread > 0) {
-        message_buffer_.AppendData(buf->base, nread);
-        if (message_buffer_.length() > sizeof(HandshakeMessage)) {
-            HLOG(ERROR) << "Invalid handshake, will close this connection";
-            ScheduleClose();
-        } else if (message_buffer_.length() == sizeof(HandshakeMessage)) {
-            RecvHandshakeMessage();
-        }
+        return;
     }
-    if (buf->base != 0) {
-        io_worker_->ReturnReadBuffer(buf);
+    if (nread == 0) {
+        HLOG(WARNING) << "nread=0, will do nothing";
+        return;
+    }
+    message_buffer_.AppendData(buf->base, nread);
+    if (message_buffer_.length() > sizeof(HandshakeMessage)) {
+        HLOG(ERROR) << "Invalid handshake, will close this connection";
+        ScheduleClose();
+    } else if (message_buffer_.length() == sizeof(HandshakeMessage)) {
+        RecvHandshakeMessage();
     }
 }
 
@@ -161,6 +167,11 @@ UV_WRITE_CB_FOR_CLASS(MessageConnection, WriteHandshakeResponse) {
 }
 
 UV_READ_CB_FOR_CLASS(MessageConnection, ReadMessage) {
+    auto reclaim_worker_resource = gsl::finally([this, buf] {
+        if (buf->base != 0) {
+            io_worker_->ReturnReadBuffer(buf);
+        }
+    });
     if (nread < 0) {
         if (nread == UV_EOF) {
             HLOG(INFO) << "Connection closed remotely";
@@ -169,22 +180,25 @@ UV_READ_CB_FOR_CLASS(MessageConnection, ReadMessage) {
                         << uv_strerror(nread);
         }
         ScheduleClose();
-    } else if (nread > 0) {
-        io_worker_->bytes_per_read_stat()->AddSample(nread);
-        utils::ReadMessages<Message>(
-            &message_buffer_, buf->base, nread,
-            [this] (Message* message) {
-                server_->OnRecvMessage(this, *message);
-            });
+        return;
     }
-    if (buf->base != 0) {
-        io_worker_->ReturnReadBuffer(buf);
+    if (nread == 0) {
+        HLOG(WARNING) << "nread=0, will do nothing";
+        return;
     }
+    io_worker_->bytes_per_read_stat()->AddSample(nread);
+    utils::ReadMessages<Message>(
+        &message_buffer_, buf->base, nread,
+        [this] (Message* message) {
+            server_->OnRecvMessage(this, *message);
+        });
 }
 
 UV_WRITE_CB_FOR_CLASS(MessageConnection, WriteMessage) {
-    io_worker_->ReturnWriteBuffer(reinterpret_cast<char*>(req->data));
-    io_worker_->ReturnWriteRequest(req);
+    auto reclaim_worker_resource = gsl::finally([this, req] {
+        io_worker_->ReturnWriteBuffer(reinterpret_cast<char*>(req->data));
+        io_worker_->ReturnWriteRequest(req);
+    });
     if (status != 0) {
         HLOG(ERROR) << "Failed to write response, will close this connection: "
                     << uv_strerror(status);

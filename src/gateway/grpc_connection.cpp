@@ -137,7 +137,7 @@ void GrpcConnection::ScheduleClose() {
 }
 
 UV_READ_CB_FOR_CLASS(GrpcConnection, RecvData) {
-    auto return_buffer = gsl::finally([this, buf] {
+    auto reclaim_worker_resource = gsl::finally([this, buf] {
         if (buf->base != 0) {
             io_worker_->ReturnReadBuffer(buf);
         }
@@ -182,7 +182,7 @@ UV_READ_CB_FOR_CLASS(GrpcConnection, RecvData) {
 }
 
 UV_WRITE_CB_FOR_CLASS(GrpcConnection, DataWritten) {
-    auto return_buffer = gsl::finally([this, req] {
+    auto reclaim_worker_resource = gsl::finally([this, req] {
         if (req != &write_req_for_mem_send_) {
             io_worker_->ReturnWriteBuffer(reinterpret_cast<char*>(req->data));
             io_worker_->ReturnWriteRequest(req);

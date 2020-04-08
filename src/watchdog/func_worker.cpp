@@ -213,42 +213,50 @@ UV_ALLOC_CB_FOR_CLASS(FuncWorker, BufferAlloc) {
 }
 
 UV_READ_CB_FOR_CLASS(FuncWorker, ReadMessage) {
+    auto reclaim_resource = gsl::finally([this, buf] {
+        if (buf->base != 0) {
+            read_buffer_pool_->Return(buf);
+        }
+    });
     if (nread < 0) {
         HLOG(WARNING) << "Read error, will close this FuncWorker: "
                       << uv_strerror(nread);
         ScheduleClose();
-    } else if (nread > 0) {
-        if (state_ == kAsync) {
-            utils::ReadMessages<Message>(
-                &recv_buffer_, buf->base, nread,
-                [this] (Message* message) {
-                    OnRecvMessage(*message);
-                });
-        } else {
-            DCHECK(state_ == kReceiving);
-            recv_buffer_.AppendData(buf->base, nread);
-            if (recv_buffer_.length() == sizeof(Message)) {
-                if (!subprocess_.PipeClosed(output_pipe_fd_)) {
-                    UV_DCHECK_OK(uv_read_stop(UV_AS_STREAM(uv_output_pipe_handle_)));
-                }
-                Message* message = reinterpret_cast<Message*>(recv_buffer_.data());
-                OnRecvMessage(*message);
-            } else if (recv_buffer_.length() > sizeof(Message)) {
-                HLOG(ERROR) << "Read more data than expected, will close this FuncWorker";
-                ScheduleClose();
-            }
-        }
+        return;
     }
-    if (buf->base != 0) {
-        read_buffer_pool_->Return(buf);
+    if (nread == 0) {
+        HLOG(WARNING) << "nread=0, will do nothing";
+        return;
+    }
+    if (state_ == kAsync) {
+        utils::ReadMessages<Message>(
+            &recv_buffer_, buf->base, nread,
+            [this] (Message* message) {
+                OnRecvMessage(*message);
+            });
+    } else {
+        DCHECK(state_ == kReceiving);
+        recv_buffer_.AppendData(buf->base, nread);
+        if (recv_buffer_.length() == sizeof(Message)) {
+            if (!subprocess_.PipeClosed(output_pipe_fd_)) {
+                UV_DCHECK_OK(uv_read_stop(UV_AS_STREAM(uv_output_pipe_handle_)));
+            }
+            Message* message = reinterpret_cast<Message*>(recv_buffer_.data());
+            OnRecvMessage(*message);
+        } else if (recv_buffer_.length() > sizeof(Message)) {
+            HLOG(ERROR) << "Read more data than expected, will close this FuncWorker";
+            ScheduleClose();
+        }
     }
 }
 
 UV_WRITE_CB_FOR_CLASS(FuncWorker, WriteMessage) {
-    if (state_ == kAsync) {
-        write_buffer_pool_->Return(reinterpret_cast<char*>(req->data));
-        write_req_pool_->Return(req);
-    }
+    auto reclaim_resource = gsl::finally([this, req] {
+        if (state_ == kAsync) {
+            write_buffer_pool_->Return(reinterpret_cast<char*>(req->data));
+            write_req_pool_->Return(req);
+        }
+    });
     if (status != 0) {
         HLOG(WARNING) << "Failed to write request, will close this FuncWorker: "
                       << uv_strerror(status);
