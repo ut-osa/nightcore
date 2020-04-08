@@ -5,8 +5,8 @@
 #include <memory>
 #include <utility>
 
-#define __PREDICT_FALSE(x)   __builtin_expect(x, 0)
-#define __PREDICT_TRUE(x)    __builtin_expect(false || (x), true)
+#include "base/macro.h"
+
 #define __ATTRIBUTE_NORETURN __attribute__((noreturn))
 
 namespace faas {
@@ -52,7 +52,7 @@ std::string* MakeCheckOpString(const T1& v1, const T2& v2, const char* exprtext)
     template <typename T1, typename T2>                          \
     inline std::string* name##Impl(const T1& v1, const T2& v2,   \
                                    const char* exprtext) {       \
-        if (__PREDICT_TRUE(v1 op v2)) return nullptr;       \
+        if (__FAAS_PREDICT_TRUE(v1 op v2)) return nullptr;       \
         return MakeCheckOpString(v1, v2, exprtext);              \
     }                                                            \
     inline std::string* name##Impl(int v1, int v2,               \
@@ -122,7 +122,7 @@ public:
 
 template <typename T>
 T CheckNotNull(const char* file, int line, const char* exprtext, T&& t) {
-    if (__PREDICT_FALSE(!t)) {
+    if (__FAAS_PREDICT_FALSE(!t)) {
         LogMessageFatal(file, line, std::string(exprtext));
     }
     return std::forward<T>(t);
@@ -141,9 +141,9 @@ T CheckNotNull(const char* file, int line, const char* exprtext, T&& t) {
 #define LOG(severity) COMPACT_FAAS_LOG_##severity.stream()
 #define LOG_IF(severity, condition) \
     !(condition) ? (void)0 : faas::logging::LogMessageVoidify() & LOG(severity)
-#define VLOG(level) LOG_IF(INFO, (level) <= faas::logging::get_vlog_level())
+#define VLOG(level) LOG_IF(INFO, __FAAS_PREDICT_FALSE((level) <= faas::logging::get_vlog_level()))
 #define CHECK(condition) \
-    LOG_IF(FATAL, !(condition)) << "Check failed: " #condition " "
+    LOG_IF(FATAL, __FAAS_PREDICT_FALSE(!(condition))) << "Check failed: " #condition " "
 
 #define COMPACT_FAAS_PLOG_INFO    faas::logging::LogMessage(__FILE__, __LINE__, faas::logging::INFO, true)
 #define COMPACT_FAAS_PLOG_WARNING faas::logging::LogMessage(__FILE__, __LINE__, faas::logging::WARNING, true)
@@ -154,7 +154,7 @@ T CheckNotNull(const char* file, int line, const char* exprtext, T&& t) {
 #define PLOG_IF(severity, condition) \
     !(condition) ? (void)0 : faas::logging::LogMessageVoidify() & PLOG(severity)
 #define PCHECK(condition) \
-    PLOG_IF(FATAL, !(condition)) << "Check failed: " #condition " "
+    PLOG_IF(FATAL, __FAAS_PREDICT_FALSE(!(condition))) << "Check failed: " #condition " "
 
 #define CHECK_OP_LOG(name, op, val1, val2, log)            \
     while (auto _result = std::unique_ptr<std::string>(    \
@@ -217,8 +217,6 @@ T CheckNotNull(const char* file, int line, const char* exprtext, T&& t) {
 
 #endif  // DCHECK_IS_ON()
 
-#define DVLOG(level) DLOG_IF(INFO, (level) <= faas::logging::get_vlog_level())
+#define DVLOG(level) DLOG_IF(INFO, __FAAS_PREDICT_FALSE((level) <= faas::logging::get_vlog_level()))
 
-#undef __PREDICT_FALSE
-#undef __PREDICT_TRUE
 #undef __ATTRIBUTE_NORETURN

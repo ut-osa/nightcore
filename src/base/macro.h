@@ -19,3 +19,6 @@
 #define DISALLOW_IMPLICIT_CONSTRUCTORS(TypeName) \
     TypeName() = delete;                         \
     DISALLOW_COPY_AND_ASSIGN(TypeName)
+
+#define __FAAS_PREDICT_FALSE(x) __builtin_expect(x, 0)
+#define __FAAS_PREDICT_TRUE(x)  __builtin_expect(false || (x), true)

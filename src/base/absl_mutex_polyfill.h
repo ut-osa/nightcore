@@ -10,12 +10,12 @@
 #define ABSL_GUARDED_BY(x)
 #define ABSL_EXCLUSIVE_LOCKS_REQUIRED(x)
 
-#ifdef __FAAS_NODE_ADDON
-// Node.js environment can safely use an no-op polyfill
-
 #include "base/macro.h"  // For DISALLOW_COPY_AND_ASSIGN
 
 namespace absl {
+
+#ifdef __FAAS_NODE_ADDON
+// Node.js environment can safely use an no-op mutex
 
 class Mutex {
 public:
@@ -27,16 +27,21 @@ private:
     DISALLOW_COPY_AND_ASSIGN(Mutex);
 };
 
+#else
+
+#error No polyfill implementation available
+
+#endif  // __FAAS_NODE_ADDON
+
 class MutexLock {
 public:
-    MutexLock(Mutex*) {}
-    ~MutexLock() {}
+    explicit MutexLock(Mutex *mu) : mu_(mu) { this->mu_->Lock(); }
+    ~MutexLock() { this->mu_->Unlock(); }
 private:
+    Mutex *const mu_;
     DISALLOW_COPY_AND_ASSIGN(MutexLock);
 };
 
 }  // namespace absl
-
-#endif  // __FAAS_NODE_ADDON
 
 #endif  // __FAAS_HAVE_ABSL
