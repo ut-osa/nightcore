@@ -3,6 +3,7 @@
 
 /bin/
 /build/
+/docker/
 
 /deps/out
 /deps/abseil-cpp/build/

@@ -19,6 +19,6 @@ RUN go build -a -ldflags "-s -w" -o /faas/bin/worker_golang
 
 FROM zjia/faas-watchdog-bionic:${WATCHDOG_TAG} as release
 COPY --from=builder /faas/bin/worker_golang /faas/bin/worker_golang
-COPY ./docker/golang_func_wrapper /faas/bin/golang_func_wrapper
+COPY ./scripts/golang_func_wrapper /faas/bin/golang_func_wrapper
 RUN chmod +x /faas/bin/golang_func_wrapper
 ENTRYPOINT ["/faas/bin/golang_func_wrapper"]

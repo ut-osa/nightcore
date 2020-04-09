@@ -33,3 +33,12 @@ docker tag zjia/faas-worker-nodejs:$TAG zjia/faas-worker-nodejs:latest
 docker tag zjia/faas-worker-python:$TAG zjia/faas-worker-python:latest
 docker tag zjia/faas-golang-env:$TAG zjia/faas-golang-env:latest
 docker tag zjia/faas-nodejs-env:$TAG zjia/faas-nodejs-env:latest
+
+docker push zjia/faas-gateway:latest
+docker push zjia/faas-watchdog-bionic:latest
+docker push zjia/faas-watchdog-buster:latest
+docker push zjia/faas-worker-golang:latest
+docker push zjia/faas-worker-nodejs:latest
+docker push zjia/faas-worker-python:latest
+docker push zjia/faas-golang-env:latest
+docker push zjia/faas-nodejs-env:latest

@@ -23,6 +23,6 @@ FROM zjia/faas-watchdog-bionic:${WATCHDOG_TAG} as release
 COPY --from=builder /usr/local/bin/node /usr/local/bin/node
 ENV NODE_PATH /usr/local/lib/node_modules
 COPY --from=builder /faas/src/worker/nodejs /usr/local/lib/node_modules/faas
-COPY ./docker/nodejs_func_wrapper /faas/bin/nodejs_func_wrapper
+COPY ./scripts/nodejs_func_wrapper /faas/bin/nodejs_func_wrapper
 RUN chmod +x /faas/bin/nodejs_func_wrapper
 ENTRYPOINT ["/faas/bin/nodejs_func_wrapper"]

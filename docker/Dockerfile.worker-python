@@ -15,6 +15,6 @@ FROM zjia/faas-watchdog-buster:${WATCHDOG_TAG} as watchdog
 FROM python:$PYTHON_VER-buster as release
 COPY --from=watchdog /faas/bin/watchdog /faas/bin/watchdog
 COPY --from=builder /faas/worker/python/faas /faas/python/faas
-COPY ./docker/python_func_wrapper /faas/bin/python_func_wrapper
+COPY ./scripts/python_func_wrapper /faas/bin/python_func_wrapper
 RUN chmod +x /faas/bin/python_func_wrapper
 ENTRYPOINT ["/faas/bin/python_func_wrapper"]
