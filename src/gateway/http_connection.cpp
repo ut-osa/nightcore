@@ -106,12 +106,12 @@ UV_READ_CB_FOR_CLASS(HttpConnection, RecvData) {
         return;
     }
     const char* data = buf->base;
-    size_t length = static_cast<size_t>(nread);
+    size_t length = gsl::narrow_cast<size_t>(nread);
     size_t parsed = http_parser_execute(&http_parser_, &http_parser_settings_, data, length);
     if (parsed < length) {
         HLOG(WARNING) << "HTTP parsing failed: "
-                        << http_errno_name(static_cast<http_errno>(http_parser_.http_errno))
-                        << ",  will close the connection";
+                      << http_errno_name(static_cast<http_errno>(http_parser_.http_errno))
+                      << ",  will close the connection";
         ScheduleClose();
     }
 }
@@ -181,7 +181,7 @@ static bool ReadParsedUrlField(const http_parser_url* parsed_url, http_parser_ur
         return false;
     } else {
         *result = std::string_view(url_buf + parsed_url->field_data[field].off,
-                                    parsed_url->field_data[field].len);
+                                   parsed_url->field_data[field].len);
         return true;
     }
 }
@@ -208,10 +208,10 @@ void HttpConnection::HttpParserOnMessageComplete() {
 
 void HttpConnection::HttpParserOnNewHeader() {
     std::string_view field(header_field_buffer_.data() + header_field_buffer_pos_,
-                            header_field_buffer_.length() - header_field_buffer_pos_);
+                           header_field_buffer_.length() - header_field_buffer_pos_);
     header_field_buffer_pos_ = header_field_buffer_.length();
     std::string_view value(header_value_buffer_.data() + header_value_buffer_pos_,
-                            header_value_buffer_.length() - header_value_buffer_pos_);
+                           header_value_buffer_.length() - header_value_buffer_pos_);
     header_value_buffer_pos_ = header_value_buffer_.length();
     HVLOG(1) << "Parse new HTTP header: " << field << " = " << value;
     headers_[field] = value;

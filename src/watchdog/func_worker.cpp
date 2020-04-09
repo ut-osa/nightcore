@@ -129,7 +129,7 @@ void FuncWorker::OnRecvMessage(const Message& message) {
     watchdog_->func_worker_message_delay_stat()->AddSample(
         GetMonotonicMicroTimestamp() - message.send_timestamp);
 #endif
-    MessageType type = static_cast<MessageType>(message.message_type);
+    MessageType type{message.message_type};
     uint64_t call_id = message.func_call.full_call_id;
     if (type == MessageType::FUNC_CALL_COMPLETE || type == MessageType::FUNC_CALL_FAILED) {
         if (func_runners_.contains(call_id)) {
@@ -192,7 +192,7 @@ void FuncWorker::DispatchFuncCall(uint64_t call_id) {
         message = &message_to_send_;
         write_req = &write_req_;
     }
-    message->message_type = static_cast<uint16_t>(MessageType::INVOKE_FUNC);
+    message->message_type = gsl::narrow_cast<uint16_t>(MessageType::INVOKE_FUNC);
     message->func_call.full_call_id = call_id;
 #ifdef __FAAS_ENABLE_PROFILING
     message->send_timestamp = GetMonotonicMicroTimestamp();

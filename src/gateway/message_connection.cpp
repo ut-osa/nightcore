@@ -96,14 +96,13 @@ void MessageConnection::RecvHandshakeMessage() {
     HandshakeMessage* message = reinterpret_cast<HandshakeMessage*>(
         message_buffer_.data());
     server_->OnNewHandshake(this, *message, &handshake_response_);
-    role_ = static_cast<Role>(message->role);
+    role_ = Role{message->role};
     func_id_ = message->func_id;
     client_id_ = handshake_response_.client_id;
     if (role_ == Role::WATCHDOG) {
-        log_header_ = absl::StrFormat("WatchdogConnection[%d]: ", static_cast<int>(func_id_));
+        log_header_ = absl::StrFormat("WatchdogConnection[%d]: ", func_id_);
     } else if (role_ == Role::FUNC_WORKER) {
-        log_header_ = absl::StrFormat("FuncWorkerConnection[%d-%d]: ",
-                                      static_cast<int>(func_id_), static_cast<int>(client_id_));
+        log_header_ = absl::StrFormat("FuncWorkerConnection[%d-%d]: ", func_id_, client_id_);
     }
     uv_buf_t buf = {
         .base = reinterpret_cast<char*>(&handshake_response_),

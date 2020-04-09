@@ -22,13 +22,13 @@ FuncWorker::FuncWorker()
       gateway_ipc_thread_("GatewayIpc", absl::bind_front(&FuncWorker::GatewayIpcThreadMain, this)),
       next_call_id_(0),
       gateway_message_delay_stat_(
-          stat::StatisticsCollector<uint32_t>::StandardReportCallback("gateway_message_delay")),
+          stat::StatisticsCollector<int32_t>::StandardReportCallback("gateway_message_delay")),
       watchdog_message_delay_stat_(
-          stat::StatisticsCollector<uint32_t>::StandardReportCallback("watchdog_message_delay")),
+          stat::StatisticsCollector<int32_t>::StandardReportCallback("watchdog_message_delay")),
       processing_delay_stat_(
-          stat::StatisticsCollector<uint32_t>::StandardReportCallback("processing_delay")),
+          stat::StatisticsCollector<int32_t>::StandardReportCallback("processing_delay")),
       system_protocol_overhead_stat_(
-          stat::StatisticsCollector<uint32_t>::StandardReportCallback("system_protocol_overhead")),
+          stat::StatisticsCollector<int32_t>::StandardReportCallback("system_protocol_overhead")),
       input_size_stat_(
           stat::StatisticsCollector<uint32_t>::StandardReportCallback("input_size")),
       output_size_stat_(
@@ -93,22 +93,23 @@ void FuncWorker::MainServingLoop() {
             }
         }
 #ifdef __FAAS_ENABLE_PROFILING
-        watchdog_message_delay_stat_.AddSample(
-            GetMonotonicMicroTimestamp() - message.send_timestamp);
+        watchdog_message_delay_stat_.AddSample(gsl::narrow_cast<int32_t>(
+            GetMonotonicMicroTimestamp() - message.send_timestamp));
 #endif
-        MessageType type = static_cast<MessageType>(message.message_type);
+        MessageType type{message.message_type};
         if (type == MessageType::INVOKE_FUNC) {
             incoming_requests_counter_.Tick();
             Message response;
             response.func_call = message.func_call;
-            uint64_t start_timestamp = GetMonotonicMicroTimestamp();
+            int64_t start_timestamp = GetMonotonicMicroTimestamp();
             bool success = RunFuncHandler(func_worker, message.func_call.full_call_id);
-            uint32_t processing_time = GetMonotonicMicroTimestamp() - start_timestamp;
+            int32_t processing_time = gsl::narrow_cast<int32_t>(
+                GetMonotonicMicroTimestamp() - start_timestamp);
             processing_delay_stat_.AddSample(processing_time);
             if (success) {
-                response.message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_COMPLETE);
+                response.message_type = gsl::narrow_cast<uint16_t>(MessageType::FUNC_CALL_COMPLETE);
             } else {
-                response.message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_FAILED);
+                response.message_type = gsl::narrow_cast<uint16_t>(MessageType::FUNC_CALL_FAILED);
             }
 #ifdef __FAAS_ENABLE_PROFILING
             response.send_timestamp = GetMonotonicMicroTimestamp();
@@ -129,8 +130,8 @@ void FuncWorker::MainServingLoop() {
 
 void FuncWorker::GatewayIpcHandshake() {
     HandshakeMessage message = {
-        .role = static_cast<uint16_t>(Role::FUNC_WORKER),
-        .func_id = static_cast<uint16_t>(func_id_)
+        .role = gsl::narrow_cast<uint16_t>(Role::FUNC_WORKER),
+        .func_id = gsl::narrow_cast<uint16_t>(func_id_)
     };
     PCHECK(io_utils::SendMessage(gateway_sock_fd_, message));
     HandshakeResponse response;
@@ -142,7 +143,7 @@ void FuncWorker::GatewayIpcHandshake() {
             PLOG(FATAL) << "Failed to read from gateway socket";
         }
     }
-    if (static_cast<Status>(response.status) != Status::OK) {
+    if (Status{response.status} != Status::OK) {
         LOG(FATAL) << "Handshake failed";
     }
     client_id_ = response.client_id;
@@ -163,10 +164,10 @@ void FuncWorker::GatewayIpcThreadMain() {
             }
         }
 #ifdef __FAAS_ENABLE_PROFILING
-        gateway_message_delay_stat_.AddSample(
-            GetMonotonicMicroTimestamp() - message.send_timestamp);
+        gateway_message_delay_stat_.AddSample(gsl::narrow_cast<int32_t>(
+            GetMonotonicMicroTimestamp() - message.send_timestamp));
 #endif
-        MessageType type = static_cast<MessageType>(message.message_type);
+        MessageType type{message.message_type};
         if (type == MessageType::FUNC_CALL_COMPLETE || type == MessageType::FUNC_CALL_FAILED) {
             uint64_t call_id = message.func_call.full_call_id;
             {
@@ -238,12 +239,12 @@ bool FuncWorker::InvokeFunc(const char* func_name, const char* input_data, size_
     FuncInvokeContext* context = new FuncInvokeContext;
     context->success = false;
 #ifdef __FAAS_ENABLE_PROFILING
-    uint64_t start_timestamp = GetMonotonicMicroTimestamp();
+    int64_t start_timestamp = GetMonotonicMicroTimestamp();
     context->processing_time = 0;
 #endif
     context->output_region = nullptr;
     FuncCall func_call;
-    func_call.func_id = static_cast<uint16_t>(func_entry->func_id);
+    func_call.func_id = gsl::narrow_cast<uint16_t>(func_entry->func_id);
     func_call.client_id = client_id_;
     func_call.call_id = next_call_id_.fetch_add(1);
     context->input_region = shared_memory_->Create(
@@ -254,7 +255,7 @@ bool FuncWorker::InvokeFunc(const char* func_name, const char* input_data, size_
         .send_timestamp = GetMonotonicMicroTimestamp(),
         .processing_time = 0,
 #endif
-        .message_type = static_cast<uint16_t>(MessageType::INVOKE_FUNC),
+        .message_type = gsl::narrow_cast<uint16_t>(MessageType::INVOKE_FUNC),
         .func_call = func_call
     };
     {
@@ -269,7 +270,8 @@ bool FuncWorker::InvokeFunc(const char* func_name, const char* input_data, size_
         *output_data = context->output_region->base();
         *output_length = context->output_region->size();
 #ifdef __FAAS_ENABLE_PROFILING
-        uint32_t end2end_time = GetMonotonicMicroTimestamp() - start_timestamp;
+        int32_t end2end_time = gsl::narrow_cast<int32_t>(
+            GetMonotonicMicroTimestamp() - start_timestamp);
         system_protocol_overhead_stat_.AddSample(end2end_time - context->processing_time);
 #endif
         return true;

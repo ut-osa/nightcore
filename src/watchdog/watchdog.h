@@ -44,7 +44,7 @@ public:
         func_config_file_ = std::string(path);
     }
     void set_run_mode(int run_mode) {
-        run_mode_ = static_cast<RunMode>(run_mode);
+        run_mode_ = gsl::narrow_cast<RunMode>(run_mode);
     }
     void set_min_num_func_workers(int value) {
         min_num_func_workers_ = value;
@@ -75,10 +75,10 @@ public:
     void WaitForFinish();
 
     void OnGatewayConnectionClose();
-    void OnFuncRunnerComplete(FuncRunner* func_runner, FuncRunner::Status status, uint32_t processing_time);
+    void OnFuncRunnerComplete(FuncRunner* func_runner, FuncRunner::Status status, int32_t processing_time);
     void OnFuncWorkerClose(FuncWorker* func_worker);
     void OnFuncWorkerIdle(FuncWorker* func_worker);
-    stat::StatisticsCollector<uint32_t>* func_worker_message_delay_stat() {
+    stat::StatisticsCollector<int32_t>* func_worker_message_delay_stat() {
         return &func_worker_message_delay_stat_;
     }
 
@@ -118,9 +118,9 @@ private:
     absl::BitGen random_bit_gen_;
     absl::Time last_func_worker_creation_time_;
 
-    stat::StatisticsCollector<uint32_t> gateway_message_delay_stat_;
-    stat::StatisticsCollector<uint32_t> func_worker_message_delay_stat_;
-    stat::StatisticsCollector<uint32_t> processing_delay_stat_;
+    stat::StatisticsCollector<int32_t> gateway_message_delay_stat_;
+    stat::StatisticsCollector<int32_t> func_worker_message_delay_stat_;
+    stat::StatisticsCollector<int32_t> processing_delay_stat_;
     stat::CategoryCounter func_worker_decision_counter_;
     stat::CategoryCounter func_worker_load_counter_;
     stat::Counter incoming_requests_counter_;

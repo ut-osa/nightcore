@@ -17,7 +17,7 @@ using protocol::HandshakeResponse;
 
 Manager::Manager()
     : started_(false),
-      is_async_mode_(static_cast<bool>(utils::GetEnvVariableAsInt("ASYNC_MODE", 0))),
+      is_async_mode_(gsl::narrow_cast<bool>(utils::GetEnvVariableAsInt("ASYNC_MODE", 0))),
       client_id_(-1),
       watchdog_input_pipe_fd_(utils::GetEnvVariableAsInt("INPUT_PIPE_FD", -1)),
       watchdog_output_pipe_fd_(utils::GetEnvVariableAsInt("OUTPUT_PIPE_FD", -1)),
@@ -75,8 +75,8 @@ void Manager::Start() {
     DCHECK(outcoming_func_call_complete_callback_set_);
     started_ = true;
     HandshakeMessage message = {
-        .role = static_cast<uint16_t>(Role::FUNC_WORKER),
-        .func_id = static_cast<uint16_t>(my_func_config_->func_id)
+        .role = gsl::narrow_cast<uint16_t>(Role::FUNC_WORKER),
+        .func_id = gsl::narrow_cast<uint16_t>(my_func_config_->func_id)
     };
     send_gateway_data_callback_(std::span<const char>(
         reinterpret_cast<const char*>(&message), sizeof(HandshakeMessage)));
@@ -90,7 +90,7 @@ void Manager::OnRecvGatewayData(std::span<const char> data) {
         if (gateway_recv_buffer_.length() >= sizeof(HandshakeResponse)) {
             HandshakeResponse* response = reinterpret_cast<HandshakeResponse*>(
                 gateway_recv_buffer_.data());
-            if (static_cast<Status>(response->status) != Status::OK) {
+            if (Status{response->status} != Status::OK) {
                 LOG(FATAL) << "Handshake failed";
             }
             client_id_ = response->client_id;
@@ -139,7 +139,7 @@ bool Manager::OnOutcomingFuncCall(std::string_view func_name, std::span<const ch
     }
     *handle = next_handle_value_++;
     FuncCall func_call;
-    func_call.func_id = static_cast<uint16_t>(func_entry->func_id);
+    func_call.func_id = gsl::narrow_cast<uint16_t>(func_entry->func_id);
     func_call.client_id = client_id_;
     func_call.call_id = *handle;
     auto context = std::make_unique<OutcomingFuncCallContext>();
@@ -154,7 +154,7 @@ bool Manager::OnOutcomingFuncCall(std::string_view func_name, std::span<const ch
         .send_timestamp = GetMonotonicMicroTimestamp(),
         .processing_time = 0,
 #endif
-        .message_type = static_cast<uint16_t>(MessageType::INVOKE_FUNC),
+        .message_type = gsl::narrow_cast<uint16_t>(MessageType::INVOKE_FUNC),
         .func_call = func_call
     };
     send_gateway_data_callback_(std::span<const char>(
@@ -178,7 +178,7 @@ bool Manager::OnOutcomingGrpcCall(std::string_view service, std::string_view met
     }
     *handle = next_handle_value_++;
     FuncCall func_call;
-    func_call.func_id = static_cast<uint16_t>(func_entry->func_id);
+    func_call.func_id = gsl::narrow_cast<uint16_t>(func_entry->func_id);
     func_call.client_id = client_id_;
     func_call.call_id = *handle;
     auto context = std::make_unique<OutcomingFuncCallContext>();
@@ -199,7 +199,7 @@ bool Manager::OnOutcomingGrpcCall(std::string_view service, std::string_view met
         .send_timestamp = GetMonotonicMicroTimestamp(),
         .processing_time = 0,
 #endif
-        .message_type = static_cast<uint16_t>(MessageType::INVOKE_FUNC),
+        .message_type = gsl::narrow_cast<uint16_t>(MessageType::INVOKE_FUNC),
         .func_call = func_call
     };
     send_gateway_data_callback_(std::span<const char>(
@@ -226,9 +226,9 @@ void Manager::OnIncomingFuncCallComplete(uint32_t handle, bool success, std::spa
     Message response;
     response.func_call = context->func_call;
     if (success) {
-        response.message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_COMPLETE);
+        response.message_type = gsl::narrow_cast<uint16_t>(MessageType::FUNC_CALL_COMPLETE);
     } else {
-        response.message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_FAILED);
+        response.message_type = gsl::narrow_cast<uint16_t>(MessageType::FUNC_CALL_FAILED);
     }
 #ifdef __FAAS_ENABLE_PROFILING
     response.send_timestamp = GetMonotonicMicroTimestamp();
@@ -244,7 +244,7 @@ void Manager::OnIncomingFuncCallComplete(uint32_t handle, bool success, std::spa
 }
 
 void Manager::OnRecvGatewayMessage(const protocol::Message& message) {
-    MessageType type = static_cast<MessageType>(message.message_type);
+    MessageType type{message.message_type};
     switch (type) {
     case MessageType::FUNC_CALL_COMPLETE:
         OnOutcomingFuncCallComplete(message.func_call, true);
@@ -259,7 +259,7 @@ void Manager::OnRecvGatewayMessage(const protocol::Message& message) {
 }
 
 void Manager::OnRecvWatchdogMessage(const protocol::Message& message) {
-    MessageType type = static_cast<MessageType>(message.message_type);
+    MessageType type{message.message_type};
     switch (type) {
     case MessageType::INVOKE_FUNC:
         OnIncomingFuncCall(message.func_call);

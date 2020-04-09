@@ -36,13 +36,13 @@ void Subprocess::SetStandardFile(StandardPipe pipe, std::string_view file_path) 
 int Subprocess::CreateReadablePipe() {
     DCHECK(state_ == kCreated);
     pipe_types_.push_back(UV_READABLE_PIPE);
-    return static_cast<int>(pipe_types_.size()) - 1;
+    return gsl::narrow_cast<int>(pipe_types_.size()) - 1;
 }
 
 int Subprocess::CreateWritablePipe() {
     DCHECK(state_ == kCreated);
     pipe_types_.push_back(UV_WRITABLE_PIPE);
-    return static_cast<int>(pipe_types_.size()) - 1;
+    return gsl::narrow_cast<int>(pipe_types_.size()) - 1;
 }
 
 void Subprocess::SetWorkingDir(std::string_view path) {
@@ -230,7 +230,7 @@ UV_READ_CB_FOR_CLASS(Subprocess, ReadStderr) {
 }
 
 UV_EXIT_CB_FOR_CLASS(Subprocess, ProcessExit) {
-    exit_status_ = static_cast<int>(exit_status);
+    exit_status_ = exit_status;
     for (size_t i = 0; i < uv_pipe_handles_.size(); i++) {
         ClosePipe(i);
     }

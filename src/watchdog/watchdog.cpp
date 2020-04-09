@@ -27,11 +27,11 @@ Watchdog::Watchdog()
                          absl::bind_front(&Watchdog::EventLoopThreadMain, this)),
       gateway_connection_(this), next_func_worker_id_(0),
       gateway_message_delay_stat_(
-          stat::StatisticsCollector<uint32_t>::StandardReportCallback("gateway_message_delay")),
+          stat::StatisticsCollector<int32_t>::StandardReportCallback("gateway_message_delay")),
       func_worker_message_delay_stat_(
-          stat::StatisticsCollector<uint32_t>::StandardReportCallback("func_worker_message_delay")),
+          stat::StatisticsCollector<int32_t>::StandardReportCallback("func_worker_message_delay")),
       processing_delay_stat_(
-          stat::StatisticsCollector<uint32_t>::StandardReportCallback("processing_delay")),
+          stat::StatisticsCollector<int32_t>::StandardReportCallback("processing_delay")),
       func_worker_decision_counter_(
           stat::CategoryCounter::StandardReportCallback("func_worker_decision")),
       func_worker_load_counter_(
@@ -100,7 +100,7 @@ void Watchdog::Start() {
     uv_pipe_t* pipe_handle = gateway_connection_.uv_pipe_handle();
     UV_DCHECK_OK(uv_pipe_init(&uv_loop_, pipe_handle, 0));
     HandshakeMessage message;
-    message.role = static_cast<uint16_t>(Role::WATCHDOG);
+    message.role = gsl::narrow_cast<uint16_t>(Role::WATCHDOG);
     message.func_id = func_id_;
     gateway_connection_.Start(gateway_ipc_path_, message);
     // Start thread for running event loop
@@ -132,7 +132,7 @@ void Watchdog::EventLoopThreadMain() {
 
 bool Watchdog::OnRecvHandshakeResponse(const HandshakeResponse& response) {
     DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
-    if (static_cast<Status>(response.status) != Status::OK) {
+    if (Status{response.status} != Status::OK) {
         HLOG(WARNING) << "Handshake failed, will close the connection";
         gateway_connection_.ScheduleClose();
         return false;
@@ -143,10 +143,10 @@ bool Watchdog::OnRecvHandshakeResponse(const HandshakeResponse& response) {
 
 void Watchdog::OnRecvMessage(const protocol::Message& message) {
     DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
-    MessageType type = static_cast<MessageType>(message.message_type);
+    MessageType type{message.message_type};
 #ifdef __FAAS_ENABLE_PROFILING
-    gateway_message_delay_stat_.AddSample(
-        GetMonotonicMicroTimestamp() - message.send_timestamp);
+    gateway_message_delay_stat_.AddSample(gsl::narrow_cast<int32_t>(
+        GetMonotonicMicroTimestamp() - message.send_timestamp));
 #endif
     if (type == MessageType::INVOKE_FUNC) {
         FuncCall func_call = message.func_call;
@@ -178,7 +178,7 @@ void Watchdog::OnRecvMessage(const protocol::Message& message) {
     }
 }
 
-void Watchdog::OnFuncRunnerComplete(FuncRunner* func_runner, FuncRunner::Status status, uint32_t processing_time) {
+void Watchdog::OnFuncRunnerComplete(FuncRunner* func_runner, FuncRunner::Status status, int32_t processing_time) {
     DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
     DCHECK(func_runners_.contains(func_runner->call_id()));
     FuncCall func_call;
@@ -195,7 +195,7 @@ void Watchdog::OnFuncRunnerComplete(FuncRunner* func_runner, FuncRunner::Status 
                 .send_timestamp = GetMonotonicMicroTimestamp(),
                 .processing_time = processing_time,
 #endif
-                .message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_COMPLETE),
+                .message_type = gsl::narrow_cast<uint16_t>(MessageType::FUNC_CALL_COMPLETE),
                 .func_call = func_call
             });
         }
@@ -206,7 +206,7 @@ void Watchdog::OnFuncRunnerComplete(FuncRunner* func_runner, FuncRunner::Status 
             .send_timestamp = GetMonotonicMicroTimestamp(),
             .processing_time = processing_time,
 #endif
-            .message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_FAILED),
+            .message_type = gsl::narrow_cast<uint16_t>(MessageType::FUNC_CALL_FAILED),
             .func_call = func_call
         });
     }
@@ -230,7 +230,7 @@ FuncWorker* Watchdog::PickFuncWorker() {
         next_func_worker_id_ = (next_func_worker_id_ + 1) % func_workers_.size();
     } else if (run_mode_ == RunMode::FUNC_WORKER_ON_DEMAND) {
         if (idle_func_workers_.empty()
-                && static_cast<int>(func_workers_.size()) < max_num_func_workers_
+                && gsl::narrow_cast<int>(func_workers_.size()) < max_num_func_workers_
                 && absl::Now() >= last_func_worker_creation_time_ + kMinFuncWorkerCreationInterval) {
             auto new_func_worker = std::make_unique<FuncWorker>(this, func_workers_.size());
             new_func_worker->Start(&uv_loop_, buffer_pool_for_subprocess_pipes_.get());

@@ -171,7 +171,7 @@ UV_ASYNC_CB_FOR_CLASS(IOWorker, Stop) {
 }
 
 UV_READ_CB_FOR_CLASS(IOWorker, NewConnection) {
-    DCHECK_EQ(nread, static_cast<ssize_t>(sizeof(void*)));
+    DCHECK_EQ(nread, gsl::narrow_cast<ssize_t>(sizeof(void*)));
     Connection* connection;
     memcpy(&connection, buf->base, sizeof(void*));
     free(buf->base);

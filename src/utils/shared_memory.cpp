@@ -54,7 +54,7 @@ SharedMemory::Region* SharedMemory::OpenReadOnly(std::string_view path) {
     PCHECK(fd != -1) << "open failed";
     struct stat statbuf;
     PCHECK(fstat(fd, &statbuf) == 0) << "fstat failed";
-    size_t size = static_cast<size_t>(statbuf.st_size);
+    size_t size = gsl::narrow_cast<size_t>(statbuf.st_size);
     void* ptr = nullptr;
     if (size > 0) {
         ptr = mmap(0, size, PROT_READ, MAP_SHARED, fd, 0);

@@ -157,10 +157,10 @@ UV_READ_CB_FOR_CLASS(GrpcConnection, RecvData) {
         return;
     }
     const uint8_t* data = reinterpret_cast<const uint8_t*>(buf->base);
-    size_t length = static_cast<size_t>(nread);
+    size_t length = gsl::narrow_cast<size_t>(nread);
     ssize_t ret = nghttp2_session_mem_recv(h2_session_, data, length);
     if (ret >= 0) {
-        if (static_cast<size_t>(ret) != length) {
+        if (gsl::narrow_cast<size_t>(ret) != length) {
             HLOG(FATAL) << "nghttp2_session_mem_recv does not consume all input data";
         }
         H2SendPendingDataIfNecessary();
@@ -268,7 +268,7 @@ void GrpcConnection::H2SendPendingDataIfNecessary() {
     }
     uv_buf_t buf = {
         .base = reinterpret_cast<char*>(const_cast<uint8_t*>(data)),
-        .len = static_cast<size_t>(ret)
+        .len = gsl::narrow_cast<size_t>(ret)
     };
     uv_write_t* write_req = &write_req_for_mem_send_;
     uv_write_for_mem_send_ongoing_ = true;

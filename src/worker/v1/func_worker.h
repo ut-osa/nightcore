@@ -74,7 +74,7 @@ private:
         absl::Notification finished;
         bool success;
 #ifdef __FAAS_ENABLE_PROFILING
-        uint32_t processing_time;
+        int32_t processing_time;
 #endif
         utils::SharedMemory::Region* input_region;
         utils::SharedMemory::Region* output_region;
@@ -85,10 +85,10 @@ private:
     absl::flat_hash_map<uint64_t, std::unique_ptr<FuncInvokeContext>>
         func_invoke_contexts_ ABSL_GUARDED_BY(invoke_func_mu_);
 
-    stat::StatisticsCollector<uint32_t> gateway_message_delay_stat_;
-    stat::StatisticsCollector<uint32_t> watchdog_message_delay_stat_;
-    stat::StatisticsCollector<uint32_t> processing_delay_stat_;
-    stat::StatisticsCollector<uint32_t> system_protocol_overhead_stat_;
+    stat::StatisticsCollector<int32_t> gateway_message_delay_stat_;
+    stat::StatisticsCollector<int32_t> watchdog_message_delay_stat_;
+    stat::StatisticsCollector<int32_t> processing_delay_stat_;
+    stat::StatisticsCollector<int32_t> system_protocol_overhead_stat_;
     stat::StatisticsCollector<uint32_t> input_size_stat_;
     stat::StatisticsCollector<uint32_t> output_size_stat_;
     stat::Counter incoming_requests_counter_;

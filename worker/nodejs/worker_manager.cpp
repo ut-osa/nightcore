@@ -139,7 +139,7 @@ void WorkerManager::WatchdogInputPipeFd(const Nan::FunctionCallbackInfo<v8::Valu
         return;
     }
     WorkerManager* obj = ObjectWrap::Unwrap<WorkerManager>(info.Holder());
-    info.GetReturnValue().Set(Nan::New(static_cast<int32_t>(obj->inner_->watchdog_input_pipe_fd())));
+    info.GetReturnValue().Set(Nan::New(int32_t{obj->inner_->watchdog_input_pipe_fd()}));
 }
 
 void WorkerManager::WatchdogOutputPipeFd(const Nan::FunctionCallbackInfo<v8::Value>& info) {
@@ -149,7 +149,7 @@ void WorkerManager::WatchdogOutputPipeFd(const Nan::FunctionCallbackInfo<v8::Val
         return;
     }
     WorkerManager* obj = ObjectWrap::Unwrap<WorkerManager>(info.Holder());
-    info.GetReturnValue().Set(Nan::New(static_cast<int32_t>(obj->inner_->watchdog_output_pipe_fd())));
+    info.GetReturnValue().Set(Nan::New(int32_t{obj->inner_->watchdog_output_pipe_fd()}));
 }
 
 void WorkerManager::GatewayIpcPath(const Nan::FunctionCallbackInfo<v8::Value>& info) {

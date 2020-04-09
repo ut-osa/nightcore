@@ -25,13 +25,13 @@ public:
             return false;
         } else {
             return current_time - last_report_time_
-                     > static_cast<int64_t>(report_interval_in_ms_) * 1000; 
+                     > int64_t{report_interval_in_ms_} * 1000; 
         }
     }
 
-    void MarkReport(uint32_t* duration_ms) {
+    void MarkReport(int* duration_ms) {
         int64_t current_time = GetMonotonicMicroTimestamp();
-        *duration_ms = static_cast<uint32_t>(current_time - last_report_time_);
+        *duration_ms = gsl::narrow_cast<int>(current_time - last_report_time_);
         last_report_time_ = current_time;
     }
 
@@ -51,11 +51,11 @@ public:
         T p50; T p70; T p90; T p99; T p99_9;
     };
 
-    typedef std::function<void(uint32_t /* duration_ms */, size_t /* n_samples */,
+    typedef std::function<void(int /* duration_ms */, size_t /* n_samples */,
                                const Report& /* report */)> ReportCallback;
     static ReportCallback StandardReportCallback(std::string_view stat_name) {
         std::string stat_name_copy = std::string(stat_name);
-        return [stat_name_copy] (uint32_t duration_ms, size_t n_samples, const Report& report) {
+        return [stat_name_copy] (int duration_ms, size_t n_samples, const Report& report) {
             LOG(INFO) << stat_name_copy << " statistics (" << n_samples << " samples): "
                       << "p50=" << report.p50 << ", "
                       << "p70=" << report.p70 << ", "
@@ -83,7 +83,7 @@ public:
         absl::MutexLock lk(&mu_);
         samples_.push_back(sample);
         if (samples_.size() >= min_report_samples_ && report_timer_.Check()) {
-            uint32_t duration_ms;
+            int duration_ms;
             Report report = BuildReport();
             size_t n_samples = samples_.size();
             samples_.clear();
@@ -112,7 +112,7 @@ private:
     }
 
     inline T percentile(double p) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
-        size_t idx = static_cast<size_t>(samples_.size() * p + 0.5);
+        size_t idx = gsl::narrow_cast<size_t>(samples_.size() * p + 0.5);
         if (idx < 0) idx = 0;
         if (idx >= samples_.size()) {
             idx = samples_.size() - 1;
@@ -128,12 +128,12 @@ constexpr size_t StatisticsCollector<T>::kDefaultMinReportSamples;
 
 class Counter {
 public:
-    typedef std::function<void(uint32_t /* duration_ms */, uint64_t /* new_value */,
-                               uint64_t /* old_value */)> ReportCallback;
+    typedef std::function<void(int /* duration_ms */, int64_t /* new_value */,
+                               int64_t /* old_value */)> ReportCallback;
     static ReportCallback StandardReportCallback(std::string_view counter_name) {
         std::string counter_name_copy = std::string(counter_name);
-        return [counter_name_copy] (uint32_t duration_ms, uint64_t new_value, uint64_t old_value) {
-            double rate = static_cast<double>(new_value - old_value) / duration_ms * 1000;
+        return [counter_name_copy] (int duration_ms, int64_t new_value, int64_t old_value) {
+            double rate = gsl::narrow_cast<double>(new_value - old_value) / duration_ms * 1000;
             LOG(INFO) << counter_name_copy << " counter: value=" << new_value << ", "
                       << "rate=" << rate << " per sec";
         };
@@ -145,11 +145,12 @@ public:
     
     ~Counter() {}
 
-    void Tick(uint32_t delta = 1) {
+    void Tick(int delta = 1) {
+        DCHECK_GT(delta, 0);
         absl::MutexLock lk(&mu_);
         value_ += delta;
         if (value_ > last_report_value_ && report_timer_.Check()) {
-            uint32_t duration_ms;
+            int duration_ms;
             report_timer_.MarkReport(&duration_ms);
             report_callback_(duration_ms, value_, last_report_value_);
             last_report_value_ = value_;
@@ -161,20 +162,20 @@ private:
 
     absl::Mutex mu_;
     ReportTimer report_timer_ ABSL_GUARDED_BY(mu_);
-    uint64_t value_ ABSL_GUARDED_BY(mu_);
-    uint64_t last_report_value_ ABSL_GUARDED_BY(mu_);
+    int64_t value_ ABSL_GUARDED_BY(mu_);
+    int64_t last_report_value_ ABSL_GUARDED_BY(mu_);
 
     DISALLOW_COPY_AND_ASSIGN(Counter);
 };
 
 class CategoryCounter {
 public:
-    typedef std::function<void(uint32_t /* duration_ms */,
-                               const std::map<int, uint64_t>& /* values */)> ReportCallback;
+    typedef std::function<void(int /* duration_ms */,
+                               const std::map<int, int64_t>& /* values */)> ReportCallback;
     static ReportCallback StandardReportCallback(std::string_view counter_name) {
         std::string counter_name_copy = std::string(counter_name);
-        return [counter_name_copy] (uint32_t duration_ms, const std::map<int, uint64_t>& values) {
-            uint64_t sum = 0;
+        return [counter_name_copy] (int duration_ms, const std::map<int, int64_t>& values) {
+            int64_t sum = 0;
             for (const auto& entry : values) {
                 sum += entry.second;
             }
@@ -182,7 +183,7 @@ public:
             bool first = true;
             for (const auto& entry : values) {
                 if (entry.second == 0) continue;
-                double percentage = static_cast<double>(entry.second) / sum * 100;
+                double percentage = gsl::narrow_cast<double>(entry.second) / sum * 100;
                 if (!first) {
                     stream << ", ";
                 } else {
@@ -200,12 +201,13 @@ public:
     
     ~CategoryCounter() {}
 
-    void Tick(int category, uint32_t delta = 1) {
+    void Tick(int category, int delta = 1) {
+        DCHECK_GT(delta, 0);
         absl::MutexLock lk(&mu_);
         values_[category] += delta;
         sum_ += delta;
         if (sum_ > 0 && report_timer_.Check()) {
-            uint32_t duration_ms;
+            int duration_ms;
             report_timer_.MarkReport(&duration_ms);
             report_callback_(duration_ms, values_);
             for (auto& entry : values_) {
@@ -220,8 +222,8 @@ private:
 
     absl::Mutex mu_;
     ReportTimer report_timer_ ABSL_GUARDED_BY(mu_);
-    std::map<int, uint64_t> values_ ABSL_GUARDED_BY(mu_);
-    uint64_t sum_ ABSL_GUARDED_BY(mu_);
+    std::map<int, int64_t> values_ ABSL_GUARDED_BY(mu_);
+    int64_t sum_ ABSL_GUARDED_BY(mu_);
 
     DISALLOW_COPY_AND_ASSIGN(CategoryCounter);
 };

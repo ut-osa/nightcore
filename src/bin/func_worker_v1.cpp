@@ -9,6 +9,9 @@ int main(int argc, char* argv[]) {
     if (positional_args.size() != 1) {
         LOG(FATAL) << "The only positional argument should be path to the function library";
     }
+    if (faas::utils::GetEnvVariableAsInt("ASYNC_MODE", 0) != 0) {
+        LOG(FATAL) << "This function worker cannot be used in async mode";
+    }
 
     auto func_worker = std::make_unique<faas::worker_v1::FuncWorker>();
     func_worker->set_gateway_ipc_path(

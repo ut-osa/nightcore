@@ -72,7 +72,7 @@ bool ReadContents(std::string_view path, std::string* contents) {
     if (!Stat(path, &statbuf)) {
         return false;
     }
-    size_t size = static_cast<size_t>(statbuf.st_size);
+    size_t size = gsl::narrow_cast<size_t>(statbuf.st_size);
     contents->resize(size);
     size_t nread = fread(const_cast<char*>(contents->data()), 1, size, fin);
     return nread == size;

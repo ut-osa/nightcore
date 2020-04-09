@@ -6,20 +6,20 @@
 
 namespace faas {
 
-inline uint64_t TimeSpecToMicro(struct timespec* tp) {
-    uint64_t ret = 0;
-    ret += static_cast<uint64_t>(tp->tv_sec) * 1000000;
-    ret += static_cast<uint64_t>(tp->tv_nsec) / 1000;
+inline int64_t TimeSpecToMicro(struct timespec* tp) {
+    int64_t ret = 0;
+    ret += int64_t{tp->tv_sec} * 1000000;
+    ret += int64_t{tp->tv_nsec} / 1000;
     return ret;
 }
 
-inline uint64_t GetMonotonicMicroTimestamp() {
+inline int64_t GetMonotonicMicroTimestamp() {
     struct timespec tp;
     PCHECK(clock_gettime(CLOCK_MONOTONIC, &tp) == 0) << "clock_gettime failed";
     return TimeSpecToMicro(&tp);
 }
 
-inline uint64_t GetRealtimeMicroTimestamp() {
+inline int64_t GetRealtimeMicroTimestamp() {
     struct timespec tp;
     PCHECK(clock_gettime(CLOCK_REALTIME, &tp) == 0) << "clock_gettime failed";
     return TimeSpecToMicro(&tp);

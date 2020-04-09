@@ -6,7 +6,10 @@ SRC_EXT = cpp
 # Path to the source directory, relative to the makefile
 SRC_PATH = ./src
 # General compiler flags
-COMPILE_FLAGS = -std=c++17 -Wall -Werror -D__FAAS_SRC -fdata-sections -ffunction-sections
+COMPILE_FLAGS = -std=c++17 \
+	-Wall -Wextra -Werror -Wno-unused-parameter \
+	-fdata-sections -ffunction-sections \
+	-D__FAAS_SRC
 # Additional release-specific flags
 RCOMPILE_FLAGS = -DNDEBUG -O3
 # Additional debug-specific flags

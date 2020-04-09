@@ -5,13 +5,13 @@
 namespace faas {
 namespace protocol {
 
-enum class Status {
+enum class Status : uint16_t {
     INVALID         = 0,
     OK              = 1,
     WATCHDOG_EXISTS = 2
 };
 
-enum class Role {
+enum class Role : uint16_t {
     INVALID     = 0,
     WATCHDOG    = 1,
     FUNC_WORKER = 2
@@ -37,7 +37,7 @@ union FuncCall {
 };
 static_assert(sizeof(FuncCall) == 8, "Unexpected FuncCall size");
 
-enum class MessageType {
+enum class MessageType : uint16_t {
     INVALID            = 0,
     INVOKE_FUNC        = 1,
     FUNC_CALL_COMPLETE = 2,
@@ -46,8 +46,8 @@ enum class MessageType {
 
 struct Message {
 #ifdef __FAAS_ENABLE_PROFILING
-    uint64_t send_timestamp;
-    uint32_t processing_time;
+    int64_t send_timestamp;
+    int32_t processing_time;
 #endif
     uint16_t message_type;
     FuncCall func_call;

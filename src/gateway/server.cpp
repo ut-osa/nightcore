@@ -75,7 +75,7 @@ void Server::RegisterInternalRequestHandlers() {
         const FuncConfig::Entry* func_entry = func_config_.find_by_func_name(
             absl::StripPrefix(context->path(), "/function/"));
         DCHECK(func_entry != nullptr);
-        OnExternalFuncCall(static_cast<uint16_t>(func_entry->func_id), std::move(context));
+        OnExternalFuncCall(gsl::narrow_cast<uint16_t>(func_entry->func_id), std::move(context));
     });
 }
 
@@ -285,15 +285,15 @@ void Server::OnNewHandshake(MessageConnection* connection,
                             const HandshakeMessage& message, HandshakeResponse* response) {
     HLOG(INFO) << "Receive new handshake message from message connection";
     uint16_t client_id = next_client_id_.fetch_add(1);
-    response->status = static_cast<uint16_t>(Status::OK);
+    response->status = gsl::narrow_cast<uint16_t>(Status::OK);
     response->client_id = client_id;
     {
         absl::MutexLock lk(&message_connection_mu_);
         message_connections_by_client_id_[client_id] = connection;
-        if (static_cast<Role>(message.role) == Role::WATCHDOG) {
+        if (gsl::narrow_cast<Role>(message.role) == Role::WATCHDOG) {
             if (watchdog_connections_by_func_id_.contains(message.func_id)) {
                 HLOG(ERROR) << "Watchdog for func_id " << message.func_id << " already exists";
-                response->status = static_cast<uint16_t>(Status::WATCHDOG_EXISTS);
+                response->status = gsl::narrow_cast<uint16_t>(Status::WATCHDOG_EXISTS);
             } else {
                 watchdog_connections_by_func_id_[message.func_id] = connection;
             }
@@ -383,8 +383,7 @@ public:
     void FinishWithWatchdogNotFound() {
         if (http_context_ != nullptr) {
             http_context_->AppendToResponseBody(
-                absl::StrFormat("Cannot find watchdog for func_id %d\n",
-                                static_cast<int>(call_.func_id)));
+                absl::StrFormat("Cannot find watchdog for func_id %d\n", call_.func_id));
             http_context_->SetStatus(404);
         }
         if (grpc_context_ != nullptr) {
@@ -417,7 +416,7 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
     message_delay_stat_.AddSample(
         GetMonotonicMicroTimestamp() - message.send_timestamp);
 #endif
-    MessageType type = static_cast<MessageType>(message.message_type);
+    MessageType type{message.message_type};
     if (type == MessageType::INVOKE_FUNC) {
         uint16_t func_id = message.func_call.func_id;
         absl::MutexLock lk(&message_connection_mu_);
@@ -428,7 +427,7 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
                 .send_timestamp = GetMonotonicMicroTimestamp(),
                 .processing_time = 0,
 #endif
-                .message_type = static_cast<uint16_t>(MessageType::INVOKE_FUNC),
+                .message_type = gsl::narrow_cast<uint16_t>(MessageType::INVOKE_FUNC),
                 .func_call = message.func_call
             });
         } else {
@@ -445,7 +444,7 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
                     .send_timestamp = GetMonotonicMicroTimestamp(),
                     .processing_time = message.processing_time,
 #endif
-                    .message_type = static_cast<uint16_t>(type),
+                    .message_type = gsl::narrow_cast<uint16_t>(type),
                     .func_call = message.func_call
                 });
             } else {
@@ -514,7 +513,7 @@ void Server::NewExternalFuncCall(std::unique_ptr<ExternalFuncCallContext> func_c
                 .send_timestamp = GetMonotonicMicroTimestamp(),
                 .processing_time = 0,
 #endif
-                .message_type = static_cast<uint16_t>(MessageType::INVOKE_FUNC),
+                .message_type = gsl::narrow_cast<uint16_t>(MessageType::INVOKE_FUNC),
                 .func_call = func_call_context->call()
             });
         } else {
