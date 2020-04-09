@@ -36,6 +36,7 @@ public:
     void set_listen_backlog(int value) { listen_backlog_ = value; }
     void set_num_http_workers(int value) { num_http_workers_ = value; }
     void set_num_ipc_workers(int value) { num_ipc_workers_ = value; }
+    void set_num_io_workers(int value) { num_io_workers_ = value; }
     void set_shared_mem_path(std::string_view path) {
         shared_mem_path_ = std::string(path);
     }
@@ -108,6 +109,7 @@ private:
     int listen_backlog_;
     int num_http_workers_;
     int num_ipc_workers_;
+    int num_io_workers_;
     std::string shared_mem_path_;
     std::string func_config_file_;
 

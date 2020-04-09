@@ -25,7 +25,7 @@ constexpr size_t Server::kMessageConnectionBufferSize;
 
 Server::Server()
     : state_(kCreated), port_(-1), grpc_port_(-1), listen_backlog_(kDefaultListenBackLog),
-      num_http_workers_(kDefaultNumHttpWorkers), num_ipc_workers_(kDefaultNumIpcWorkers),
+      num_http_workers_(kDefaultNumHttpWorkers), num_ipc_workers_(kDefaultNumIpcWorkers), num_io_workers_(-1),
       event_loop_thread_("Server/EL", absl::bind_front(&Server::EventLoopThreadMain, this)),
       next_http_connection_id_(0), next_grpc_connection_id_(0),
       next_http_worker_id_(0), next_ipc_worker_id_(0), next_client_id_(1), next_call_id_(0),
@@ -95,46 +95,62 @@ void Server::Start() {
     PCHECK(fs_utils::MakeDirectory(shared_mem_path_));
     shared_memory_ = std::make_unique<utils::SharedMemory>(shared_mem_path_);
     // Start IO workers
-    for (int i = 0; i < num_http_workers_; i++) {
-        auto io_worker = std::make_unique<IOWorker>(this, absl::StrFormat("Http-%d", i),
-                                                     kHttpConnectionBufferSize);
-        InitAndStartIOWorker(io_worker.get());
-        http_workers_.push_back(io_worker.get());
-        io_workers_.push_back(std::move(io_worker));
-    }
-    for (int i = 0; i < num_ipc_workers_; i++) {
-        auto io_worker = std::make_unique<IOWorker>(this, absl::StrFormat("Ipc-%d", i),
-                                                     kMessageConnectionBufferSize,
-                                                     kMessageConnectionBufferSize);
-        InitAndStartIOWorker(io_worker.get());
-        ipc_workers_.push_back(io_worker.get());
-        io_workers_.push_back(std::move(io_worker));
+    if (num_io_workers_ == -1) {
+        CHECK_GT(num_http_workers_, 0);
+        CHECK_GT(num_ipc_workers_, 0);
+        HLOG(INFO) << "Start " << num_http_workers_ << " IO workers for HTTP connections";
+        for (int i = 0; i < num_http_workers_; i++) {
+            auto io_worker = std::make_unique<IOWorker>(this, absl::StrFormat("Http-%d", i),
+                                                        kHttpConnectionBufferSize);
+            InitAndStartIOWorker(io_worker.get());
+            http_workers_.push_back(io_worker.get());
+            io_workers_.push_back(std::move(io_worker));
+        }
+        HLOG(INFO) << "Start " << num_ipc_workers_ << " IO workers for IPC connections";
+        for (int i = 0; i < num_ipc_workers_; i++) {
+            auto io_worker = std::make_unique<IOWorker>(this, absl::StrFormat("Ipc-%d", i),
+                                                        kMessageConnectionBufferSize,
+                                                        kMessageConnectionBufferSize);
+            InitAndStartIOWorker(io_worker.get());
+            ipc_workers_.push_back(io_worker.get());
+            io_workers_.push_back(std::move(io_worker));
+        }
+    } else {
+        CHECK_GT(num_io_workers_, 0);
+        HLOG(INFO) << "Start " << num_io_workers_ << " IO workers for both HTTP and IPC connections";
+        for (int i = 0; i < num_io_workers_; i++) {
+            auto io_worker = std::make_unique<IOWorker>(this, absl::StrCat(i));
+            InitAndStartIOWorker(io_worker.get());
+            http_workers_.push_back(io_worker.get());
+            ipc_workers_.push_back(io_worker.get());
+            io_workers_.push_back(std::move(io_worker));
+        }
     }
     // Listen on address:port for HTTP requests
     struct sockaddr_in bind_addr;
     CHECK(!address_.empty());
     CHECK_NE(port_, -1);
-    UV_DCHECK_OK(uv_ip4_addr(address_.c_str(), port_, &bind_addr));
-    UV_DCHECK_OK(uv_tcp_bind(&uv_http_handle_, (const struct sockaddr *)&bind_addr, 0));
+    UV_CHECK_OK(uv_ip4_addr(address_.c_str(), port_, &bind_addr));
+    UV_CHECK_OK(uv_tcp_bind(&uv_http_handle_, (const struct sockaddr *)&bind_addr, 0));
     HLOG(INFO) << "Listen on " << address_ << ":" << port_ << " for HTTP requests";
     UV_DCHECK_OK(uv_listen(
         UV_AS_STREAM(&uv_http_handle_), listen_backlog_,
         &Server::HttpConnectionCallback));
     // Listen on address:grpc_port for gRPC requests
     CHECK_NE(grpc_port_, -1);
-    UV_DCHECK_OK(uv_ip4_addr(address_.c_str(), grpc_port_, &bind_addr));
-    UV_DCHECK_OK(uv_tcp_bind(&uv_grpc_handle_, (const struct sockaddr *)&bind_addr, 0));
+    UV_CHECK_OK(uv_ip4_addr(address_.c_str(), grpc_port_, &bind_addr));
+    UV_CHECK_OK(uv_tcp_bind(&uv_grpc_handle_, (const struct sockaddr *)&bind_addr, 0));
     HLOG(INFO) << "Listen on " << address_ << ":" << grpc_port_ << " for gRPC requests";
-    UV_DCHECK_OK(uv_listen(
+    UV_CHECK_OK(uv_listen(
         UV_AS_STREAM(&uv_grpc_handle_), listen_backlog_,
         &Server::GrpcConnectionCallback));
     // Listen on ipc_path
     if (fs_utils::Exists(ipc_path_)) {
         PCHECK(fs_utils::Remove(ipc_path_));
     }
-    UV_DCHECK_OK(uv_pipe_bind(&uv_ipc_handle_, ipc_path_.c_str()));
-    HLOG(INFO) << "Listen on " << ipc_path_ << " for IPC with watchdog processes";
-    UV_DCHECK_OK(uv_listen(
+    UV_CHECK_OK(uv_pipe_bind(&uv_ipc_handle_, ipc_path_.c_str()));
+    HLOG(INFO) << "Listen on " << ipc_path_ << " for IPC connections";
+    UV_CHECK_OK(uv_listen(
         UV_AS_STREAM(&uv_ipc_handle_), listen_backlog_,
         &Server::MessageConnectionCallback));
     // Start thread for running event loop
@@ -212,9 +228,9 @@ void Server::InitAndStartIOWorker(IOWorker* io_worker) {
     int pipe_fd_for_worker;
     pipes_to_io_worker_[io_worker] = CreatePipeToWorker(&pipe_fd_for_worker);
     uv_pipe_t* pipe_to_worker = pipes_to_io_worker_[io_worker].get();
-    UV_DCHECK_OK(uv_read_start(UV_AS_STREAM(pipe_to_worker),
-                               &PipeReadBufferAllocCallback,
-                               &Server::ReturnConnectionCallback));
+    UV_CHECK_OK(uv_read_start(UV_AS_STREAM(pipe_to_worker),
+                              &PipeReadBufferAllocCallback,
+                              &Server::ReturnConnectionCallback));
     io_worker->Start(pipe_fd_for_worker);
 }
 
@@ -222,9 +238,9 @@ std::unique_ptr<uv_pipe_t> Server::CreatePipeToWorker(int* pipe_fd_for_worker) {
     int pipe_fds[2] = { -1, -1 };
     CHECK_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, pipe_fds), 0);
     std::unique_ptr<uv_pipe_t> pipe_to_worker = std::make_unique<uv_pipe_t>();
-    UV_DCHECK_OK(uv_pipe_init(&uv_loop_, pipe_to_worker.get(), 1));
+    UV_CHECK_OK(uv_pipe_init(&uv_loop_, pipe_to_worker.get(), 1));
     pipe_to_worker->data = this;
-    UV_DCHECK_OK(uv_pipe_open(pipe_to_worker.get(), pipe_fds[0]));
+    UV_CHECK_OK(uv_pipe_open(pipe_to_worker.get(), pipe_fds[0]));
     *pipe_fd_for_worker = pipe_fds[1];
     return pipe_to_worker;
 }
@@ -240,8 +256,8 @@ void Server::TransferConnectionToWorker(IOWorker* io_worker, Connection* connect
     uv_pipe_t* pipe_to_worker = pipes_to_io_worker_[io_worker].get();
     write_req->data = send_handle;
     UV_DCHECK_OK(uv_write2(write_req, UV_AS_STREAM(pipe_to_worker),
-                          &uv_buf, 1, UV_AS_STREAM(send_handle),
-                          &PipeWrite2Callback));
+                           &uv_buf, 1, UV_AS_STREAM(send_handle),
+                           &PipeWrite2Callback));
 }
 
 void Server::ReturnConnection(Connection* connection) {
