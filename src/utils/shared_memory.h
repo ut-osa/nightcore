@@ -53,7 +53,7 @@ private:
     absl::Mutex regions_mu_;
     std::unordered_map<Region*, std::unique_ptr<Region>>
         regions_ ABSL_GUARDED_BY(regions_mu_);
-    stat::StatisticsCollector<uint32_t> mmap_delay_stat_;
+    stat::StatisticsCollector<int32_t> mmap_delay_stat_;
 
     void AddRegion(Region* region);
     std::string GetFullPath(std::string_view path);

@@ -80,11 +80,11 @@ private:
     absl::Mutex scheduled_function_mu_;
     absl::InlinedVector<std::unique_ptr<ScheduledFunction>, 32>
         scheduled_functions_ ABSL_GUARDED_BY(scheduled_function_mu_);
-    std::atomic<uint64_t> async_event_recv_timestamp_;
+    std::atomic<int64_t> async_event_recv_timestamp_;
 
     stat::StatisticsCollector<uint32_t> bytes_per_read_stat_;
     stat::StatisticsCollector<uint32_t> write_size_stat_;
-    stat::StatisticsCollector<uint32_t> uv_async_delay_stat_;
+    stat::StatisticsCollector<int32_t> uv_async_delay_stat_;
 
     void EventLoopThreadMain();
 

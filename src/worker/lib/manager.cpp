@@ -213,7 +213,8 @@ void Manager::OnIncomingFuncCallComplete(uint32_t handle, bool success, std::spa
         LOG(FATAL) << "Cannot find incoming function call " << handle;
     }
     IncomingFuncCallContext* context = incoming_func_calls_[handle].get();
-    uint32_t processing_time = GetMonotonicMicroTimestamp() - context->start_timestamp;
+    int32_t processing_time = gsl::narrow_cast<int32_t>(
+        GetMonotonicMicroTimestamp() - context->start_timestamp);
     processing_delay_stat_.AddSample(processing_time);
     if (success) {
         utils::SharedMemory::Region* output_region = shared_memory_.Create(

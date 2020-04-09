@@ -30,7 +30,7 @@ Server::Server()
       next_http_connection_id_(0), next_grpc_connection_id_(0),
       next_http_worker_id_(0), next_ipc_worker_id_(0), next_client_id_(1), next_call_id_(0),
       message_delay_stat_(
-          stat::StatisticsCollector<uint32_t>::StandardReportCallback("message_delay")) {
+          stat::StatisticsCollector<int32_t>::StandardReportCallback("message_delay")) {
     UV_DCHECK_OK(uv_loop_init(&uv_loop_));
     uv_loop_.data = &event_loop_thread_;
     UV_DCHECK_OK(uv_tcp_init(&uv_loop_, &uv_http_handle_));
@@ -413,8 +413,8 @@ private:
 
 void Server::OnRecvMessage(MessageConnection* connection, const Message& message) {
 #ifdef __FAAS_ENABLE_PROFILING
-    message_delay_stat_.AddSample(
-        GetMonotonicMicroTimestamp() - message.send_timestamp);
+    message_delay_stat_.AddSample(gsl::narrow_cast<int32_t>(
+        GetMonotonicMicroTimestamp() - message.send_timestamp));
 #endif
     MessageType type{message.message_type};
     if (type == MessageType::INVOKE_FUNC) {

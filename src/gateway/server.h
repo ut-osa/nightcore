@@ -149,7 +149,7 @@ private:
     absl::flat_hash_map<uint64_t, std::unique_ptr<ExternalFuncCallContext>>
         external_func_calls_ ABSL_GUARDED_BY(external_func_calls_mu_);
 
-    stat::StatisticsCollector<uint32_t> message_delay_stat_;
+    stat::StatisticsCollector<int32_t> message_delay_stat_;
 
     void InitAndStartIOWorker(IOWorker* io_worker);
     std::unique_ptr<uv_pipe_t> CreatePipeToWorker(int* pipe_fd_for_worker);

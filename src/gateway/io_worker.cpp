@@ -21,7 +21,7 @@ IOWorker::IOWorker(Server* server, std::string_view worker_name,
           absl::StrFormat("[%s] bytes_per_read", worker_name))),
       write_size_stat_(stat::StatisticsCollector<uint32_t>::StandardReportCallback(
           absl::StrFormat("[%s] write_size_stat", worker_name))),
-      uv_async_delay_stat_(stat::StatisticsCollector<uint32_t>::StandardReportCallback(
+      uv_async_delay_stat_(stat::StatisticsCollector<int32_t>::StandardReportCallback(
           absl::StrFormat("[%s] uv_async_delay", worker_name))) {
     UV_DCHECK_OK(uv_loop_init(&uv_loop_));
     uv_loop_.data = &event_loop_thread_;
@@ -113,7 +113,7 @@ void IOWorker::ScheduleFunction(Connection* owner, std::function<void()> fn) {
         scheduled_functions_.push_back(std::move(function));
         if (!within_my_event_loop) {
 #ifdef __FAAS_ENABLE_PROFILING
-            uint64_t empty = 0;
+            int64_t empty = 0;
             async_event_recv_timestamp_.compare_exchange_strong(
                 empty, GetMonotonicMicroTimestamp());
 #endif
@@ -202,9 +202,10 @@ UV_ASYNC_CB_FOR_CLASS(IOWorker, RunScheduledFunctions) {
         return;
     }
 #ifdef __FAAS_ENABLE_PROFILING
-    uint64_t async_event_recv_timestamp = async_event_recv_timestamp_.fetch_and(0);
+    int64_t async_event_recv_timestamp = async_event_recv_timestamp_.fetch_and(0);
     if (async_event_recv_timestamp != 0) {
-        uv_async_delay_stat_.AddSample(GetMonotonicMicroTimestamp() - async_event_recv_timestamp);
+        uv_async_delay_stat_.AddSample(gsl::narrow_cast<int32_t>(
+            GetMonotonicMicroTimestamp() - async_event_recv_timestamp));
     }
 #endif
     absl::InlinedVector<std::unique_ptr<ScheduledFunction>, 32> functions;

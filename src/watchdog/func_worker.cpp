@@ -126,8 +126,8 @@ void FuncWorker::OnSubprocessExit(int exit_status, std::span<const char> stdout,
 void FuncWorker::OnRecvMessage(const Message& message) {
     DCHECK_IN_EVENT_LOOP_THREAD(uv_loop_);
 #ifdef __FAAS_ENABLE_PROFILING
-    watchdog_->func_worker_message_delay_stat()->AddSample(
-        GetMonotonicMicroTimestamp() - message.send_timestamp);
+    watchdog_->func_worker_message_delay_stat()->AddSample(gsl::narrow_cast<int32_t>(
+        GetMonotonicMicroTimestamp() - message.send_timestamp));
 #endif
     MessageType type{message.message_type};
     uint64_t call_id = message.func_call.full_call_id;
