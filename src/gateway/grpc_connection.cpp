@@ -330,6 +330,9 @@ bool GrpcConnection::H2ValidateAndPopulateHeader(H2StreamContext* context,
         } else if (name == "grpc-timeout") {
             // grpc-timeout is ignored
             return true;
+        } else if (name == "grpc-trace-bin") {
+            // grpc-trace-bin is ignored
+            return true;
         } else {
             HLOG(WARNING) << "Non-standard header: " << name << " = " << value;
             context->headers[std::string(name)] = std::string(value);

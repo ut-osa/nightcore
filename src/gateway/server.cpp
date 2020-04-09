@@ -119,7 +119,7 @@ void Server::Start() {
         CHECK_GT(num_io_workers_, 0);
         HLOG(INFO) << "Start " << num_io_workers_ << " IO workers for both HTTP and IPC connections";
         for (int i = 0; i < num_io_workers_; i++) {
-            auto io_worker = std::make_unique<IOWorker>(this, absl::StrCat(i));
+            auto io_worker = std::make_unique<IOWorker>(this, absl::StrFormat("IO-%d", i));
             InitAndStartIOWorker(io_worker.get());
             http_workers_.push_back(io_worker.get());
             ipc_workers_.push_back(io_worker.get());
