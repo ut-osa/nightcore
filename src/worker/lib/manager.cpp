@@ -16,7 +16,9 @@ using protocol::HandshakeMessage;
 using protocol::HandshakeResponse;
 
 Manager::Manager()
-    : started_(false), client_id_(-1),
+    : started_(false),
+      is_async_mode_(static_cast<bool>(utils::GetEnvVariableAsInt("ASYNC_MODE", 0))),
+      client_id_(-1),
       watchdog_input_pipe_fd_(utils::GetEnvVariableAsInt("INPUT_PIPE_FD", -1)),
       watchdog_output_pipe_fd_(utils::GetEnvVariableAsInt("OUTPUT_PIPE_FD", -1)),
       gateway_ipc_path_(utils::GetEnvVariable("GATEWAY_IPC_PATH", "/tmp/faas_gateway")),

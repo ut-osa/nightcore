@@ -20,10 +20,9 @@ using protocol::Message;
 constexpr size_t Watchdog::kSubprocessPipeBufferSizeForSerializingMode;
 constexpr size_t Watchdog::kSubprocessPipeBufferSizeForFuncWorkerMode;
 constexpr absl::Duration Watchdog::kMinFuncWorkerCreationInterval;
-constexpr int Watchdog::kDefaultGoMaxProcs;
 
 Watchdog::Watchdog()
-    : state_(kCreated), func_id_(-1), go_max_procs_(kDefaultGoMaxProcs), client_id_(0),
+    : state_(kCreated), func_id_(-1), client_id_(0),
       event_loop_thread_("Watchdog/EL",
                          absl::bind_front(&Watchdog::EventLoopThreadMain, this)),
       gateway_connection_(this), next_func_worker_id_(0),
@@ -65,7 +64,6 @@ void Watchdog::Start() {
     CHECK(func_id_ != -1);
     CHECK(func_config_.find_by_func_id(func_id_) != nullptr);
     CHECK(!fprocess_.empty());
-    CHECK_GT(go_max_procs_, 0);
     switch (run_mode_) {
     case RunMode::SERIALIZING:
         buffer_pool_for_subprocess_pipes_ = std::make_unique<utils::BufferPool>(

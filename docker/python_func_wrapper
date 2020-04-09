@@ -4,14 +4,15 @@ PYTHON_EXEC=/usr/local/bin/python
 PYTHON_ENTRY=$1
 FUNC_ID=$2
 WORKING_DIR=$(dirname $1)
+DEFAULT_FUNC_WORKER_OUTPUT_DIR="/tmp/faas/func_output_${FUNC_ID}"
 
 if [ -f "$WORKING_DIR/requirements.txt" ]; then
     pip install -r $WORKING_DIR/requirements.txt
 fi
 
-DEFAULT_FUNC_WORKER_OUTPUT_DIR="/tmp/faas/func_output_${FUNC_ID}"
+export PYTHONPATH=/faas/python:$PYTHONPATH
 
-PYTHONPATH=/faas/python:$PYTHONPATH /faas/bin/watchdog \
+/faas/bin/watchdog \
     --gateway_ipc_path=${GATEWAY_IPC_PATH:-"/tmp/faas/gateway.sock"} \
     --shared_mem_path=${SHARED_MEM_PATH:-"/tmp/faas/shm"} \
     --func_config_file=${FUNC_CONFIG_FILE:-"/faas/share/func_config.json"} \

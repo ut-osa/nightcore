@@ -38,7 +38,6 @@ void FuncWorker::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool) 
     subprocess_.AddEnvVariable("SHARED_MEMORY_PATH", fs_utils::GetRealPath(watchdog_->shared_mem_path()));
     subprocess_.AddEnvVariable("FUNC_CONFIG_FILE", fs_utils::GetRealPath(watchdog_->func_config_file()));
     subprocess_.AddEnvVariable("WORKER_ID", worker_id_);
-    subprocess_.AddEnvVariable("GOMAXPROCS", watchdog_->go_max_procs());
     if (!watchdog_->func_worker_output_dir().empty()) {
         std::string_view output_dir = watchdog_->func_worker_output_dir();
         std::string_view func_name = watchdog_->func_name();
@@ -51,6 +50,9 @@ void FuncWorker::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool) 
     }
     if (!watchdog_->fprocess_working_dir().empty()) {
         subprocess_.SetWorkingDir(watchdog_->fprocess_working_dir());
+    }
+    if (watchdog_->func_worker_async_mode()) {
+        subprocess_.AddEnvVariable("ASYNC_MODE", "1");
     }
     CHECK(subprocess_.Start(uv_loop, read_buffer_pool,
                             absl::bind_front(&FuncWorker::OnSubprocessExit, this)))

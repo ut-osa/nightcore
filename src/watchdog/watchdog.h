@@ -21,7 +21,6 @@ public:
     static constexpr size_t kSubprocessPipeBufferSizeForSerializingMode = 65536;
     static constexpr size_t kSubprocessPipeBufferSizeForFuncWorkerMode = 256;
     static constexpr absl::Duration kMinFuncWorkerCreationInterval = absl::Milliseconds(500);
-    static constexpr int kDefaultGoMaxProcs = 1;
 
     Watchdog();
     ~Watchdog();
@@ -56,18 +55,15 @@ public:
     void set_func_worker_output_dir(std::string_view path) {
         func_worker_output_dir_ = std::string(path);
     }
-    void set_go_max_procs(int value) {
-        go_max_procs_ = value;
-    }
 
     std::string_view gateway_ipc_path() const { return gateway_ipc_path_; }
     int func_id() const { return func_id_; }
     std::string_view fprocess() const { return fprocess_; }
     std::string_view fprocess_working_dir() const { return fprocess_working_dir_; }
+    bool func_worker_async_mode() const { return run_mode_ == RunMode::FUNC_WORKER_ASYNC; }
     std::string_view shared_mem_path() const { return shared_mem_path_; }
     std::string_view func_config_file() const { return func_config_file_; }
     std::string_view func_worker_output_dir() const { return func_worker_output_dir_; }
-    int go_max_procs() const { return go_max_procs_; }
 
     std::string_view func_name() const {
         const FuncConfig::Entry* entry = func_config_.find_by_func_id(func_id_);
@@ -103,7 +99,6 @@ private:
     int min_num_func_workers_;
     int max_num_func_workers_;
     std::string func_worker_output_dir_;
-    int go_max_procs_;
     uint16_t client_id_;
 
     uv_loop_t uv_loop_;

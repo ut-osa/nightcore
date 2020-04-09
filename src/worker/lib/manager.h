@@ -22,6 +22,7 @@ public:
     void OnWatchdogIOError(int errnum);
     void OnWatchdogIOError(std::string_view message);
 
+    bool is_async_mode() const { return is_async_mode_; }
     bool is_grpc_service() const { return my_func_config_->is_grpc_service; }
     std::string_view grpc_service_name() const { return my_func_config_->grpc_service_name; }
     int watchdog_input_pipe_fd() const { return watchdog_input_pipe_fd_; }
@@ -68,6 +69,7 @@ public:
 
 private:
     bool started_;
+    bool is_async_mode_;
     FuncConfig func_config_;
     const FuncConfig::Entry* my_func_config_;
     int client_id_;

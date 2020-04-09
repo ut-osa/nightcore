@@ -20,7 +20,6 @@ ABSL_FLAG(int, max_num_func_workers, 1, "Maximum number of function workers");
 ABSL_FLAG(std::string, func_worker_output_dir, "",
           "If not empty, stdout and stderr of function workers will be saved "
           "in the given directory");
-ABSL_FLAG(int, go_max_procs, 1, "Value of GOMAXPROCS for Golang function workers");
 
 static std::atomic<faas::watchdog::Watchdog*> watchdog_ptr(nullptr);
 void SignalHandlerToStopWatchdog(int signal) {
@@ -45,7 +44,6 @@ int main(int argc, char* argv[]) {
     watchdog->set_max_num_func_workers(absl::GetFlag(FLAGS_max_num_func_workers));
     watchdog->set_func_config_file(absl::GetFlag(FLAGS_func_config_file));
     watchdog->set_func_worker_output_dir(absl::GetFlag(FLAGS_func_worker_output_dir));
-    watchdog->set_go_max_procs(absl::GetFlag(FLAGS_go_max_procs));
 
     watchdog->Start();
     watchdog_ptr.store(watchdog.get());

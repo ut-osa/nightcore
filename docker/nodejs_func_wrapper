@@ -4,7 +4,6 @@ NODE_EXEC=/usr/local/bin/node
 NODE_ENTRY=$1
 FUNC_ID=$2
 WORKING_DIR=$(dirname $1)
-
 DEFAULT_FUNC_WORKER_OUTPUT_DIR="/tmp/faas/func_output_${FUNC_ID}"
 
 /faas/bin/watchdog \
