@@ -10,10 +10,15 @@ TAG=git-$GIT_HASH-$DATE
 ( cd $ROOT_DIR &&
   docker build -t zjia/faas-watchdog-bionic:$TAG -f ./docker/Dockerfile.watchdog-bionic . )
 ( cd $ROOT_DIR &&
+  docker build -t zjia/faas-watchdog-buster:$TAG -f ./docker/Dockerfile.watchdog-buster . )
+( cd $ROOT_DIR &&
   docker build -t zjia/faas-worker-golang:$TAG -f ./docker/Dockerfile.worker-golang \
                --build-arg WATCHDOG_TAG=$TAG . )
 ( cd $ROOT_DIR &&
   docker build -t zjia/faas-worker-nodejs:$TAG -f ./docker/Dockerfile.worker-nodejs \
+               --build-arg WATCHDOG_TAG=$TAG . )
+( cd $ROOT_DIR &&
+  docker build -t zjia/faas-worker-python:$TAG -f ./docker/Dockerfile.worker-python \
                --build-arg WATCHDOG_TAG=$TAG . )
 ( cd $ROOT_DIR &&
   docker build -t zjia/faas-golang-env:$TAG -f ./docker/Dockerfile.golang-env . )
@@ -22,7 +27,9 @@ TAG=git-$GIT_HASH-$DATE
 
 docker tag zjia/faas-gateway:$TAG zjia/faas-gateway:latest
 docker tag zjia/faas-watchdog-bionic:$TAG zjia/faas-watchdog-bionic:latest
+docker tag zjia/faas-watchdog-buster:$TAG zjia/faas-watchdog-buster:latest
 docker tag zjia/faas-worker-golang:$TAG zjia/faas-worker-golang:latest
 docker tag zjia/faas-worker-nodejs:$TAG zjia/faas-worker-nodejs:latest
+docker tag zjia/faas-worker-python:$TAG zjia/faas-worker-python:latest
 docker tag zjia/faas-golang-env:$TAG zjia/faas-golang-env:latest
 docker tag zjia/faas-nodejs-env:$TAG zjia/faas-nodejs-env:latest

@@ -14,3 +14,6 @@
 /worker/golang/build/
 /worker/nodejs/build/
 /worker/nodejs/node_modules/
+/worker/python/build/
+/worker/python/faas/_faas_native.*.so
+/worker/python/faas/__pycache__/
