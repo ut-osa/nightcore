@@ -213,7 +213,7 @@ T CheckNotNull(const char* file, int line, const char* exprtext, T&& t) {
 #define DCHECK_LT(val1, val2) while (false) CHECK_LT(val1, val2)
 #define DCHECK_GE(val1, val2) while (false) CHECK_GE(val1, val2)
 #define DCHECK_GT(val1, val2) while (false) CHECK_GT(val1, val2)
-#define DCHECK_NOTNULL(val)   while (false) CHECK_NOTNULL(val)
+#define DCHECK_NOTNULL(val)   val
 
 #endif  // DCHECK_IS_ON()
 

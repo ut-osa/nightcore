@@ -15,6 +15,8 @@ using protocol::Status;
 using protocol::HandshakeMessage;
 using protocol::HandshakeResponse;
 
+constexpr uint32_t Manager::kInvalidHandle;
+
 Manager::Manager()
     : started_(false),
       is_async_mode_(gsl::narrow_cast<bool>(utils::GetEnvVariableAsInt("ASYNC_MODE", 0))),
@@ -29,8 +31,20 @@ Manager::Manager()
       incoming_func_call_callback_set_(false),
       incoming_grpc_call_callback_set_(false),
       outcoming_func_call_complete_callback_set_(false),
+      gateway_message_delay_stat_(
+          stat::StatisticsCollector<int32_t>::StandardReportCallback("gateway_message_delay")),
+      watchdog_message_delay_stat_(
+          stat::StatisticsCollector<int32_t>::StandardReportCallback("watchdog_message_delay")),
       processing_delay_stat_(
-          stat::StatisticsCollector<uint32_t>::StandardReportCallback("processing_delay")) {
+          stat::StatisticsCollector<int32_t>::StandardReportCallback("processing_delay")),
+      system_protocol_overhead_stat_(
+          stat::StatisticsCollector<int32_t>::StandardReportCallback("system_protocol_overhead")),
+      input_size_stat_(
+          stat::StatisticsCollector<uint32_t>::StandardReportCallback("input_size")),
+      output_size_stat_(
+          stat::StatisticsCollector<uint32_t>::StandardReportCallback("output_size")),
+      incoming_requests_counter_(
+          stat::Counter::StandardReportCallback("incoming_ruquests")) {
     if (!func_config_.Load(utils::GetEnvVariable("FUNC_CONFIG_FILE"))) {
         LOG(FATAL) << "Failed to load function config file";
     }
@@ -147,6 +161,9 @@ bool Manager::OnOutcomingFuncCall(std::string_view func_name, std::span<const ch
     context->input_region = shared_memory_.Create(
         utils::SharedMemory::InputPath(func_call.full_call_id), input.size());
     context->output_region = nullptr;
+#ifdef __FAAS_ENABLE_PROFILING
+    context->start_timestamp = GetMonotonicMicroTimestamp();
+#endif
     memcpy(context->input_region->base(), input.data(), input.size());
     outcoming_func_calls_[*handle] = std::move(context);
     Message message = {
@@ -187,6 +204,9 @@ bool Manager::OnOutcomingGrpcCall(std::string_view service, std::string_view met
         utils::SharedMemory::InputPath(func_call.full_call_id),
         method.size() + 1 + request.size());
     context->output_region = nullptr;
+#ifdef __FAAS_ENABLE_PROFILING
+    context->start_timestamp = GetMonotonicMicroTimestamp();
+#endif
     char* buffer = context->input_region->base();
     memcpy(buffer, method.data(), method.size());
     buffer[method.size()] = '\0';
@@ -212,13 +232,16 @@ void Manager::OnIncomingFuncCallComplete(uint32_t handle, bool success, std::spa
     if (incoming_func_calls_.count(handle) == 0) {
         LOG(FATAL) << "Cannot find incoming function call " << handle;
     }
-    IncomingFuncCallContext* context = incoming_func_calls_[handle].get();
+    std::unique_ptr<IncomingFuncCallContext> context = std::move(incoming_func_calls_[handle]);
+    incoming_func_calls_.erase(handle);
     int32_t processing_time = gsl::narrow_cast<int32_t>(
         GetMonotonicMicroTimestamp() - context->start_timestamp);
     processing_delay_stat_.AddSample(processing_time);
+    context->input_region->Close();
     if (success) {
         utils::SharedMemory::Region* output_region = shared_memory_.Create(
             utils::SharedMemory::OutputPath(context->func_call.full_call_id), output.size());
+        output_size_stat_.AddSample(output.size());
         if (output.size() > 0) {
             memcpy(output_region->base(), output.data(), output.size());
         }
@@ -241,14 +264,21 @@ void Manager::OnIncomingFuncCallComplete(uint32_t handle, bool success, std::spa
     }
     send_watchdog_data_callback_(std::span<const char>(
         reinterpret_cast<const char*>(&response), sizeof(Message)));
-    incoming_func_calls_.erase(handle);
 }
 
 void Manager::OnRecvGatewayMessage(const protocol::Message& message) {
+#ifdef __FAAS_ENABLE_PROFILING
+    gateway_message_delay_stat_.AddSample(gsl::narrow_cast<int32_t>(
+        GetMonotonicMicroTimestamp() - message.send_timestamp));
+#endif
     MessageType type{message.message_type};
     switch (type) {
     case MessageType::FUNC_CALL_COMPLETE:
+#ifdef __FAAS_ENABLE_PROFILING
+        OnOutcomingFuncCallComplete(message.func_call, true, message.processing_time);
+#else
         OnOutcomingFuncCallComplete(message.func_call, true);
+#endif
         break;
     case MessageType::FUNC_CALL_FAILED:
         OnOutcomingFuncCallComplete(message.func_call, false);
@@ -260,6 +290,10 @@ void Manager::OnRecvGatewayMessage(const protocol::Message& message) {
 }
 
 void Manager::OnRecvWatchdogMessage(const protocol::Message& message) {
+#ifdef __FAAS_ENABLE_PROFILING
+    watchdog_message_delay_stat_.AddSample(gsl::narrow_cast<int32_t>(
+        GetMonotonicMicroTimestamp() - message.send_timestamp));
+#endif
     MessageType type{message.message_type};
     switch (type) {
     case MessageType::INVOKE_FUNC:
@@ -271,36 +305,59 @@ void Manager::OnRecvWatchdogMessage(const protocol::Message& message) {
     }
 }
 
-void Manager::OnOutcomingFuncCallComplete(FuncCall func_call, bool success) {
+void Manager::OnOutcomingFuncCallComplete(FuncCall func_call, bool success, int32_t processing_time) {
     uint32_t handle = func_call.call_id;
     if (outcoming_func_calls_.count(handle) == 0) {
         LOG(ERROR) << "Cannot find outcoming function call " << handle;
         return;
     }
-    OutcomingFuncCallContext* context = outcoming_func_calls_[handle].get();
+    std::unique_ptr<OutcomingFuncCallContext> context = std::move(outcoming_func_calls_[handle]);
+    outcoming_func_calls_.erase(handle);
     std::span<const char> output;
     if (success) {
         context->output_region = shared_memory_.OpenReadOnly(
             utils::SharedMemory::OutputPath(func_call.full_call_id));
         output = context->output_region->to_span();
+#ifdef __FAAS_ENABLE_PROFILING
+        int32_t end2end_time = gsl::narrow_cast<int32_t>(
+            GetMonotonicMicroTimestamp() - context->start_timestamp);
+        system_protocol_overhead_stat_.AddSample(end2end_time - processing_time);
+#endif
     }
-    outcoming_func_call_complete_callback_(handle, success, output);
+    bool reclaim_output_later = false;
+    outcoming_func_call_complete_callback_(handle, success, output, &reclaim_output_later);
     if (context->input_region != nullptr) {
         context->input_region->Close(true);
     }
     if (context->output_region != nullptr) {
-        context->output_region->Close(true);
+        if (reclaim_output_later) {
+            output_regions_to_close_[handle] = context->output_region;
+        } else {
+            context->output_region->Close(true);
+        }
     }
-    outcoming_func_calls_.erase(handle);
+}
+
+void Manager::ReclaimOutcomingFuncCallOutput(uint32_t handle) {
+    if (output_regions_to_close_.count(handle) == 0) {
+        LOG(WARNING) << "Cannot find outcoming function call " << handle;
+        return;
+    }
+    utils::SharedMemory::Region* output_region = output_regions_to_close_[handle];
+    output_regions_to_close_.erase(handle);
+    DCHECK_NOTNULL(output_region)->Close(true);
 }
 
 void Manager::OnIncomingFuncCall(FuncCall func_call) {
-    utils::SharedMemory::Region* input_region = shared_memory_.OpenReadOnly(
-        utils::SharedMemory::InputPath(func_call.full_call_id));
+    incoming_requests_counter_.Tick();
     auto context = std::make_unique<IncomingFuncCallContext>();
     context->func_call = func_call;
+    context->input_region = shared_memory_.OpenReadOnly(
+        utils::SharedMemory::InputPath(func_call.full_call_id));
+    input_size_stat_.AddSample(context->input_region->size());
     context->start_timestamp = GetMonotonicMicroTimestamp();
     uint32_t handle = next_handle_value_++;
+    utils::SharedMemory::Region* input_region = context->input_region;
     incoming_func_calls_[handle] = std::move(context);
     if (my_func_config_->is_grpc_service) {
         std::span<const char> input = input_region->to_span();
@@ -311,7 +368,6 @@ void Manager::OnIncomingFuncCall(FuncCall func_call) {
         if (pos == input.size()) {
             LOG(ERROR) << "Invalid input bytes";
             OnIncomingFuncCallComplete(handle, false, std::span<const char>());
-            input_region->Close();
             return;
         }
         std::string method(input.data(), pos);
@@ -319,14 +375,12 @@ void Manager::OnIncomingFuncCall(FuncCall func_call) {
             LOG(ERROR) << "gRPC service " << my_func_config_->grpc_service_name
                        << " cannot process method " << method;
             OnIncomingFuncCallComplete(handle, false, std::span<const char>());
-            input_region->Close();
             return;
         }
         incoming_grpc_call_callback_(handle, method, input.subspan(pos + 1));
     } else {
         incoming_func_call_callback_(handle, input_region->to_span());
     }
-    input_region->Close();
 }
 
 }  // namespace worker_lib

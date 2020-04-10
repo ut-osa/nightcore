@@ -14,6 +14,8 @@ public:
     Manager();
     ~Manager();
 
+    static constexpr uint32_t kInvalidHandle = std::numeric_limits<uint32_t>::max();
+
     // All callbacks have to be set before calling Start()
     void Start();
 
@@ -35,8 +37,13 @@ public:
     typedef std::function<void(uint32_t /* handle */, std::string_view /* method */,
                                std::span<const char> /* request */)>
             IncomingGrpcCallCallback;
+    // If reclaim_output_later is set to true by the callback function,
+    // ReclaimOutcomingFuncCallOutput should be called later to free output buffer.
+    // Otherwise, the output buffer must not be touched after the callback returns.
+    // reclaim_output_later is false by default.
     typedef std::function<void(uint32_t /* handle */, bool /* success */,
-                               std::span<const char> /* output */)>
+                               std::span<const char> /* output */,
+                               bool* /* reclaim_output_later */)>
             OutcomingFuncCallCompleteCallback;
 
     void SetSendGatewayDataCallback(SendDataCallback callback) {
@@ -66,6 +73,8 @@ public:
     bool OnOutcomingGrpcCall(std::string_view service, std::string_view method,
                              std::span<const char> request, uint32_t* handle);
     void OnIncomingFuncCallComplete(uint32_t handle, bool success, std::span<const char> output);
+
+    void ReclaimOutcomingFuncCallOutput(uint32_t handle);
 
 private:
     bool started_;
@@ -97,22 +106,35 @@ private:
         protocol::FuncCall func_call;
         utils::SharedMemory::Region* input_region;
         utils::SharedMemory::Region* output_region;
+#ifdef __FAAS_ENABLE_PROFILING
+        int64_t start_timestamp;
+#endif
     };
     std::unordered_map<uint32_t, std::unique_ptr<OutcomingFuncCallContext>>
         outcoming_func_calls_;
 
     struct IncomingFuncCallContext {
         protocol::FuncCall func_call;
-        uint64_t start_timestamp;
+        utils::SharedMemory::Region* input_region;
+        int64_t start_timestamp;
     };
     std::unordered_map<uint32_t, std::unique_ptr<IncomingFuncCallContext>>
         incoming_func_calls_;
+    std::unordered_map<uint32_t, utils::SharedMemory::Region*>
+        output_regions_to_close_;
 
-    stat::StatisticsCollector<uint32_t> processing_delay_stat_;
+    stat::StatisticsCollector<int32_t> gateway_message_delay_stat_;
+    stat::StatisticsCollector<int32_t> watchdog_message_delay_stat_;
+    stat::StatisticsCollector<int32_t> processing_delay_stat_;
+    stat::StatisticsCollector<int32_t> system_protocol_overhead_stat_;
+    stat::StatisticsCollector<uint32_t> input_size_stat_;
+    stat::StatisticsCollector<uint32_t> output_size_stat_;
+    stat::Counter incoming_requests_counter_;
 
     void OnRecvGatewayMessage(const protocol::Message& message);
     void OnRecvWatchdogMessage(const protocol::Message& message);
-    void OnOutcomingFuncCallComplete(protocol::FuncCall func_call, bool success);
+    void OnOutcomingFuncCallComplete(protocol::FuncCall func_call, bool success,
+                                     int32_t processing_time = 0);
     void OnIncomingFuncCall(protocol::FuncCall func_call);
 
     DISALLOW_COPY_AND_ASSIGN(Manager);

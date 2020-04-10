@@ -229,7 +229,8 @@ void WorkerManager::SetOutcomingFuncCallCompleteCallback(const Nan::FunctionCall
     WorkerManager* obj = ObjectWrap::Unwrap<WorkerManager>(info.Holder());
     obj->outcoming_func_call_complete_callback_.Reset(callback);
     obj->inner_->SetOutcomingFuncCallCompleteCallback([obj] (uint32_t handle, bool success,
-                                                             std::span<const char> output) {
+                                                             std::span<const char> output,
+                                                             bool* reclaim_output_later) {
         obj->OutcomingFuncCallCompleteCallback(handle, success, output);
     });
 }

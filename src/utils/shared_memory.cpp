@@ -70,15 +70,17 @@ SharedMemory::Region* SharedMemory::OpenReadOnly(std::string_view path) {
 }
 
 void SharedMemory::Close(SharedMemory::Region* region, bool remove) {
-    absl::MutexLock lk(&regions_mu_);
-    DCHECK(regions_.count(region) > 0);
+    {
+        absl::MutexLock lk(&regions_mu_);
+        DCHECK(regions_.count(region) > 0);
+        regions_.erase(region);
+    }
     if (region->size() > 0) {
         PCHECK(munmap(region->base(), region->size()) == 0);
     }
     if (remove) {
         PCHECK(fs_utils::Remove(GetFullPath(region->path())));
     }
-    regions_.erase(region);
 }
 
 void SharedMemory::AddRegion(Region* region) {
