@@ -1,6 +1,10 @@
 #include "worker/v2/func_worker.h"
 
 #include "base/thread.h"
+#include "utils/socket.h"
+#include "utils/io.h"
+
+#include <poll.h>
 
 #define HLOG(l) LOG(l) << log_header_
 #define HVLOG(l) VLOG(l) << log_header_
@@ -14,7 +18,6 @@ constexpr size_t FuncWorker::kBufferSize;
 FuncWorker::FuncWorker()
     : log_header_("FuncWorker: "),
       num_worker_threads_(kDefaultWorkerThreadNumber),
-      buffer_pool_("FuncWorker", kBufferSize),
       idle_worker_count_(0) {
     if (manager_.is_grpc_service()) {
         HLOG(FATAL) << "func_worker_v2 has not implemented gRPC support";
@@ -23,16 +26,6 @@ FuncWorker::FuncWorker()
         absl::bind_front(&FuncWorker::OnIncomingFuncCall, this));
     manager_.SetOutcomingFuncCallCompleteCallback(
         absl::bind_front(&FuncWorker::OnOutcomingFuncCallComplete, this));
-    UV_CHECK_OK(uv_loop_init(&uv_loop_));
-    UV_CHECK_OK(uv_pipe_init(&uv_loop_, &gateway_ipc_handle_, 0));
-    gateway_ipc_handle_.data = this;
-    UV_CHECK_OK(uv_pipe_init(&uv_loop_, &watchdog_input_pipe_handle_, 0));
-    watchdog_input_pipe_handle_.data = this;
-    UV_CHECK_OK(uv_pipe_init(&uv_loop_, &watchdog_output_pipe_handle_, 0));
-    watchdog_output_pipe_handle_.data = this;
-    UV_CHECK_OK(uv_async_init(&uv_loop_, &new_data_to_send_event_,
-                              &FuncWorker::NewDataToSendCallback));
-    new_data_to_send_event_.data = this;
 }
 
 FuncWorker::~FuncWorker() {}
@@ -51,9 +44,18 @@ void FuncWorker::Serve() {
 
     {
         absl::MutexLock lk(&mu_);
-        uv_pipe_connect(&gateway_connect_req_, &gateway_ipc_handle_,
-                        std::string(manager_.gateway_ipc_path()).c_str(),
-                        &FuncWorker::GatewayConnectCallback);
+        gateway_ipc_socket_ = utils::UnixDomainSocketConnect(manager_.gateway_ipc_path());
+        watchdog_input_pipe_fd_ = manager_.watchdog_input_pipe_fd();
+        watchdog_output_pipe_fd_ = manager_.watchdog_output_pipe_fd();
+        manager_.SetSendGatewayDataCallback([this] (std::span<const char> data) {
+            mu_.AssertHeld();
+            io_utils::SendData(gateway_ipc_socket_, data);
+        });
+        manager_.SetSendWatchdogDataCallback([this] (std::span<const char> data) {
+            mu_.AssertHeld();
+            io_utils::SendData(watchdog_output_pipe_fd_, data);
+        });
+        manager_.Start();
     }
 
     CHECK_GT(num_worker_threads_, 0);
@@ -63,116 +65,63 @@ void FuncWorker::Serve() {
         worker_threads_.push_back(std::make_unique<WorkerThread>(this, i));
     }
 
+    char read_buffer[kBufferSize];
+    pollfd fds[2];
+    fds[0].fd = gateway_ipc_socket_;
+    fds[0].events = POLLIN;
+    fds[1].fd = watchdog_input_pipe_fd_;
+    fds[1].events = POLLIN;
+
+    HLOG(INFO) << "Start reading from gateway and watchdog";
     base::Thread::current()->MarkThreadCategory("IO");
-    uv_loop_.data = base::Thread::current();
-    HLOG(INFO) << "Event loop starts";
-    int ret = uv_run(&uv_loop_, UV_RUN_DEFAULT);
-    if (ret != 0) {
-        HLOG(WARNING) << "uv_run returns non-zero value: " << ret;
-    }
-    HLOG(INFO) << "Event loop finishes";
-}
 
-UV_ALLOC_CB_FOR_CLASS(FuncWorker, BufferAlloc) {
-    buffer_pool_.Get(buf);
-}
-
-UV_CONNECT_CB_FOR_CLASS(FuncWorker, GatewayConnect) {
-    HLOG(INFO) << "Connected to gateway";
-    absl::MutexLock lk(&mu_);
-    UV_CHECK_OK(uv_pipe_open(&watchdog_input_pipe_handle_,
-                             manager_.watchdog_input_pipe_fd()));
-    UV_CHECK_OK(uv_pipe_open(&watchdog_output_pipe_handle_,
-                             manager_.watchdog_output_pipe_fd()));
-    UV_CHECK_OK(uv_read_start(UV_AS_STREAM(&gateway_ipc_handle_),
-                              &FuncWorker::BufferAllocCallback,
-                              &FuncWorker::RecvGatewayDataCallback));
-    UV_CHECK_OK(uv_read_start(UV_AS_STREAM(&watchdog_input_pipe_handle_),
-                              &FuncWorker::BufferAllocCallback,
-                              &FuncWorker::RecvWatchdogDataCallback));
-    manager_.SetSendGatewayDataCallback([this] (std::span<const char> data) {
+    while (true) {
+        int ret = poll(fds, 2, -1);
+        if (ret == -1) {
+            PLOG(FATAL) << "poll returns with error";
+        }
+        CHECK(ret > 0);
+        auto errstr = [] (short revents) -> std::string {
+            std::string result = "";
+            if (revents & POLLNVAL) result += "POLLNVAL ";
+            if (revents & POLLERR) result += "POLLERR ";
+            if (revents & POLLHUP) result += "POLLHUP ";
+            return std::string(absl::StripTrailingAsciiWhitespace(result));
+        };
         {
-            absl::MutexLock lk(&gateway_send_buffer_mu_);
-            gateway_send_buffer_.AppendData(data);
+            absl::MutexLock lk(&mu_);
+            if ((fds[0].revents & POLLNVAL) || (fds[0].revents & POLLERR) || (fds[0].revents & POLLHUP) ) {
+                manager_.OnGatewayIOError(errstr(fds[0].revents));
+            }
+            if ((fds[1].revents & POLLNVAL) || (fds[1].revents & POLLERR) || (fds[1].revents & POLLHUP) ) {
+                manager_.OnWatchdogIOError(errstr(fds[1].revents));
+            }
         }
-        SignalNewDataToSend();
-    });
-    manager_.SetSendWatchdogDataCallback([this] (std::span<const char> data) {
-        {
-            absl::MutexLock lk(&watchdog_send_buffer_mu_);
-            watchdog_send_buffer_.AppendData(data);
+        if (fds[0].revents & POLLIN) {
+            ssize_t nread = read(gateway_ipc_socket_, read_buffer, kBufferSize);
+            {
+                absl::MutexLock lk(&mu_);
+                if (nread < 0) {
+                    manager_.OnGatewayIOError(errno);
+                } else if (nread > 0) {
+                    manager_.OnRecvGatewayData(std::span<const char>(read_buffer, nread));
+                } else {
+                    HLOG(WARNING) << "read returns with 0";
+                }
+            }
         }
-        SignalNewDataToSend();
-    });
-    manager_.Start();
-}
-
-UV_READ_CB_FOR_CLASS(FuncWorker, RecvGatewayData) {
-    auto reclaim_resource = gsl::finally([this, buf] {
-        if (buf->base != 0) {
-            buffer_pool_.Return(buf);
-        }
-    });
-    if (nread < 0) {
-        absl::MutexLock lk(&mu_);
-        manager_.OnGatewayIOError(uv_strerror(nread));
-        return;
-    }
-    if (nread == 0) {
-        HLOG(WARNING) << "nread=0, will do nothing";
-        return;
-    }
-    absl::MutexLock lk(&mu_);
-    manager_.OnRecvGatewayData(std::span<const char>(buf->base, nread));
-}
-
-UV_READ_CB_FOR_CLASS(FuncWorker, RecvWatchdogData) {
-    auto reclaim_resource = gsl::finally([this, buf] {
-        if (buf->base != 0) {
-            buffer_pool_.Return(buf);
-        }
-    });
-    if (nread < 0) {
-        absl::MutexLock lk(&mu_);
-        manager_.OnWatchdogIOError(uv_strerror(nread));
-        return;
-    }
-    if (nread == 0) {
-        HLOG(WARNING) << "nread=0, will do nothing";
-        return;
-    }
-    absl::MutexLock lk(&mu_);
-    manager_.OnRecvWatchdogData(std::span<const char>(buf->base, nread));
-}
-
-UV_ASYNC_CB_FOR_CLASS(FuncWorker, NewDataToSend) {
-    {
-        absl::MutexLock lk(&gateway_send_buffer_mu_);
-        if (gateway_send_buffer_.length() > 0) {
-            SendData(&gateway_ipc_handle_, gateway_send_buffer_.to_span());
-            gateway_send_buffer_.Reset();
-        }
-    }
-    {
-        absl::MutexLock lk(&watchdog_send_buffer_mu_);
-        if (watchdog_send_buffer_.length() > 0) {
-            SendData(&watchdog_output_pipe_handle_, watchdog_send_buffer_.to_span());
-            watchdog_send_buffer_.Reset();
-        }
-    }
-}
-
-UV_WRITE_CB_FOR_CLASS(FuncWorker, DataSent) {
-    auto reclaim_resource = gsl::finally([this, req] {
-        buffer_pool_.Return(reinterpret_cast<char*>(req->data));
-        write_req_pool_.Return(req);
-    });
-    if (status != 0) {
-        absl::MutexLock lk(&mu_);
-        if (req->handle == UV_AS_STREAM(&gateway_ipc_handle_)) {
-            manager_.OnGatewayIOError(uv_strerror(status));
-        } else {
-            manager_.OnWatchdogIOError(uv_strerror(status));
+        if (fds[1].revents & POLLIN) {
+            ssize_t nread = read(watchdog_input_pipe_fd_, read_buffer, kBufferSize);
+            {
+                absl::MutexLock lk(&mu_);
+                if (nread < 0) {
+                    manager_.OnWatchdogIOError(errno);
+                } else if (nread > 0) {
+                    manager_.OnRecvWatchdogData(std::span<const char>(read_buffer, nread));
+                } else {
+                    HLOG(WARNING) << "read returns with 0";
+                }
+            }
         }
     }
 }
@@ -277,29 +226,6 @@ bool FuncWorker::WorkerThread::InvokeFunc(std::string_view func_name,
         *output = outcoming_call_output_;
     }
     return outcoming_call_success_;
-}
-
-void FuncWorker::SignalNewDataToSend() {
-    UV_DCHECK_OK(uv_async_send(&new_data_to_send_event_));
-}
-
-void FuncWorker::SendData(uv_pipe_t* uv_pipe, std::span<const char> data) {
-    DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
-    const char* ptr = data.data();
-    size_t write_size = data.size();
-    while (write_size > 0) {
-        uv_buf_t buf;
-        buffer_pool_.Get(&buf);
-        size_t copy_size = std::min(buf.len, write_size);
-        memcpy(buf.base, ptr, copy_size);
-        buf.len = copy_size;
-        uv_write_t* write_req = write_req_pool_.Get();
-        write_req->data = buf.base;
-        UV_DCHECK_OK(uv_write(write_req, UV_AS_STREAM(uv_pipe),
-                              &buf, 1, &FuncWorker::DataSentCallback));
-        write_size -= copy_size;
-        ptr += copy_size;
-    }
 }
 
 void FuncWorker::OnIncomingFuncCall(uint32_t handle, std::span<const char> input) {

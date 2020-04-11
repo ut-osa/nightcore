@@ -59,8 +59,8 @@ void Thread::MarkThreadCategory(absl::string_view category) {
             LOG(INFO) << "Successfully set CPU affinity of current thread to " << cpuset_str;
         }
     } else {
-        LOG(INFO) << "Does not find cpuset setting for " << category << " threads, "
-                  << "use environment variable " << cpuset_var_name << " to set it";
+        LOG(INFO) << "Does not find cpuset setting for " << category
+                  << " threads (should set by " << cpuset_var_name << ")";
     }
 }
 

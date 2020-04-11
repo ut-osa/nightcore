@@ -23,6 +23,22 @@ bool SendMessage(int fd, const T& message) {
     return true;
 }
 
+inline bool SendData(int fd, std::span<const char> data) {
+    size_t pos = 0;
+    while (pos < data.size()) {
+        ssize_t nwrite = write(fd, data.data() + pos, data.size() - pos);
+        DCHECK(nwrite != 0) << "write() returns 0";
+        if (nwrite < 0) {
+            if (errno == EAGAIN || errno == EINTR) {
+                continue;
+            }
+            return false;
+        }
+        pos += nwrite;
+    }
+    return true;
+}
+
 template<class T>
 bool RecvMessage(int fd, T* message, bool* eof) {
     char* buffer = reinterpret_cast<char*>(message);

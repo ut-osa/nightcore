@@ -22,7 +22,9 @@ int UnixDomainSocketConnect(std::string_view path) {
     struct sockaddr_un addr;
     addr.sun_family = AF_UNIX;
     FillAddressPath(&addr, path);
-    PCHECK(connect(fd, (struct sockaddr*)&addr, sizeof(addr)) == 0);
+    if (connect(fd, (struct sockaddr*)&addr, sizeof(addr)) != 0) {
+        PLOG(FATAL) << "Failed to connect to " << path;
+    }
     return fd;
 }
 

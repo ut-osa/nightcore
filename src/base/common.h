@@ -1,5 +1,9 @@
 #pragma once
 
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #ifdef __FAAS_NODE_ADDON
 #if !defined(__FAAS_USED_IN_BINDING) && !defined(__FAAS_NODE_ADDON_SRC)
 #error Need the source file to have __FAAS_USED_IN_BINDING defined
@@ -68,6 +72,7 @@
 #include <absl/strings/strip.h>
 #include <absl/strings/str_split.h>
 #include <absl/strings/numbers.h>
+#include <absl/strings/ascii.h>
 #include <absl/random/random.h>
 #include <absl/random/distributions.h>
 #include <absl/container/flat_hash_map.h>
