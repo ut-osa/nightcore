@@ -10,7 +10,7 @@ class ReportTimer {
 public:
     static constexpr uint32_t kDefaultReportIntervalInMs = 10000;  /* 10 seconds */
 
-    explicit ReportTimer(uint32_t report_interval_in_ms = 10000 /* 10 seconds */)
+    explicit ReportTimer(uint32_t report_interval_in_ms = kDefaultReportIntervalInMs)
         : report_interval_in_ms_(report_interval_in_ms), last_report_time_(-1) {}
     ~ReportTimer() {}
 
@@ -31,7 +31,7 @@ public:
 
     void MarkReport(int* duration_ms) {
         int64_t current_time = GetMonotonicMicroTimestamp();
-        *duration_ms = gsl::narrow_cast<int>(current_time - last_report_time_);
+        *duration_ms = gsl::narrow_cast<int>((current_time - last_report_time_) / 1000);
         last_report_time_ = current_time;
     }
 
