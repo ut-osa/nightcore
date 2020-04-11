@@ -3,6 +3,7 @@
 #include "utils/env_variables.h"
 
 #include <sched.h>
+#include <errno.h>
 #include <sys/syscall.h>
 
 namespace faas {
@@ -43,6 +44,7 @@ void Thread::Run() {
 
 void Thread::MarkThreadCategory(absl::string_view category) {
     CHECK(current_ == this);
+    // Set cpuset
     std::string cpuset_var_name(fmt::format("FAAS_{}_THREAD_CPUSET", category));
     std::string cpuset_str(utils::GetEnvVariable(cpuset_var_name));
     if (!cpuset_str.empty()) {
@@ -54,13 +56,31 @@ void Thread::MarkThreadCategory(absl::string_view category) {
             CPU_SET(cpu, &set);
         }
         if (sched_setaffinity(0, sizeof(set), &set) != 0) {
-            LOG(FATAL) << "Failed to set CPU affinity to " << cpuset_str;
+            PLOG(FATAL) << "Failed to set CPU affinity to " << cpuset_str;
         } else {
             LOG(INFO) << "Successfully set CPU affinity of current thread to " << cpuset_str;
         }
     } else {
         LOG(INFO) << "Does not find cpuset setting for " << category
-                  << " threads (should set by " << cpuset_var_name << ")";
+                  << " threads (can be set by " << cpuset_var_name << ")";
+    }
+    // Set nice
+    std::string nice_var_name(fmt::format("FAAS_{}_THREAD_NICE", category));
+    std::string nice_str(utils::GetEnvVariable(nice_var_name));
+    if (!nice_str.empty()) {
+        int nice_value;
+        CHECK(absl::SimpleAtoi(nice_str, &nice_value));
+        int current_nice = nice(0);
+        errno = 0;
+        if (nice(nice_value - current_nice) == -1 && errno != 0) {
+            PLOG(FATAL) << "Failed to set nice to " << nice_value;
+        } else {
+            CHECK_EQ(nice(0), nice_value);
+            LOG(INFO) << "Successfully set nice of current thread to " << nice_value;
+        }
+    } else {
+        LOG(INFO) << "Does not find nice setting for " << category
+                  << " threads (can be set by " << nice_var_name << ")";
     }
 }
 
