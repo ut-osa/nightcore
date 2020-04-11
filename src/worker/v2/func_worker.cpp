@@ -73,7 +73,7 @@ void FuncWorker::Serve() {
     fds[1].events = POLLIN;
 
     HLOG(INFO) << "Start reading from gateway and watchdog";
-    base::Thread::current()->MarkThreadCategory("IO");
+    base::Thread::current()->MarkThreadCategory("WORKER_IO");
 
     while (true) {
         int ret = poll(fds, 2, -1);
