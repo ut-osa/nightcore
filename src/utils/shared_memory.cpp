@@ -38,11 +38,11 @@ SharedMemory::Region* SharedMemory::Create(std::string_view path, size_t size) {
     if (size > 0) {
         ptr = mmap(0, size, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
         PCHECK(ptr != MAP_FAILED) << "mmap failed";
-        PCHECK(close(fd) == 0) << "close failed";
         memset(ptr, 0, size);
         mmap_delay_stat_.AddSample(gsl::narrow_cast<int32_t>(
             GetMonotonicMicroTimestamp() - start_timestamp));
     }
+    PCHECK(close(fd) == 0) << "close failed";
     Region* region = new Region(this, path, reinterpret_cast<char*>(ptr), size);
     AddRegion(region);
     return region;
@@ -60,27 +60,27 @@ SharedMemory::Region* SharedMemory::OpenReadOnly(std::string_view path) {
     if (size > 0) {
         ptr = mmap(0, size, PROT_READ, MAP_SHARED, fd, 0);
         PCHECK(ptr != MAP_FAILED) << "mmap failed";
-        PCHECK(close(fd) == 0) << "close failed";
         mmap_delay_stat_.AddSample(gsl::narrow_cast<int32_t>(
             GetMonotonicMicroTimestamp() - start_timestamp));
     }
+    PCHECK(close(fd) == 0) << "close failed";
     Region* region = new Region(this, path, reinterpret_cast<char*>(ptr), size);
     AddRegion(region);
     return region;
 }
 
 void SharedMemory::Close(SharedMemory::Region* region, bool remove) {
-    {
-        absl::MutexLock lk(&regions_mu_);
-        DCHECK(regions_.count(region) > 0);
-        regions_.erase(region);
-    }
     if (region->size() > 0) {
         PCHECK(munmap(region->base(), region->size()) == 0);
     }
     if (remove) {
-        PCHECK(fs_utils::Remove(GetFullPath(region->path())));
+        if (!fs_utils::Remove(GetFullPath(region->path()))) {
+            PLOG(ERROR) << "Failed to remove " << GetFullPath(region->path());
+        }
     }
+    absl::MutexLock lk(&regions_mu_);
+    DCHECK(regions_.count(region) > 0);
+    regions_.erase(region);
 }
 
 void SharedMemory::AddRegion(Region* region) {
