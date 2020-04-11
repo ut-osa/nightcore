@@ -1,5 +1,8 @@
 #include "base/thread.h"
 
+#include "utils/env_variables.h"
+
+#include <sched.h>
 #include <sys/syscall.h>
 
 namespace faas {
@@ -36,6 +39,29 @@ void Thread::Run() {
     LOG(INFO) << "Start thread: " << name_;
     fn_();
     state_.store(kFinished);
+}
+
+void Thread::MarkThreadCategory(absl::string_view category) {
+    CHECK(current_ == this);
+    std::string cpuset_var_name(fmt::format("FAAS_{}_THREAD_CPUSET", category));
+    std::string cpuset_str(utils::GetEnvVariable(cpuset_var_name));
+    if (!cpuset_str.empty()) {
+        cpu_set_t set;
+        CPU_ZERO(&set);
+        for (const std::string_view& cpu_str : absl::StrSplit(cpuset_str, ",")) {
+            int cpu;
+            CHECK(absl::SimpleAtoi(cpu_str, &cpu));
+            CPU_SET(cpu, &set);
+        }
+        if (sched_setaffinity(0, sizeof(set), &set) != 0) {
+            LOG(FATAL) << "Failed to set CPU affinity to " << cpuset_str;
+        } else {
+            LOG(INFO) << "Successfully set CPU affinity of current thread to " << cpuset_str;
+        }
+    } else {
+        LOG(INFO) << "Does not find cpuset setting for " << category << " threads, "
+                  << "use environment variable " << cpuset_var_name << " to set it";
+    }
 }
 
 void* Thread::StartRoutine(void* arg) {

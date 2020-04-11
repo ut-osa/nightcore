@@ -23,6 +23,8 @@ public:
     void Start();
     void Join();
 
+    void MarkThreadCategory(absl::string_view category);
+
     const char* name() const { return name_.c_str(); }
     int tid() { return tid_; }
     static Thread* current() {

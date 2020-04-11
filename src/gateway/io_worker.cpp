@@ -141,6 +141,7 @@ void IOWorker::OnConnectionClose(Connection* connection) {
 }
 
 void IOWorker::EventLoopThreadMain() {
+    base::Thread::current()->MarkThreadCategory("IO");
     HLOG(INFO) << "Event loop starts";
     int ret = uv_run(&uv_loop_, UV_RUN_DEFAULT);
     if (ret != 0) {

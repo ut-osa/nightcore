@@ -195,6 +195,7 @@ bool Server::MatchRequest(std::string_view method, std::string_view path,
 }
 
 void Server::EventLoopThreadMain() {
+    base::Thread::current()->MarkThreadCategory("IO");
     HLOG(INFO) << "Event loop starts";
     int ret = uv_run(&uv_loop_, UV_RUN_DEFAULT);
     if (ret != 0) {
