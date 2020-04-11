@@ -63,6 +63,7 @@ void FuncWorker::Serve() {
         worker_threads_.push_back(std::make_unique<WorkerThread>(this, i));
     }
 
+    base::Thread::current()->MarkThreadCategory("IO");
     uv_loop_.data = base::Thread::current();
     HLOG(INFO) << "Event loop starts";
     int ret = uv_run(&uv_loop_, UV_RUN_DEFAULT);
@@ -90,13 +91,17 @@ UV_CONNECT_CB_FOR_CLASS(FuncWorker, GatewayConnect) {
                               &FuncWorker::BufferAllocCallback,
                               &FuncWorker::RecvWatchdogDataCallback));
     manager_.SetSendGatewayDataCallback([this] (std::span<const char> data) {
-        mu_.AssertHeld();
-        gateway_send_buffer_.AppendData(data);
+        {
+            absl::MutexLock lk(&gateway_send_buffer_mu_);
+            gateway_send_buffer_.AppendData(data);
+        }
         SignalNewDataToSend();
     });
     manager_.SetSendWatchdogDataCallback([this] (std::span<const char> data) {
-        mu_.AssertHeld();
-        watchdog_send_buffer_.AppendData(data);
+        {
+            absl::MutexLock lk(&watchdog_send_buffer_mu_);
+            watchdog_send_buffer_.AppendData(data);
+        }
         SignalNewDataToSend();
     });
     manager_.Start();
@@ -141,14 +146,19 @@ UV_READ_CB_FOR_CLASS(FuncWorker, RecvWatchdogData) {
 }
 
 UV_ASYNC_CB_FOR_CLASS(FuncWorker, NewDataToSend) {
-    absl::MutexLock lk(&mu_);
-    if (gateway_send_buffer_.length() > 0) {
-        SendData(&gateway_ipc_handle_, gateway_send_buffer_.to_span());
-        gateway_send_buffer_.Reset();
+    {
+        absl::MutexLock lk(&gateway_send_buffer_mu_);
+        if (gateway_send_buffer_.length() > 0) {
+            SendData(&gateway_ipc_handle_, gateway_send_buffer_.to_span());
+            gateway_send_buffer_.Reset();
+        }
     }
-    if (watchdog_send_buffer_.length() > 0) {
-        SendData(&watchdog_output_pipe_handle_, watchdog_send_buffer_.to_span());
-        watchdog_send_buffer_.Reset();
+    {
+        absl::MutexLock lk(&watchdog_send_buffer_mu_);
+        if (watchdog_send_buffer_.length() > 0) {
+            SendData(&watchdog_output_pipe_handle_, watchdog_send_buffer_.to_span());
+            watchdog_send_buffer_.Reset();
+        }
     }
 }
 
@@ -203,6 +213,8 @@ FuncWorker::WorkerThread::WorkerThread(FuncWorker* func_worker, int id)
 }
 
 void FuncWorker::WorkerThread::ThreadMain() {
+    base::Thread::current()->MarkThreadCategory("WORKER");
+
     void* worker_handle;
     int ret = func_worker_->create_func_worker_fn_(
         this, &FuncWorker::InvokeFuncWrapper,
@@ -268,13 +280,7 @@ bool FuncWorker::WorkerThread::InvokeFunc(std::string_view func_name,
 }
 
 void FuncWorker::SignalNewDataToSend() {
-    if (uv::WithinEventLoop(&uv_loop_)) {
-        mu_.Unlock();
-        OnNewDataToSend();
-        mu_.Lock();
-    } else {
-        UV_DCHECK_OK(uv_async_send(&new_data_to_send_event_));
-    }
+    UV_DCHECK_OK(uv_async_send(&new_data_to_send_event_));
 }
 
 void FuncWorker::SendData(uv_pipe_t* uv_pipe, std::span<const char> data) {

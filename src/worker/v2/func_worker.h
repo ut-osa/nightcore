@@ -62,8 +62,10 @@ private:
     int idle_worker_count_ ABSL_GUARDED_BY(mu_);
 
     worker_lib::Manager manager_ ABSL_GUARDED_BY(mu_);
-    utils::AppendableBuffer gateway_send_buffer_ ABSL_GUARDED_BY(mu_);
-    utils::AppendableBuffer watchdog_send_buffer_ ABSL_GUARDED_BY(mu_);
+    absl::Mutex gateway_send_buffer_mu_;
+    utils::AppendableBuffer gateway_send_buffer_ ABSL_GUARDED_BY(gateway_send_buffer_mu_);
+    absl::Mutex watchdog_send_buffer_mu_;
+    utils::AppendableBuffer watchdog_send_buffer_ ABSL_GUARDED_BY(watchdog_send_buffer_mu_);
 
     struct IncomingFuncCall {
         uint32_t handle;
