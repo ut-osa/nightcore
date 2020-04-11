@@ -76,8 +76,8 @@ private:
 
     friend class WorkerThread;
 
-    void SignalNewDataToSend() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
-    void SendData(uv_pipe_t* uv_pipe, std::span<const char> data) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
+    void SignalNewDataToSend();
+    void SendData(uv_pipe_t* uv_pipe, std::span<const char> data);
     void OnIncomingFuncCall(uint32_t handle, std::span<const char> input);
     void OnOutcomingFuncCallComplete(uint32_t handle, bool success, std::span<const char> output,
                                      bool* reclaim_output_later);
