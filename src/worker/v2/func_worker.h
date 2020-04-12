@@ -6,6 +6,7 @@
 
 #include "base/common.h"
 #include "utils/dynamic_library.h"
+#include "utils/shared_memory.h"
 #include "utils/appendable_buffer.h"
 #include "worker/lib/manager.h"
 #include "faas/worker_v1_interface.h"
@@ -52,19 +53,22 @@ private:
     int idle_worker_count_ ABSL_GUARDED_BY(mu_);
 
     worker_lib::Manager manager_ ABSL_GUARDED_BY(mu_);
+    utils::SharedMemory* shared_memory_;
 
-    struct IncomingFuncCall {
-        uint32_t handle;
-        std::span<const char> input;
-    };
-    std::queue<IncomingFuncCall> pending_incoming_calls_ ABSL_GUARDED_BY(mu_);
-    absl::flat_hash_map<uint32_t, WorkerThread*> outcoming_func_calls_ ABSL_GUARDED_BY(mu_);
+    utils::AppendableBuffer gateway_send_buffer_ ABSL_GUARDED_BY(mu_);
+    utils::AppendableBuffer watchdog_send_buffer_ ABSL_GUARDED_BY(mu_);
+
+    std::queue<uint64_t> pending_incoming_calls_ ABSL_GUARDED_BY(mu_);
+    absl::flat_hash_map<uint64_t, WorkerThread*> outcoming_func_calls_ ABSL_GUARDED_BY(mu_);
+
+    absl::Mutex write_mu_;
+    utils::AppendableBuffer write_buffer_ ABSL_GUARDED_BY(write_mu_);
 
     friend class WorkerThread;
 
-    void OnIncomingFuncCall(uint32_t handle, std::span<const char> input);
-    void OnOutcomingFuncCallComplete(uint32_t handle, bool success, std::span<const char> output,
-                                     bool* reclaim_output_later);
+    void OnIncomingFuncCall(uint64_t full_call_id);
+    void OnOutcomingFuncCallComplete(uint64_t full_call_id, bool success);
+    void SendDataIfNecessary();
 
     // Assume caller_context is an instance of WorkerThread
     static void AppendOutputWrapper(void* caller_context, const char* data, size_t length);
