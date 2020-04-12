@@ -111,10 +111,23 @@ bool FuncConfig::Load(std::string_view json_path) {
                     return false;
                 }
                 for (const auto& method : grpc_methods) {
+                    int method_id = entry->grpc_methods.size();
+                    if (method_id > kMaxMethodId) {
+                        LOG(ERROR) << "More than " << kMaxMethodId << " methods for gRPC service "
+                                   << service_name;
+                        return false;
+                    }
                     std::string method_name = method.get<std::string>();
-                    LOG(INFO) << "Register method " << method_name << " for gRPC service "
-                              << service_name;
-                    entry->grpc_methods.insert(method_name);
+                    if (entry->grpc_method_ids.count(method_name) > 0) {
+                        LOG(ERROR) << "Duplicate method " << method_name << " for gRPC service "
+                                   << service_name;
+                        return false;
+                    } else {
+                        LOG(INFO) << "Register method " << method_name << " for gRPC service "
+                                  << service_name;
+                        entry->grpc_methods.push_back(method_name);
+                        entry->grpc_method_ids[method_name] = method_id;
+                    }
                 }
             } else {
                 LOG(INFO) << "Load configuration for function " << func_name

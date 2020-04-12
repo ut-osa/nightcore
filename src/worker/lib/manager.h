@@ -131,6 +131,9 @@ private:
     stat::StatisticsCollector<uint32_t> output_size_stat_;
     stat::Counter incoming_requests_counter_;
 
+    bool OnOutcomingFuncCall(uint16_t func_id, uint16_t method_id, std::span<const char> input,
+                             uint32_t* handle);
+
     void OnRecvGatewayMessage(const protocol::Message& message);
     void OnRecvWatchdogMessage(const protocol::Message& message);
     void OnOutcomingFuncCallComplete(protocol::FuncCall func_call, bool success,

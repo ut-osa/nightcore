@@ -48,38 +48,42 @@ func parseHandshakeResponse(data []byte) HandshakeResponse {
 
 type FuncCall struct {
 	funcId   uint16
+	methodId uint16
 	clientId uint16
 	callId   uint32
 }
 
 const FuncCallByteSize = 8
 
+const FuncIdBits = 10
+const MethodIdBits = 8
+const ClientIdBits = 14
+
+func fullFuncCallId(funcCall FuncCall) uint64 {
+	return uint64(funcCall.funcId) +
+		(uint64(funcCall.methodId) << FuncIdBits) +
+		(uint64(funcCall.clientId) << (FuncIdBits + MethodIdBits)) +
+		(uint64(funcCall.callId) << (FuncIdBits + MethodIdBits + ClientIdBits))
+}
+
 func serializeFuncCall(funcCall FuncCall) []byte {
 	b := make([]byte, FuncCallByteSize)
-	binary.LittleEndian.PutUint16(b[0:], funcCall.funcId)
-	binary.LittleEndian.PutUint16(b[2:], funcCall.clientId)
-	binary.LittleEndian.PutUint32(b[4:], funcCall.callId)
+	binary.LittleEndian.PutUint64(b, fullFuncCallId(funcCall))
 	return b
 }
 
 func serializeFuncCallIntoBuffer(funcCall FuncCall, b []byte) {
-	binary.LittleEndian.PutUint16(b[0:], funcCall.funcId)
-	binary.LittleEndian.PutUint16(b[2:], funcCall.clientId)
-	binary.LittleEndian.PutUint32(b[4:], funcCall.callId)
+	binary.LittleEndian.PutUint64(b, fullFuncCallId(funcCall))
 }
 
 func parseFuncCall(data []byte) FuncCall {
+	full := binary.LittleEndian.Uint64(data)
 	return FuncCall{
-		funcId:   binary.LittleEndian.Uint16(data[0:]),
-		clientId: binary.LittleEndian.Uint16(data[2:]),
-		callId:   binary.LittleEndian.Uint32(data[4:]),
+		funcId:   uint16(full & ((1 << FuncIdBits) - 1)),
+		methodId: uint16((full >> FuncIdBits) & ((1 << MethodIdBits) - 1)),
+		clientId: uint16((full >> (FuncIdBits + MethodIdBits)) & ((1 << ClientIdBits) - 1)),
+		callId:   uint32(full >> (FuncIdBits + MethodIdBits + ClientIdBits)),
 	}
-}
-
-func fullFuncCallId(funcCall FuncCall) uint64 {
-	return (uint64(funcCall.callId) << 32) +
-		(uint64(funcCall.clientId) << 16) +
-		uint64(funcCall.funcId)
 }
 
 // MessageType enum

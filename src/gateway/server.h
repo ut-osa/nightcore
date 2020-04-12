@@ -26,6 +26,8 @@ public:
     static constexpr size_t kHttpConnectionBufferSize = 4096;
     static constexpr size_t kMessageConnectionBufferSize = 256;
 
+    static constexpr int kMaxClientId = (1 << protocol::kClientIdBits) - 1;
+
     Server();
     ~Server();
 
@@ -160,7 +162,7 @@ private:
     void ReturnConnection(Connection* connection);
 
     void RegisterInternalRequestHandlers();
-    protocol::FuncCall NewFuncCall(uint16_t func_id);
+    protocol::FuncCall NewFuncCall(uint16_t func_id, uint16_t method_id = 0);
     void OnExternalFuncCall(uint16_t func_id,
                             std::shared_ptr<HttpAsyncRequestContext> http_context);
     void NewExternalFuncCall(std::unique_ptr<ExternalFuncCallContext> func_call_context);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "base/common.h"
+#include "common/protocol.h"
 
 namespace faas {
 
@@ -9,14 +10,16 @@ public:
     FuncConfig() {}
     ~FuncConfig() {}
 
-    static constexpr int kMaxFuncId = std::numeric_limits<uint16_t>::max();
+    static constexpr int kMaxFuncId = (1 << protocol::kFuncIdBits) - 1;
+    static constexpr int kMaxMethodId = (1 << protocol::kMethodIdBits) - 1;
 
     struct Entry {
         std::string func_name;
         int func_id;
         bool is_grpc_service;
         std::string grpc_service_name;
-        std::unordered_set<std::string> grpc_methods;
+        std::vector<std::string> grpc_methods;
+        std::unordered_map<std::string, int> grpc_method_ids;
     };
 
     bool Load(std::string_view json_path);

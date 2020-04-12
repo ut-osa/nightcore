@@ -23,6 +23,8 @@ constexpr int Server::kDefaultNumIpcWorkers;
 constexpr size_t Server::kHttpConnectionBufferSize;
 constexpr size_t Server::kMessageConnectionBufferSize;
 
+constexpr int Server::kMaxClientId;
+
 Server::Server()
     : state_(kCreated), port_(-1), grpc_port_(-1), listen_backlog_(kDefaultListenBackLog),
       num_http_workers_(kDefaultNumHttpWorkers), num_ipc_workers_(kDefaultNumIpcWorkers), num_io_workers_(-1),
@@ -302,6 +304,9 @@ void Server::OnNewHandshake(MessageConnection* connection,
                             const HandshakeMessage& message, HandshakeResponse* response) {
     HLOG(INFO) << "Receive new handshake message from message connection";
     uint16_t client_id = next_client_id_.fetch_add(1);
+    if (client_id > kMaxClientId) {
+        HLOG(FATAL) << "Reach max client_id " << kMaxClientId;
+    }
     response->status = gsl::narrow_cast<uint16_t>(Status::OK);
     response->client_id = client_id;
     {
@@ -347,16 +352,11 @@ public:
             memcpy(input_region_->base(), body.data(), body.size());
         }
         if (grpc_context_ != nullptr) {
-            std::string_view method_name = grpc_context_->method_name();
             std::span<const char> body = grpc_context_->request_body();
-            size_t region_size = method_name.length() + 1 + body.size();
             input_region_ = shared_memory->Create(
-                utils::SharedMemory::InputPath(call_.full_call_id), region_size);
+                utils::SharedMemory::InputPath(call_.full_call_id), body.size());
             char* buf = input_region_->base();
-            memcpy(buf, method_name.data(), method_name.length());
-            buf[method_name.length()] = '\0';
             if (body.size() > 0) {
-                buf += method_name.length() + 1;
                 memcpy(buf, body.data(), body.size());
             }
         }
@@ -492,19 +492,23 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
 void Server::OnNewGrpcCall(std::shared_ptr<GrpcCallContext> call_context) {
     const FuncConfig::Entry* func_entry = func_config_.find_by_func_name(
         absl::StrFormat("grpc:%s", call_context->service_name()));
+    std::string method_name(call_context->method_name());
     if (func_entry == nullptr
-          || func_entry->grpc_methods.count(std::string(call_context->method_name())) == 0) {
+          || func_entry->grpc_method_ids.count(method_name) == 0) {
         call_context->set_grpc_status(GrpcStatus::NOT_FOUND);
         call_context->Finish();
         return;
     }
     NewExternalFuncCall(std::unique_ptr<ExternalFuncCallContext>(
-        new ExternalFuncCallContext(NewFuncCall(func_entry->func_id), std::move(call_context))));
+        new ExternalFuncCallContext(NewFuncCall(func_entry->func_id,
+                                                func_entry->grpc_method_ids.at(method_name)),
+                                    std::move(call_context))));
 }
 
-FuncCall Server::NewFuncCall(uint16_t func_id) {
+FuncCall Server::NewFuncCall(uint16_t func_id, uint16_t method_id) {
     FuncCall call;
     call.func_id = func_id;
+    call.method_id = method_id;
     call.client_id = 0;
     call.call_id = next_call_id_.fetch_add(1);
     return call;

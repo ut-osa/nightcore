@@ -138,22 +138,12 @@ void Manager::OnRecvWatchdogData(std::span<const char> data) {
     }
 }
 
-bool Manager::OnOutcomingFuncCall(std::string_view func_name, std::span<const char> input,
-                                  uint32_t* handle) {
-    DCHECK(started_);
-    DCHECK(client_id_ != -1) << "Handshake not done";
-    if (input.size() == 0) {
-        LOG(ERROR) << "Input is empty";
-        return false;
-    }
-    const FuncConfig::Entry* func_entry = func_config_.find_by_func_name(func_name);
-    if (func_entry == nullptr) {
-        LOG(ERROR) << "Cannot find function with name " << func_name;
-        return false;
-    }
+bool Manager::OnOutcomingFuncCall(uint16_t func_id, uint16_t method_id,
+                                  std::span<const char> input, uint32_t* handle) {
     *handle = next_handle_value_++;
     FuncCall func_call;
-    func_call.func_id = gsl::narrow_cast<uint16_t>(func_entry->func_id);
+    func_call.func_id = func_id;
+    func_call.method_id = method_id;
     func_call.client_id = client_id_;
     func_call.call_id = *handle;
     auto context = std::make_unique<OutcomingFuncCallContext>();
@@ -164,7 +154,9 @@ bool Manager::OnOutcomingFuncCall(std::string_view func_name, std::span<const ch
 #ifdef __FAAS_ENABLE_PROFILING
     context->start_timestamp = GetMonotonicMicroTimestamp();
 #endif
-    memcpy(context->input_region->base(), input.data(), input.size());
+    if (input.size() > 0) {
+        memcpy(context->input_region->base(), input.data(), input.size());
+    }
     outcoming_func_calls_[*handle] = std::move(context);
     Message message = {
 #ifdef __FAAS_ENABLE_PROFILING
@@ -179,6 +171,23 @@ bool Manager::OnOutcomingFuncCall(std::string_view func_name, std::span<const ch
     return true;
 }
 
+bool Manager::OnOutcomingFuncCall(std::string_view func_name, std::span<const char> input,
+                                  uint32_t* handle) {
+    DCHECK(started_);
+    DCHECK(client_id_ != -1) << "Handshake not done";
+    if (input.size() == 0) {
+        LOG(ERROR) << "Input is empty";
+        return false;
+    }
+    const FuncConfig::Entry* func_entry = func_config_.find_by_func_name(func_name);
+    if (func_entry == nullptr) {
+        LOG(ERROR) << "Cannot find function with name " << func_name;
+        return false;
+    }
+    return OnOutcomingFuncCall(
+        gsl::narrow_cast<uint16_t>(func_entry->func_id), 0, input, handle);
+}
+
 bool Manager::OnOutcomingGrpcCall(std::string_view service, std::string_view method,
                                   std::span<const char> request, uint32_t* handle) {
     DCHECK(started_);
@@ -189,42 +198,14 @@ bool Manager::OnOutcomingGrpcCall(std::string_view service, std::string_view met
         LOG(ERROR) << "Cannot find gRPC service " << service;
         return false;
     }
-    if (func_entry->grpc_methods.count(std::string(method)) == 0) {
+    if (func_entry->grpc_method_ids.count(std::string(method)) == 0) {
         LOG(ERROR) << "gRPC service " << service << " cannot process method " << method;
         return false;
     }
-    *handle = next_handle_value_++;
-    FuncCall func_call;
-    func_call.func_id = gsl::narrow_cast<uint16_t>(func_entry->func_id);
-    func_call.client_id = client_id_;
-    func_call.call_id = *handle;
-    auto context = std::make_unique<OutcomingFuncCallContext>();
-    context->func_call = func_call;
-    context->input_region = shared_memory_.Create(
-        utils::SharedMemory::InputPath(func_call.full_call_id),
-        method.size() + 1 + request.size());
-    context->output_region = nullptr;
-#ifdef __FAAS_ENABLE_PROFILING
-    context->start_timestamp = GetMonotonicMicroTimestamp();
-#endif
-    char* buffer = context->input_region->base();
-    memcpy(buffer, method.data(), method.size());
-    buffer[method.size()] = '\0';
-    if (request.size() > 0) {
-        memcpy(buffer + method.size() + 1, request.data(), request.size());
-    }
-    outcoming_func_calls_[*handle] = std::move(context);
-    Message message = {
-#ifdef __FAAS_ENABLE_PROFILING
-        .send_timestamp = GetMonotonicMicroTimestamp(),
-        .processing_time = 0,
-#endif
-        .message_type = gsl::narrow_cast<uint16_t>(MessageType::INVOKE_FUNC),
-        .func_call = func_call
-    };
-    send_gateway_data_callback_(std::span<const char>(
-        reinterpret_cast<const char*>(&message), sizeof(Message)));
-    return true;
+    return OnOutcomingFuncCall(
+        gsl::narrow_cast<uint16_t>(func_entry->func_id),
+        gsl::narrow_cast<uint16_t>(func_entry->grpc_method_ids.at(std::string(method))),
+        request, handle);
 }
 
 void Manager::OnIncomingFuncCallComplete(uint32_t handle, bool success, std::span<const char> output) {
@@ -360,24 +341,15 @@ void Manager::OnIncomingFuncCall(FuncCall func_call) {
     utils::SharedMemory::Region* input_region = context->input_region;
     incoming_func_calls_[handle] = std::move(context);
     if (my_func_config_->is_grpc_service) {
-        std::span<const char> input = input_region->to_span();
-        size_t pos = 0;
-        while (pos < input.size() && input[pos] != '\0') {
-            pos++;
-        }
-        if (pos == input.size()) {
-            LOG(ERROR) << "Invalid input bytes";
-            OnIncomingFuncCallComplete(handle, false, std::span<const char>());
-            return;
-        }
-        std::string method(input.data(), pos);
-        if (my_func_config_->grpc_methods.count(method) == 0) {
+        uint16_t method_id = func_call.method_id;
+        if (method_id >= my_func_config_->grpc_methods.size()) {
             LOG(ERROR) << "gRPC service " << my_func_config_->grpc_service_name
-                       << " cannot process method " << method;
+                       << " cannot process method_id " << method_id;
             OnIncomingFuncCallComplete(handle, false, std::span<const char>());
             return;
         }
-        incoming_grpc_call_callback_(handle, method, input.subspan(pos + 1));
+        incoming_grpc_call_callback_(handle, my_func_config_->grpc_methods[method_id],
+                                     input_region->to_span());
     } else {
         incoming_func_call_callback_(handle, input_region->to_span());
     }

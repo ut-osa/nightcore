@@ -27,11 +27,16 @@ struct HandshakeResponse {
     uint16_t client_id;
 } __attribute__((packed));
 
+constexpr int kFuncIdBits = 10;
+constexpr int kMethodIdBits = 8;
+constexpr int kClientIdBits = 14;
+
 union FuncCall {
     struct {
-        uint16_t func_id;
-        uint16_t client_id;
-        uint32_t call_id;
+        uint16_t func_id   : 10;
+        uint16_t method_id : 8;
+        uint16_t client_id : 14;
+        uint32_t call_id   : 32;
     } __attribute__((packed));
     uint64_t full_call_id;
 };

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"log"
@@ -82,11 +81,39 @@ func (w *Worker) InvokeFunc(ctx context.Context, funcName string, input []byte) 
 	if strings.HasPrefix(funcName, "grpc:") {
 		return nil, fmt.Errorf("Function handler should use GrpcCall to invoke gRPC methods")
 	}
-	return w.invokeFunc(ctx, funcName, input)
+	funcConfigEntry := w.funcConfig.findByFuncName(funcName)
+	if funcConfigEntry == nil {
+		return nil, fmt.Errorf("Cannot find function with name %s", funcName)
+	}
+	if len(input) == 0 {
+		return nil, fmt.Errorf("Empty function input")
+	}
+	funcCall := FuncCall{
+		funcId:   funcConfigEntry.FuncId,
+		clientId: w.gateway.clientId,
+		methodId: 0,
+		callId:   atomic.AddUint32(&w.nextCallId, 1),
+	}
+	return w.invokeFunc(ctx, funcCall, input)
 }
 
 func (w *Worker) GrpcCall(ctx context.Context, service string, method string, request []byte) ([]byte, error) {
-	return w.grpcCall(ctx, service, method, request)
+	funcName := "grpc:" + service
+	funcConfigEntry := w.funcConfig.findByFuncName(funcName)
+	if funcConfigEntry == nil {
+		return nil, fmt.Errorf("Cannot find gRPC service %s", service)
+	}
+	methodId := funcConfigEntry.findGrpcMethod(method)
+	if methodId == -1 {
+		return nil, fmt.Errorf("Cannot find method %s for gRPC service %s", method, service)
+	}
+	funcCall := FuncCall{
+		funcId:   funcConfigEntry.FuncId,
+		clientId: w.gateway.clientId,
+		methodId: uint16(methodId),
+		callId:   atomic.AddUint32(&w.nextCallId, 1),
+	}
+	return w.invokeFunc(ctx, funcCall, request)
 }
 
 func (w *Worker) serve() {
@@ -110,7 +137,7 @@ func (w *Worker) runFuncHandler(funcCall FuncCall) bool {
 		log.Fatal("[FATAL] Failed to copy input from shared memory")
 	}
 	w.shm.close(inputShm)
-	output, err := w.funcLibrary.funcCall(context.Background(), input)
+	output, err := w.funcLibrary.funcCall(context.Background(), funcCall.methodId, input)
 	if err != nil {
 		return false
 	}
@@ -126,19 +153,7 @@ func (w *Worker) runFuncHandler(funcCall FuncCall) bool {
 	return true
 }
 
-func (w *Worker) invokeFunc(ctx context.Context, funcName string, input []byte) ([]byte, error) {
-	funcConfigEntry := w.funcConfig.findByFuncName(funcName)
-	if funcConfigEntry == nil {
-		return nil, fmt.Errorf("Cannot find function with name %s", funcName)
-	}
-	if len(input) == 0 {
-		return nil, fmt.Errorf("Empty function input")
-	}
-	funcCall := FuncCall{
-		funcId:   funcConfigEntry.FuncId,
-		clientId: w.gateway.clientId,
-		callId:   atomic.AddUint32(&w.nextCallId, 1),
-	}
+func (w *Worker) invokeFunc(ctx context.Context, funcCall FuncCall, input []byte) ([]byte, error) {
 	inputShm, err := w.shm.create(fmt.Sprintf("%d.i", fullFuncCallId(funcCall)), len(input))
 	if err != nil {
 		log.Print("[ERROR] Failed to open shared memory: ", err)
@@ -182,22 +197,6 @@ func (w *Worker) invokeFunc(ctx context.Context, funcName string, input []byte) 
 	w.shm.close(outputShm)
 	w.shm.remove(fmt.Sprintf("%d.o", fullFuncCallId(funcCall)))
 	return output, nil
-}
-
-func (w *Worker) grpcCall(ctx context.Context, service string, method string, request []byte) ([]byte, error) {
-	funcName := "grpc:" + service
-	funcConfigEntry := w.funcConfig.findByFuncName(funcName)
-	if funcConfigEntry == nil {
-		return nil, fmt.Errorf("Cannot find gRPC service %s", service)
-	}
-	if !funcConfigEntry.hasGrpcMethod(method) {
-		return nil, fmt.Errorf("Cannot find method %s for gRPC service %s", method, service)
-	}
-	var input bytes.Buffer
-	input.WriteString(method)
-	input.WriteByte('\x00')
-	input.Write(request)
-	return w.invokeFunc(ctx, funcName, input.Bytes())
 }
 
 func (w *Worker) onWatchdogMessage(message Message) {

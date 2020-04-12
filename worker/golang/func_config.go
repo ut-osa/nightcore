@@ -62,11 +62,11 @@ func (fc *FuncConfig) findByFuncId(funcId uint16) *FuncConfigEntry {
 	return fc.entriesByFuncId[funcId]
 }
 
-func (fcEntry *FuncConfigEntry) hasGrpcMethod(method string) bool {
-	for _, methodName := range fcEntry.GrpcMethods {
+func (fcEntry *FuncConfigEntry) findGrpcMethod(method string) int {
+	for idx, methodName := range fcEntry.GrpcMethods {
 		if methodName == method {
-			return true
+			return idx
 		}
 	}
-	return false
+	return -1
 }
