@@ -85,7 +85,10 @@ void Manager::Start(bool raw_mode) {
         DCHECK(incoming_func_call_callback_set_);
     }
     DCHECK(outcoming_func_call_complete_callback_set_);
-    raw_mode_ = raw_mode;
+    if (raw_mode) {
+        LOG(INFO) << "Raw mode enabled";
+        raw_mode_ = true;
+    }
     started_ = true;
     HandshakeMessage message = {
         .role = gsl::narrow_cast<uint16_t>(Role::FUNC_WORKER),
@@ -407,8 +410,8 @@ void Manager::OnIncomingFuncCall(FuncCall func_call) {
     } else {
         context->input_region = shared_memory_.OpenReadOnly(
             utils::SharedMemory::InputPath(func_call.full_call_id));
+        input_size_stat_.AddSample(context->input_region->size());
     }
-    input_size_stat_.AddSample(context->input_region->size());
     context->start_timestamp = GetMonotonicMicroTimestamp();
     uint32_t handle = next_handle_value_++;
     handle_to_full_call_id_[handle] = func_call.full_call_id;

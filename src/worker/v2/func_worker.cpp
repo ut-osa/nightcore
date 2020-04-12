@@ -188,7 +188,6 @@ void FuncWorker::WorkerThread::ThreadMain() {
             DCHECK(!func_worker_->pending_incoming_calls_.empty());
             full_call_id = func_worker_->pending_incoming_calls_.front();
             func_worker_->pending_incoming_calls_.pop();
-            func_worker_->mu_.Unlock();
         }
 
         utils::SharedMemory::Region* input_region = shared_memory_->OpenReadOnly(
@@ -258,6 +257,7 @@ bool FuncWorker::WorkerThread::InvokeFunc(std::string_view func_name,
             utils::SharedMemory::OutputPath(full_call_id));
         *output = outcoming_call_output_->to_span();
     }
+    input_region->Close(true);
     return outcoming_call_success_;
 }
 
