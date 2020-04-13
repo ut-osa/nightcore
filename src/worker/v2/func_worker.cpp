@@ -50,15 +50,17 @@ void FuncWorker::Serve() {
         watchdog_output_pipe_fd_ = manager_.watchdog_output_pipe_fd();
         manager_.SetSendGatewayDataCallback([this] (std::span<const char> data) {
             mu_.AssertHeld();
-            gateway_send_buffer_.AppendData(data);
+            io_utils::SendData(gateway_ipc_socket_, data);
+            // gateway_send_buffer_.AppendData(data);
         });
         manager_.SetSendWatchdogDataCallback([this] (std::span<const char> data) {
             mu_.AssertHeld();
-            watchdog_send_buffer_.AppendData(data);
+            io_utils::SendData(watchdog_output_pipe_fd_, data);
+            // watchdog_send_buffer_.AppendData(data);
         });
         manager_.Start(/* raw_mode= */ true);
     }
-    SendDataIfNecessary();
+    // SendDataIfNecessary();
 
     CHECK_GT(num_worker_threads_, 0);
     HLOG(INFO) << "Create " << num_worker_threads_
@@ -142,7 +144,7 @@ private:
     base::Thread thread_;
     utils::AppendableBuffer output_buffer_;
 
-    absl::Notification outcoming_call_finished_;
+    absl::CondVar outcoming_call_cond_;
     uint64_t outcoming_call_id_;
     bool outcoming_call_success_;
     utils::SharedMemory::Region* outcoming_call_output_;
@@ -176,26 +178,25 @@ void FuncWorker::WorkerThread::ThreadMain() {
         HLOG(FATAL) << "Failed to create function worker";
     }
 
+    func_worker_->mu_.Lock();
     while (true) {
         uint64_t full_call_id;
-        {
-            absl::MutexLock lk(&func_worker_->mu_);
-            while (func_worker_->pending_incoming_calls_.empty()) {
-                func_worker_->idle_worker_count_++;
-                func_worker_->new_incoming_call_cond_.Wait(&func_worker_->mu_);
-                func_worker_->idle_worker_count_--;
-            }
-            DCHECK(!func_worker_->pending_incoming_calls_.empty());
-            full_call_id = func_worker_->pending_incoming_calls_.front();
-            func_worker_->pending_incoming_calls_.pop();
+        while (func_worker_->pending_incoming_calls_.empty()) {
+            func_worker_->idle_worker_count_++;
+            func_worker_->new_incoming_call_cond_.Wait(&func_worker_->mu_);
+            func_worker_->idle_worker_count_--;
         }
+        DCHECK(!func_worker_->pending_incoming_calls_.empty());
+        full_call_id = func_worker_->pending_incoming_calls_.front();
+        func_worker_->pending_incoming_calls_.pop();
+        func_worker_->mu_.Unlock();
 
         utils::SharedMemory::Region* input_region = shared_memory_->OpenReadOnly(
-            utils::SharedMemory::InputPath(full_call_id));
-        int ret = func_worker_->func_call_fn_(
-            worker_handle, input_region->base(), input_region->size());
+                utils::SharedMemory::InputPath(full_call_id));
+        bool success = func_worker_->func_call_fn_(
+            worker_handle, input_region->base(), input_region->size()) == 0;
         input_region->Close();
-        if (ret == 0) {
+        if (success) {
             utils::SharedMemory::Region* output_region = shared_memory_->Create(
                 utils::SharedMemory::OutputPath(full_call_id), output_buffer_.length());
             if (output_buffer_.length() > 0) {
@@ -209,11 +210,8 @@ void FuncWorker::WorkerThread::ThreadMain() {
             outcoming_call_output_ = nullptr;
         }
 
-        {
-            absl::MutexLock lk(&func_worker_->mu_);
-            func_worker_->manager_.OnIncomingFuncCallCompleteRaw(full_call_id, ret == 0);
-        }
-        func_worker_->SendDataIfNecessary();
+        func_worker_->mu_.Lock();
+        func_worker_->manager_.OnIncomingFuncCallCompleteRaw(full_call_id, success);
     }
 }
 
@@ -231,33 +229,29 @@ bool FuncWorker::WorkerThread::InvokeFunc(std::string_view func_name,
         outcoming_call_output_ = nullptr;
     }
     uint64_t full_call_id;
+    utils::SharedMemory::Region* input_region = nullptr;
     {
         absl::MutexLock lk(&func_worker_->mu_);
         if (!func_worker_->manager_.OnOutcomingFuncCallRaw(func_name, &full_call_id)) {
             return false;
         }
-    }
-    outcoming_call_id_ = full_call_id;
-    outcoming_call_success_ = false;
-    utils::SharedMemory::Region* input_region = shared_memory_->Create(
-        utils::SharedMemory::InputPath(full_call_id), input.size());
-    if (input.size() > 0) {
-        memcpy(input_region->base(), input.data(), input.size());
-    }
-    {
-        absl::MutexLock lk(&func_worker_->mu_);
+        outcoming_call_id_ = full_call_id;
+        outcoming_call_success_ = false;
+        input_region = shared_memory_->Create(
+            utils::SharedMemory::InputPath(full_call_id), input.size());
+        if (input.size() > 0) {
+            memcpy(input_region->base(), input.data(), input.size());
+        }
         func_worker_->outcoming_func_calls_[full_call_id] = this;
         func_worker_->manager_.OnSendOutcomingFuncCall(full_call_id);
+        outcoming_call_cond_.Wait(&func_worker_->mu_);
     }
-    new(&outcoming_call_finished_) absl::Notification;
-    func_worker_->SendDataIfNecessary();
-    outcoming_call_finished_.WaitForNotification();
+    input_region->Close(true);
     if (outcoming_call_success_) {
         outcoming_call_output_ = shared_memory_->OpenReadOnly(
             utils::SharedMemory::OutputPath(full_call_id));
         *output = outcoming_call_output_->to_span();
     }
-    input_region->Close(true);
     return outcoming_call_success_;
 }
 
@@ -276,7 +270,7 @@ void FuncWorker::OnOutcomingFuncCallComplete(uint64_t full_call_id, bool success
     outcoming_func_calls_.erase(full_call_id);
     DCHECK_EQ(worker_thread->outcoming_call_id_, full_call_id);
     worker_thread->outcoming_call_success_ = success;
-    worker_thread->outcoming_call_finished_.Notify();
+    worker_thread->outcoming_call_cond_.Signal();
 }
 
 void FuncWorker::SendDataIfNecessary() {
