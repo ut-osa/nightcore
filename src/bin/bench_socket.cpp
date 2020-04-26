@@ -116,7 +116,7 @@ int main(int argc, char* argv[]) {
     CHECK_GE(payload_bytesize, 8) << "payload should be at least 8 bytes";
 
     std::string socket_type(absl::GetFlag(FLAGS_socket_type));
-    int tcp_server_fd;
+    int tcp_server_fd = -1;
     int unix_fds[2];
     int pipe1_fds[2];
     int pipe2_fds[2];
