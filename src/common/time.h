@@ -25,4 +25,23 @@ inline int64_t GetRealtimeMicroTimestamp() {
     return TimeSpecToMicro(&tp);
 }
 
+inline int64_t TimeSpecToNano(struct timespec* tp) {
+    int64_t ret = 0;
+    ret += int64_t{tp->tv_sec} * 1000000000;
+    ret += int64_t{tp->tv_nsec};
+    return ret;
+}
+
+inline int64_t GetMonotonicNanoTimestamp() {
+    struct timespec tp;
+    PCHECK(clock_gettime(CLOCK_MONOTONIC, &tp) == 0) << "clock_gettime failed";
+    return TimeSpecToNano(&tp);
+}
+
+inline int64_t GetRealtimeNanoTimestamp() {
+    struct timespec tp;
+    PCHECK(clock_gettime(CLOCK_REALTIME, &tp) == 0) << "clock_gettime failed";
+    return TimeSpecToNano(&tp);
+}
+
 }  // namespace faas

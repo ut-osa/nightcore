@@ -145,6 +145,11 @@ public:
     
     ~Counter() {}
 
+    void set_report_interval_in_ms(uint32_t value) {
+        absl::MutexLock lk(&mu_);
+        report_timer_.set_report_interval_in_ms(value);
+    }
+
     void Tick(int delta = 1) {
         DCHECK_GT(delta, 0);
         absl::MutexLock lk(&mu_);
