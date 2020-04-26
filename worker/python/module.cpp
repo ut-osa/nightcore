@@ -91,8 +91,7 @@ void InitModule(py::module& m) {
     clz.def("set_outcoming_func_call_complete_callback", [] (worker_lib::Manager* self,
                                                              py::function callback) {
         self->SetOutcomingFuncCallCompleteCallback([callback] (uint32_t handle, bool success,
-                                                               std::span<const char> output,
-                                                               bool* reclaim_output_later) {
+                                                               std::span<const char> output) {
             callback(py::int_(handle), py::bool_(success), span_to_py_bytes(output));
         });
     });

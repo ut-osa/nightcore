@@ -51,16 +51,13 @@ void FuncWorker::Serve() {
         manager_.SetSendGatewayDataCallback([this] (std::span<const char> data) {
             mu_.AssertHeld();
             io_utils::SendData(gateway_ipc_socket_, data);
-            // gateway_send_buffer_.AppendData(data);
         });
         manager_.SetSendWatchdogDataCallback([this] (std::span<const char> data) {
             mu_.AssertHeld();
             io_utils::SendData(watchdog_output_pipe_fd_, data);
-            // watchdog_send_buffer_.AppendData(data);
         });
         manager_.Start(/* raw_mode= */ true);
     }
-    // SendDataIfNecessary();
 
     CHECK_GT(num_worker_threads_, 0);
     HLOG(INFO) << "Create " << num_worker_threads_
@@ -271,32 +268,6 @@ void FuncWorker::OnOutcomingFuncCallComplete(uint64_t full_call_id, bool success
     DCHECK_EQ(worker_thread->outcoming_call_id_, full_call_id);
     worker_thread->outcoming_call_success_ = success;
     worker_thread->outcoming_call_cond_.Signal();
-}
-
-void FuncWorker::SendDataIfNecessary() {
-    mu_.AssertNotHeld();
-    absl::MutexLock lk(&write_mu_);
-    write_buffer_.Reset();
-    {
-        absl::MutexLock lk(&mu_);
-        if (gateway_send_buffer_.length() > 0) {
-            write_buffer_.Swap(gateway_send_buffer_);
-        }
-    }
-    if (write_buffer_.length() > 0) {
-        io_utils::SendData(gateway_ipc_socket_, write_buffer_.to_span());
-        write_buffer_.Reset();
-    }
-    {
-        absl::MutexLock lk(&mu_);
-        if (watchdog_send_buffer_.length() > 0) {
-            write_buffer_.Swap(watchdog_send_buffer_);
-        }
-    }
-    if (write_buffer_.length() > 0) {
-        io_utils::SendData(watchdog_output_pipe_fd_, write_buffer_.to_span());
-        write_buffer_.Reset();
-    }
 }
 
 void FuncWorker::AppendOutputWrapper(void* caller_context, const char* data, size_t length) {

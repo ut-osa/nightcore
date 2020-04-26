@@ -61,14 +61,10 @@ private:
     std::queue<uint64_t> pending_incoming_calls_ ABSL_GUARDED_BY(mu_);
     absl::flat_hash_map<uint64_t, WorkerThread*> outcoming_func_calls_ ABSL_GUARDED_BY(mu_);
 
-    absl::Mutex write_mu_;
-    utils::AppendableBuffer write_buffer_ ABSL_GUARDED_BY(write_mu_);
-
     friend class WorkerThread;
 
     void OnIncomingFuncCall(uint64_t full_call_id);
     void OnOutcomingFuncCallComplete(uint64_t full_call_id, bool success);
-    void SendDataIfNecessary();
 
     // Assume caller_context is an instance of WorkerThread
     static void AppendOutputWrapper(void* caller_context, const char* data, size_t length);
