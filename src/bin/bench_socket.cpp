@@ -15,7 +15,7 @@
 
 #include <absl/flags/flag.h>
 
-ABSL_FLAG(std::string, socket_type, "unix", "tcp, unix, or pipe");
+ABSL_FLAG(std::string, socket_type, "unix", "tcp, tcp6, unix, or pipe");
 ABSL_FLAG(size_t, payload_bytesize, 16, "Byte size of each payload");
 ABSL_FLAG(int, tcp_port, 32767, "Port for TCP socket type");
 ABSL_FLAG(int, server_cpu, -1, "Bind server process to CPU");
@@ -127,6 +127,8 @@ int main(int argc, char* argv[]) {
         PCHECK(pipe(pipe2_fds) == 0);
     } else if (socket_type == "tcp") {
         tcp_server_fd = faas::utils::TcpSocketBindAndListen("127.0.0.1", absl::GetFlag(FLAGS_tcp_port));
+    } else if (socket_type == "tcp6") {
+        tcp_server_fd = faas::utils::Tcp6SocketBindAndListen("::1", absl::GetFlag(FLAGS_tcp_port));
     } else {
         LOG(FATAL) << "Unsupported socket type: " << socket_type;
     }
@@ -142,6 +144,8 @@ int main(int argc, char* argv[]) {
             outfd = pipe2_fds[1];
         } else if (socket_type == "tcp") {
             infd = outfd = faas::utils::TcpSocketConnect("127.0.0.1", absl::GetFlag(FLAGS_tcp_port));
+        } else if (socket_type == "tcp6") {
+            infd = outfd = faas::utils::Tcp6SocketConnect("::1", absl::GetFlag(FLAGS_tcp_port));
         }
         Client(infd, outfd, payload_bytesize, absl::GetFlag(FLAGS_stat_duration),
                absl::GetFlag(FLAGS_client_cpu));
@@ -158,6 +162,12 @@ int main(int argc, char* argv[]) {
         outfd = pipe1_fds[1];
     } else if (socket_type == "tcp") {
         struct sockaddr_in addr;
+        socklen_t addr_len = sizeof(addr);
+        int fd = accept(tcp_server_fd, (struct sockaddr*)&addr, &addr_len);
+        PCHECK(fd != -1);
+        infd = outfd = fd;
+    } else if (socket_type == "tcp6") {
+        struct sockaddr_in6 addr;
         socklen_t addr_len = sizeof(addr);
         int fd = accept(tcp_server_fd, (struct sockaddr*)&addr, &addr_len);
         PCHECK(fd != -1);

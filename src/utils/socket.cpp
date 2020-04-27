@@ -22,6 +22,11 @@ void FillAddressPort(struct sockaddr_in* addr, std::string_view ip, int port) {
     CHECK(uv_ip4_addr(std::string(ip).c_str(), port, addr) == 0);
 }
 
+void FillAddressPort(struct sockaddr_in6* addr, std::string_view ip, int port) {
+    addr->sin6_family = AF_INET6; 
+    CHECK(uv_ip6_addr(std::string(ip).c_str(), port, addr) == 0);
+}
+
 }
 
 int UnixDomainSocketConnect(std::string_view path) {
@@ -53,6 +58,31 @@ int TcpSocketConnect(std::string_view ip, int port) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     PCHECK(fd != -1);
     struct sockaddr_in addr;
+    FillAddressPort(&addr, ip, port);
+    if (connect(fd, (struct sockaddr*)&addr, sizeof(addr)) != 0) {
+        PLOG(FATAL) << "Failed to connect to " << ip << ":" << port;
+    }
+    return fd;
+}
+
+int Tcp6SocketBindAndListen(std::string_view ip, int port, int backlog) {
+    int fd = socket(AF_INET6, SOCK_STREAM, 0);
+    PCHECK(fd != -1);
+    struct sockaddr_in6 addr;
+    FillAddressPort(&addr, ip, port);
+    if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) != 0) {
+        PLOG(FATAL) << "Failed to bind to " << ip << ":" << port;
+    }
+    if (listen(fd, backlog) != 0) {
+        PLOG(FATAL) << "Failed to listen";
+    }
+    return fd;
+}
+
+int Tcp6SocketConnect(std::string_view ip, int port) {
+    int fd = socket(AF_INET6, SOCK_STREAM, 0);
+    PCHECK(fd != -1);
+    struct sockaddr_in6 addr;
     FillAddressPort(&addr, ip, port);
     if (connect(fd, (struct sockaddr*)&addr, sizeof(addr)) != 0) {
         PLOG(FATAL) << "Failed to connect to " << ip << ":" << port;
