@@ -1,9 +1,9 @@
 #include "utils/socket.h"
 
+#include <arpa/inet.h>
 #include <sys/socket.h>
 #include <sys/un.h>
-#include <netinet/in.h> 
-#include <uv.h>
+#include <netinet/in.h>
 
 namespace faas {
 namespace utils {
@@ -19,12 +19,16 @@ void FillAddressPath(struct sockaddr_un* addr, std::string_view path) {
 
 void FillAddressPort(struct sockaddr_in* addr, std::string_view ip, int port) {
     addr->sin_family = AF_INET; 
-    CHECK(uv_ip4_addr(std::string(ip).c_str(), port, addr) == 0);
+    addr->sin_port = port;
+    CHECK(inet_aton(std::string(ip).c_str(), &addr->sin_addr) == 1);
 }
 
 void FillAddressPort(struct sockaddr_in6* addr, std::string_view ip, int port) {
     addr->sin6_family = AF_INET6; 
-    CHECK(uv_ip6_addr(std::string(ip).c_str(), port, addr) == 0);
+    addr->sin6_port = port;
+    addr->sin6_flowinfo = 0;
+    CHECK(inet_pton(AF_INET6, std::string(ip).c_str(), &addr->sin6_addr) == 1);
+    addr->sin6_scope_id = 0;
 }
 
 }
