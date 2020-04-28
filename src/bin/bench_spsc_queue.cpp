@@ -1,26 +1,23 @@
 #include "base/init.h"
+#include "base/asm.h"
 #include "base/common.h"
 #include "common/time.h"
 #include "common/stat.h"
-#include "utils/io.h"
-#include "utils/socket.h"
 #include "utils/perf_event.h"
 #include "utils/env_variables.h"
+#include "ipc/spsc_queue.h"
 
 #include <sched.h>
-#include <sys/socket.h>
-#include <sys/un.h>
 #include <sys/types.h>
 #include <sys/wait.h>
-#include <netinet/in.h> 
+#include <sys/eventfd.h>
 
 #include <absl/flags/flag.h>
 
-ABSL_FLAG(std::string, socket_type, "unix", "tcp, tcp6, unix, or pipe");
-ABSL_FLAG(size_t, payload_bytesize, 16, "Byte size of each payload");
-ABSL_FLAG(int, tcp_port, 32767, "Port for TCP socket type");
 ABSL_FLAG(int, server_cpu, -1, "Bind server process to this CPU");
 ABSL_FLAG(int, client_cpu, -1, "Bind client process to this CPU");
+ABSL_FLAG(size_t, server_queue_sleep_every, 0,
+          "Server queue will sleep based on this interval");
 ABSL_FLAG(absl::Duration, duration, absl::Seconds(30), "Duration to run");
 ABSL_FLAG(absl::Duration, stat_duration, absl::Seconds(10),
           "Duration for reporting statistics");
@@ -61,8 +58,14 @@ void ReadPerfEventValues(std::string_view log_header,
               << (static_cast<double>(values[1]) / duration_in_ns) * 1000 << " per us";
 }
 
-void Server(int infd, int outfd, size_t payload_bytesize,
-            absl::Duration duration, absl::Duration stat_duration, int cpu) {
+static constexpr size_t kQueueSize = 1024;
+static constexpr uint64_t kEventServerQueueCreated = 1;
+static constexpr uint64_t kEventClientQueueCreated = 2;
+static constexpr uint64_t kEventServerReady = 4;
+static constexpr uint64_t kEventWakeupServerQueue = 5;
+
+void Server(int infd, int outfd, absl::Duration duration, absl::Duration stat_duration,
+            int cpu, size_t sleep_every) {
     faas::stat::StatisticsCollector<int32_t> msg_delay_stat(
         faas::stat::StatisticsCollector<int32_t>::StandardReportCallback("client_msg_delay"));
     faas::stat::Counter msg_counter(
@@ -75,41 +78,68 @@ void Server(int infd, int outfd, size_t payload_bytesize,
         BindToCpu(cpu);
     }
     auto perf_event_group = SetupPerfEvents(cpu);
+
+    auto server_queue = faas::ipc::SPSCQueue<int64_t>::Create("server", kQueueSize);
+    PCHECK(eventfd_write(outfd, kEventServerQueueCreated) == 0) << "eventfd_write failed";
+    uint64_t event_value;
+    PCHECK(eventfd_read(infd, &event_value) == 0) << "eventfd_read failed";
+    CHECK_EQ(event_value, kEventClientQueueCreated);
+    auto client_queue = faas::ipc::SPSCQueue<int64_t>::Open("client");
+    PCHECK(eventfd_write(outfd, kEventServerReady) == 0) << "eventfd_write failed";
+
     perf_event_group->ResetAndEnable();
     int64_t start_timestamp = faas::GetMonotonicNanoTimestamp();
     int64_t stop_timestamp = start_timestamp + absl::ToInt64Nanoseconds(duration);
-    char* payload_buffer = new char[payload_bytesize];
+    size_t recv_message_count = 0;
+    bool slept = false;
     while (true) {
         int64_t current_timestamp = faas::GetMonotonicNanoTimestamp();
+        int64_t send_value = current_timestamp;
         if (current_timestamp >= stop_timestamp) {
-            current_timestamp = -1;
+            send_value = -1;
         }
-        memcpy(payload_buffer, &current_timestamp, sizeof(int64_t));
-        CHECK(faas::io_utils::SendData(outfd, payload_buffer, payload_bytesize));
-        if (current_timestamp == -1) {
+        do {
+            if (client_queue->Push(send_value)) {
+                break;
+            }
+            faas::asm_volatile_pause();
+        } while (true);
+        if (current_timestamp >= stop_timestamp) {
             break;
         }
-        bool eof = false;
-        CHECK(faas::io_utils::RecvData(infd, payload_buffer, payload_bytesize, &eof));
+        if (slept) {
+            uint64_t event_value;
+            PCHECK(eventfd_read(infd, &event_value) == 0) << "eventfd_read failed";
+            CHECK_EQ(event_value, kEventWakeupServerQueue);
+            slept = false;
+        }
+        int64_t recv_value;
+        do {
+            if (server_queue->Pop(&recv_value)) {
+                break;
+            }
+            faas::asm_volatile_pause();
+        } while (true);
         msg_counter.Tick();
         current_timestamp = faas::GetMonotonicNanoTimestamp();
-        int64_t send_timestamp;
-        memcpy(&send_timestamp, payload_buffer, sizeof(int64_t));
+        int64_t send_timestamp = recv_value;
         msg_delay_stat.AddSample(gsl::narrow_cast<int32_t>(current_timestamp - send_timestamp));
+        recv_message_count++;
+        if (sleep_every > 0 && recv_message_count % sleep_every == 0) {
+            server_queue->ConsumerEnterSleep();
+            slept = true;
+        }
     }
-    delete[] payload_buffer;
     int64_t elapsed_time = faas::GetMonotonicNanoTimestamp() - start_timestamp;
     perf_event_group->Disable();
     ReadPerfEventValues("Server ", perf_event_group.get(), elapsed_time);
     LOG(INFO) << "Server elapsed nanoseconds: " << elapsed_time;
     VLOG(1) << "Close server socket";
     PCHECK(close(infd) == 0);
-    if (outfd != infd) {
-        PCHECK(close(outfd) == 0);
-    }
+    PCHECK(close(outfd) == 0);
 }
 
-void Client(int infd, int outfd, size_t payload_bytesize, absl::Duration stat_duration, int cpu) {
+void Client(int infd, int outfd, absl::Duration stat_duration, int cpu) {
     faas::stat::StatisticsCollector<int32_t> msg_delay_stat(
         faas::stat::StatisticsCollector<int32_t>::StandardReportCallback("server_msg_delay"));
     faas::stat::Counter msg_counter(
@@ -122,102 +152,70 @@ void Client(int infd, int outfd, size_t payload_bytesize, absl::Duration stat_du
         BindToCpu(cpu);
     }
     auto perf_event_group = SetupPerfEvents(cpu);
+
+    uint64_t event_value;
+    PCHECK(eventfd_read(infd, &event_value) == 0) << "eventfd_read failed";
+    CHECK_EQ(event_value, kEventServerQueueCreated);
+    auto client_queue = faas::ipc::SPSCQueue<int64_t>::Create("client", kQueueSize);
+    auto server_queue = faas::ipc::SPSCQueue<int64_t>::Open("server");
+    server_queue->SetWakeupConsumerFn([outfd] () {
+        PCHECK(eventfd_write(outfd, kEventWakeupServerQueue) == 0) << "eventfd_write failed";
+    });
+    PCHECK(eventfd_write(outfd, kEventClientQueueCreated) == 0) << "eventfd_write failed";
+    PCHECK(eventfd_read(infd, &event_value) == 0) << "eventfd_read failed";
+    CHECK_EQ(event_value, kEventServerReady);
+
     perf_event_group->ResetAndEnable();
     int64_t start_timestamp = faas::GetMonotonicNanoTimestamp();
-    char* payload_buffer = new char[payload_bytesize];
     while (true) {
-        bool eof = false;
-        CHECK(faas::io_utils::RecvData(infd, payload_buffer, payload_bytesize, &eof));
-        msg_counter.Tick();
-        int64_t current_timestamp = faas::GetMonotonicNanoTimestamp();
-        int64_t send_timestamp;
-        memcpy(&send_timestamp, payload_buffer, sizeof(int64_t));
-        if (send_timestamp == -1) {
-            VLOG(1) << "Server socket closed";
+        int64_t recv_value;
+        do {
+            if (client_queue->Pop(&recv_value)) {
+                break;
+            }
+            faas::asm_volatile_pause();
+        } while (true);
+        if (recv_value == -1) {
             break;
         }
+        msg_counter.Tick();
+        int64_t current_timestamp = faas::GetMonotonicNanoTimestamp();
+        int64_t send_timestamp = static_cast<int64_t>(recv_value);
         msg_delay_stat.AddSample(gsl::narrow_cast<int32_t>(current_timestamp - send_timestamp));
-        current_timestamp = faas::GetMonotonicNanoTimestamp();
-        memcpy(payload_buffer, &current_timestamp, sizeof(int64_t));
-        CHECK(faas::io_utils::SendData(outfd, payload_buffer, payload_bytesize));
+        int64_t send_value = current_timestamp;
+        do {
+            if (server_queue->Push(send_value)) {
+                break;
+            }
+            faas::asm_volatile_pause();
+        } while (true);
     }
-    delete[] payload_buffer;
     int64_t elapsed_time = faas::GetMonotonicNanoTimestamp() - start_timestamp;
     perf_event_group->Disable();
     ReadPerfEventValues("Client ", perf_event_group.get(), elapsed_time);
     LOG(INFO) << "Client elapsed nanoseconds: " << elapsed_time;
     PCHECK(close(infd) == 0);
-    if (outfd != infd) {
-        PCHECK(close(outfd) == 0);
-    }
+    PCHECK(close(outfd) == 0);
 }
 
 int main(int argc, char* argv[]) {
     faas::base::InitMain(argc, argv);
 
-    int payload_bytesize = absl::GetFlag(FLAGS_payload_bytesize);
-    CHECK_GE(payload_bytesize, 8) << "payload should be at least 8 bytes";
-
-    std::string socket_type(absl::GetFlag(FLAGS_socket_type));
-    int tcp_server_fd = -1;
-    int unix_fds[2];
-    int pipe1_fds[2];
-    int pipe2_fds[2];
-    if (socket_type == "unix") {
-        PCHECK(socketpair(AF_LOCAL, SOCK_STREAM, 0, unix_fds) == 0);
-    } else if (socket_type == "pipe") {
-        PCHECK(pipe(pipe1_fds) == 0);
-        PCHECK(pipe(pipe2_fds) == 0);
-    } else if (socket_type == "tcp") {
-        tcp_server_fd = faas::utils::TcpSocketBindAndListen("127.0.0.1", absl::GetFlag(FLAGS_tcp_port));
-    } else if (socket_type == "tcp6") {
-        tcp_server_fd = faas::utils::Tcp6SocketBindAndListen("::1", absl::GetFlag(FLAGS_tcp_port));
-    } else {
-        LOG(FATAL) << "Unsupported socket type: " << socket_type;
-    }
+    int fd1 = eventfd(0, 0);
+    PCHECK(fd1 != -1);
+    int fd2 = eventfd(0, 0);
+    PCHECK(fd2 != -1);
 
     pid_t child_pid = fork();
     if (child_pid == 0) {
-        int infd = -1;
-        int outfd = -1;
-        if (socket_type == "unix") {
-            infd = outfd = unix_fds[0];
-        } else if (socket_type == "pipe") {
-            infd = pipe1_fds[0];
-            outfd = pipe2_fds[1];
-        } else if (socket_type == "tcp") {
-            infd = outfd = faas::utils::TcpSocketConnect("127.0.0.1", absl::GetFlag(FLAGS_tcp_port));
-        } else if (socket_type == "tcp6") {
-            infd = outfd = faas::utils::Tcp6SocketConnect("::1", absl::GetFlag(FLAGS_tcp_port));
-        }
-        Client(infd, outfd, payload_bytesize, absl::GetFlag(FLAGS_stat_duration),
-               absl::GetFlag(FLAGS_client_cpu));
+        Client(fd1, fd2, absl::GetFlag(FLAGS_stat_duration), absl::GetFlag(FLAGS_client_cpu));
         return 0;
     }
 
     PCHECK(child_pid != -1);
-    int infd = -1;
-    int outfd = -1;
-    if (socket_type == "unix") {
-        infd = outfd = unix_fds[1];
-    } else if (socket_type == "pipe") {
-        infd = pipe2_fds[0];
-        outfd = pipe1_fds[1];
-    } else if (socket_type == "tcp") {
-        struct sockaddr_in addr;
-        socklen_t addr_len = sizeof(addr);
-        int fd = accept(tcp_server_fd, (struct sockaddr*)&addr, &addr_len);
-        PCHECK(fd != -1);
-        infd = outfd = fd;
-    } else if (socket_type == "tcp6") {
-        struct sockaddr_in6 addr;
-        socklen_t addr_len = sizeof(addr);
-        int fd = accept(tcp_server_fd, (struct sockaddr*)&addr, &addr_len);
-        PCHECK(fd != -1);
-        infd = outfd = fd;
-    }
-    Server(infd, outfd, payload_bytesize, absl::GetFlag(FLAGS_duration),
-           absl::GetFlag(FLAGS_stat_duration), absl::GetFlag(FLAGS_server_cpu));
+    Server(fd2, fd1, absl::GetFlag(FLAGS_duration),
+           absl::GetFlag(FLAGS_stat_duration), absl::GetFlag(FLAGS_server_cpu),
+           absl::GetFlag(FLAGS_server_queue_sleep_every));
 
     int wstatus;
     CHECK(wait(&wstatus) == child_pid);

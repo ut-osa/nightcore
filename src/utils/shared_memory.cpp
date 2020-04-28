@@ -69,6 +69,27 @@ SharedMemory::Region* SharedMemory::OpenReadOnly(std::string_view path) {
     return region;
 }
 
+SharedMemory::Region* SharedMemory::Open(std::string_view path) {
+    std::string full_path = GetFullPath(path);
+    int64_t start_timestamp = GetMonotonicMicroTimestamp();
+    int fd = open(full_path.c_str(), O_RDWR);
+    PCHECK(fd != -1) << "open failed";
+    struct stat statbuf;
+    PCHECK(fstat(fd, &statbuf) == 0) << "fstat failed";
+    size_t size = gsl::narrow_cast<size_t>(statbuf.st_size);
+    void* ptr = nullptr;
+    if (size > 0) {
+        ptr = mmap(0, size, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
+        PCHECK(ptr != MAP_FAILED) << "mmap failed";
+        mmap_delay_stat_.AddSample(gsl::narrow_cast<int32_t>(
+            GetMonotonicMicroTimestamp() - start_timestamp));
+    }
+    PCHECK(close(fd) == 0) << "close failed";
+    Region* region = new Region(this, path, reinterpret_cast<char*>(ptr), size);
+    AddRegion(region);
+    return region;
+}
+
 void SharedMemory::Close(SharedMemory::Region* region, bool remove) {
     if (region->size() > 0) {
         PCHECK(munmap(region->base(), region->size()) == 0);

@@ -12,8 +12,8 @@
 
 #include <absl/flags/flag.h>
 
-ABSL_FLAG(int, server_cpu, -1, "Bind server process to CPU");
-ABSL_FLAG(int, client_cpu, -1, "Bind server process to CPU");
+ABSL_FLAG(int, server_cpu, -1, "Bind server process to this CPU");
+ABSL_FLAG(int, client_cpu, -1, "Bind client process to this CPU");
 ABSL_FLAG(absl::Duration, duration, absl::Seconds(30), "Duration to run");
 ABSL_FLAG(absl::Duration, stat_duration, absl::Seconds(10),
           "Duration for reporting statistics");
@@ -94,9 +94,7 @@ void Server(int infd, int outfd, absl::Duration duration, absl::Duration stat_du
     LOG(INFO) << "Server elapsed nanoseconds: " << elapsed_time;
     VLOG(1) << "Close server socket";
     PCHECK(close(infd) == 0);
-    if (outfd != infd) {
-        PCHECK(close(outfd) == 0);
-    }
+    PCHECK(close(outfd) == 0);
 }
 
 void Client(int infd, int outfd, absl::Duration stat_duration, int cpu) {
@@ -131,9 +129,7 @@ void Client(int infd, int outfd, absl::Duration stat_duration, int cpu) {
     ReadPerfEventValues("Client ", perf_event_group.get(), elapsed_time);
     LOG(INFO) << "Client elapsed nanoseconds: " << elapsed_time;
     PCHECK(close(infd) == 0);
-    if (outfd != infd) {
-        PCHECK(close(outfd) == 0);
-    }
+    PCHECK(close(outfd) == 0);
 }
 
 int main(int argc, char* argv[]) {

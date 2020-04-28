@@ -46,6 +46,7 @@ public:
 
     Region* Create(std::string_view path, size_t size);
     Region* OpenReadOnly(std::string_view path);
+    Region* Open(std::string_view path);
     void Close(Region* region, bool remove = false);
 
 private:

@@ -64,6 +64,7 @@
 // Will not include common absl headers in source files
 // with __FAAS_USED_IN_BINDING defined
 
+#include <absl/base/call_once.h>
 #include <absl/time/time.h>
 #include <absl/time/clock.h>
 #include <absl/strings/str_format.h>

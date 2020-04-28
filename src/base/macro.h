@@ -22,3 +22,6 @@
 
 #define __FAAS_PREDICT_FALSE(x) __builtin_expect(x, 0)
 #define __FAAS_PREDICT_TRUE(x)  __builtin_expect(false || (x), true)
+
+// We're always on x86_64
+#define __FAAS_CACHE_LINE_SIZE 64
