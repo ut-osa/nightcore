@@ -52,7 +52,7 @@ SPSCQueue<T>::~SPSCQueue() {
 
 template<class T>
 size_t SPSCQueue<T>::compute_total_bytesize(size_t queue_size) {
-    return __FAAS_CACHE_LINE_SIZE * (3 + queue_size);
+    return __FAAS_CACHE_LINE_SIZE * 3 + sizeof(T) * queue_size;
 }
 
 template<class T>

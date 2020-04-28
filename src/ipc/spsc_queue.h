@@ -14,8 +14,6 @@ template<class T>
 class SPSCQueue {
 public:
     ~SPSCQueue();
-    static_assert(sizeof(T) <= __FAAS_CACHE_LINE_SIZE,
-                  "Message type must fit in one cache line");
 
     static constexpr size_t kConsumerSleepMask = size_t{1} << (sizeof(size_t)*8-1);
 
@@ -46,7 +44,7 @@ private:
     SPSCQueue(bool producer, utils::SharedMemory::Region* shm_region);
     static size_t compute_total_bytesize(size_t queue_size);
     static void BuildMemoryLayout(char* base_ptr, size_t queue_size);
-    void* cell(size_t idx) { return cell_base_ + idx * __FAAS_CACHE_LINE_SIZE; }
+    void* cell(size_t idx) { return cell_base_ + idx * sizeof(T); }
 
     DISALLOW_COPY_AND_ASSIGN(SPSCQueue);
 };
