@@ -44,14 +44,16 @@ std::unique_ptr<faas::utils::PerfEventGroup> SetupPerfEvents(int cpu) {
 
 void ReadPerfEventValues(std::string_view log_header,
                          faas::utils::PerfEventGroup* perf_event_group,
-                         int64_t duration_in_ns) {
+                         int64_t duration_in_ns, size_t loop_count) {
     std::vector<uint64_t> values = perf_event_group->ReadValues();
     LOG(INFO) << log_header << "value of PERF_COUNT_HW_CPU_CYCLES: " << values[0];
     LOG(INFO) << log_header << "value of PERF_COUNT_HW_INSTRUCTIONS: " << values[1];
     LOG(INFO) << log_header << "rate of PERF_COUNT_HW_CPU_CYCLES: "
-              << (static_cast<double>(values[0]) / duration_in_ns) * 1000 << " per us";
+              << (static_cast<double>(values[0]) / duration_in_ns) * 1000 << " per us, "
+              << (static_cast<double>(values[0]) / loop_count) << " per loop";
     LOG(INFO) << log_header << "rate of PERF_COUNT_HW_INSTRUCTIONS: "
-              << (static_cast<double>(values[1]) / duration_in_ns) * 1000 << " per us";
+              << (static_cast<double>(values[1]) / duration_in_ns) * 1000 << " per us, "
+              << (static_cast<double>(values[1]) / loop_count) << " per loop";
 }
 
 static constexpr uint64_t kStopValue = 0xfffffffffffffffeULL;
@@ -72,6 +74,7 @@ void Server(int infd, int outfd, absl::Duration duration, absl::Duration stat_du
     perf_event_group->ResetAndEnable();
     int64_t start_timestamp = faas::GetMonotonicNanoTimestamp();
     int64_t stop_timestamp = start_timestamp + absl::ToInt64Nanoseconds(duration);
+    size_t loop_count = 0;
     while (true) {
         int64_t current_timestamp = faas::GetMonotonicNanoTimestamp();
         uint64_t value = current_timestamp;
@@ -82,6 +85,7 @@ void Server(int infd, int outfd, absl::Duration duration, absl::Duration stat_du
         if (current_timestamp >= stop_timestamp) {
             break;
         }
+        loop_count++;
         PCHECK(eventfd_read(infd, &value) == 0) << "eventfd_read failed";
         msg_counter.Tick();
         current_timestamp = faas::GetMonotonicNanoTimestamp();
@@ -90,7 +94,7 @@ void Server(int infd, int outfd, absl::Duration duration, absl::Duration stat_du
     }
     int64_t elapsed_time = faas::GetMonotonicNanoTimestamp() - start_timestamp;
     perf_event_group->Disable();
-    ReadPerfEventValues("Server ", perf_event_group.get(), elapsed_time);
+    ReadPerfEventValues("Server ", perf_event_group.get(), elapsed_time, loop_count);
     LOG(INFO) << "Server elapsed nanoseconds: " << elapsed_time;
     VLOG(1) << "Close server socket";
     PCHECK(close(infd) == 0);
@@ -112,12 +116,14 @@ void Client(int infd, int outfd, absl::Duration stat_duration, int cpu) {
     auto perf_event_group = SetupPerfEvents(cpu);
     perf_event_group->ResetAndEnable();
     int64_t start_timestamp = faas::GetMonotonicNanoTimestamp();
+    size_t loop_count = 0;
     while (true) {
         uint64_t value;
         PCHECK(eventfd_read(infd, &value) == 0) << "eventfd_read failed";
         if (value == kStopValue) {
             break;
         }
+        loop_count++;
         msg_counter.Tick();
         int64_t current_timestamp = faas::GetMonotonicNanoTimestamp();
         int64_t send_timestamp = static_cast<int64_t>(value);
@@ -126,7 +132,7 @@ void Client(int infd, int outfd, absl::Duration stat_duration, int cpu) {
     }
     int64_t elapsed_time = faas::GetMonotonicNanoTimestamp() - start_timestamp;
     perf_event_group->Disable();
-    ReadPerfEventValues("Client ", perf_event_group.get(), elapsed_time);
+    ReadPerfEventValues("Client ", perf_event_group.get(), elapsed_time, loop_count);
     LOG(INFO) << "Client elapsed nanoseconds: " << elapsed_time;
     PCHECK(close(infd) == 0);
     PCHECK(close(outfd) == 0);
