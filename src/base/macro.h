@@ -25,3 +25,4 @@
 
 // We're always on x86_64
 #define __FAAS_CACHE_LINE_SIZE 64
+#define __FAAS_PAGE_SIZE       4096
