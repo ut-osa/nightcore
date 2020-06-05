@@ -15,7 +15,7 @@ public:
     std::string_view method() const { return method_; }
     std::string_view path() const { return path_; }
     std::string_view header(std::string_view field) const {
-        return headers_->contains(field) ? headers_->at(field) : "";
+        return headers_->contains(field) ? headers_->at(field) : std::string_view{};
     }
     std::span<const char> body() const { return body_; }
 
@@ -56,7 +56,7 @@ public:
     std::string_view method() const { return method_; }
     std::string_view path() const { return path_; }
     std::string_view header(std::string_view field) const {
-        return headers_.contains(field) ? headers_.at(field) : "";
+        return headers_.contains(field) ? headers_.at(field) : std::string_view{};
     }
     std::span<const char> body() const { return body_buffer_.to_span(); }
 
