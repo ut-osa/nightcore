@@ -24,8 +24,8 @@ static int futex(int* uaddr, int futex_op, int val,
 
 static void futex_wait(int* futex_ptr) {
     while (true) {
-        const int one = 1;
-        const int zero = 0;
+        int one = 1;
+        int zero = 0;
         if (__atomic_compare_exchange(futex_ptr, &one, &zero,
                                       false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
             break;
@@ -36,8 +36,8 @@ static void futex_wait(int* futex_ptr) {
 }
 
 static void futex_post(int* futex_ptr) {
-    const int one = 1;
-    const int zero = 0;
+    int one = 1;
+    int zero = 0;
     if (__atomic_compare_exchange(futex_ptr, &zero, &one,
                                   false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
         int ret = futex(futex_ptr, FUTEX_WAKE, 1, NULL, NULL, 0);
