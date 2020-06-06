@@ -2,7 +2,7 @@
 
 #include "base/common.h"
 #include "common/uv.h"
-#include "utils/shared_memory.h"
+#include "ipc/shm_region.h"
 #include "watchdog/subprocess.h"
 
 namespace faas {
@@ -45,8 +45,7 @@ private:
 class SerializingFuncRunner final : public FuncRunner {
 public:
     SerializingFuncRunner(Watchdog* watchdog, uint64_t call_id,
-                          utils::BufferPool* read_buffer_pool,
-                          utils::SharedMemory* shared_memory);
+                          utils::BufferPool* read_buffer_pool);
     ~SerializingFuncRunner();
 
     void Start(uv_loop_t* uv_loop) override;
@@ -55,10 +54,9 @@ public:
 private:
     Subprocess subprocess_;
     utils::BufferPool* read_buffer_pool_;
-    utils::SharedMemory* shared_memory_;
 
     uv_write_t write_req_;
-    utils::SharedMemory::Region* input_region_;
+    std::unique_ptr<ipc::ShmRegion> input_region_;
     uint64_t start_timestamp_;
 
     void OnSubprocessExit(int exit_status, std::span<const char> stdout,

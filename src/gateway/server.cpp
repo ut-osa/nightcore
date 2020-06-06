@@ -1,5 +1,7 @@
 #include "gateway/server.h"
 
+#include "ipc/base.h"
+#include "ipc/shm_region.h"
 #include "common/time.h"
 #include "utils/fs.h"
 
@@ -18,16 +20,15 @@ using protocol::MessageType;
 using protocol::Message;
 
 constexpr int Server::kDefaultListenBackLog;
-constexpr int Server::kDefaultNumHttpWorkers;
-constexpr int Server::kDefaultNumIpcWorkers;
+constexpr int Server::kDefaultNumIOWorkers;
 constexpr size_t Server::kHttpConnectionBufferSize;
 constexpr size_t Server::kMessageConnectionBufferSize;
 
 constexpr int Server::kMaxClientId;
 
 Server::Server()
-    : state_(kCreated), port_(-1), grpc_port_(-1), listen_backlog_(kDefaultListenBackLog),
-      num_http_workers_(kDefaultNumHttpWorkers), num_ipc_workers_(kDefaultNumIpcWorkers), num_io_workers_(-1),
+    : state_(kCreated), http_port_(-1), grpc_port_(-1),
+      listen_backlog_(kDefaultListenBackLog), num_io_workers_(kDefaultNumIOWorkers),
       event_loop_thread_("Server/EL", absl::bind_front(&Server::EventLoopThreadMain, this)),
       next_http_connection_id_(0), next_grpc_connection_id_(0),
       next_http_worker_id_(0), next_ipc_worker_id_(0), next_client_id_(1), next_call_id_(0),
@@ -87,54 +88,23 @@ void Server::Start() {
     // Load function config file
     CHECK(!func_config_file_.empty());
     CHECK(func_config_.Load(func_config_file_));
-    // Create shared memory pool
-    CHECK(!shared_mem_path_.empty());
-    if (fs_utils::IsDirectory(shared_mem_path_)) {
-        PCHECK(fs_utils::RemoveDirectoryRecursively(shared_mem_path_));
-    } else if (fs_utils::Exists(shared_mem_path_)) {
-        PCHECK(fs_utils::Remove(shared_mem_path_));
-    }
-    PCHECK(fs_utils::MakeDirectory(shared_mem_path_));
-    shared_memory_ = std::make_unique<utils::SharedMemory>(shared_mem_path_);
     // Start IO workers
-    if (num_io_workers_ == -1) {
-        CHECK_GT(num_http_workers_, 0);
-        CHECK_GT(num_ipc_workers_, 0);
-        HLOG(INFO) << "Start " << num_http_workers_ << " IO workers for HTTP connections";
-        for (int i = 0; i < num_http_workers_; i++) {
-            auto io_worker = std::make_unique<IOWorker>(this, absl::StrFormat("Http-%d", i),
-                                                        kHttpConnectionBufferSize);
-            InitAndStartIOWorker(io_worker.get());
-            http_workers_.push_back(io_worker.get());
-            io_workers_.push_back(std::move(io_worker));
-        }
-        HLOG(INFO) << "Start " << num_ipc_workers_ << " IO workers for IPC connections";
-        for (int i = 0; i < num_ipc_workers_; i++) {
-            auto io_worker = std::make_unique<IOWorker>(this, absl::StrFormat("Ipc-%d", i),
-                                                        kMessageConnectionBufferSize,
-                                                        kMessageConnectionBufferSize);
-            InitAndStartIOWorker(io_worker.get());
-            ipc_workers_.push_back(io_worker.get());
-            io_workers_.push_back(std::move(io_worker));
-        }
-    } else {
-        CHECK_GT(num_io_workers_, 0);
-        HLOG(INFO) << "Start " << num_io_workers_ << " IO workers for both HTTP and IPC connections";
-        for (int i = 0; i < num_io_workers_; i++) {
-            auto io_worker = std::make_unique<IOWorker>(this, absl::StrFormat("IO-%d", i));
-            InitAndStartIOWorker(io_worker.get());
-            http_workers_.push_back(io_worker.get());
-            ipc_workers_.push_back(io_worker.get());
-            io_workers_.push_back(std::move(io_worker));
-        }
+    CHECK_GT(num_io_workers_, 0);
+    HLOG(INFO) << "Start " << num_io_workers_ << " IO workers for both HTTP and IPC connections";
+    for (int i = 0; i < num_io_workers_; i++) {
+        auto io_worker = std::make_unique<IOWorker>(this, absl::StrFormat("IO-%d", i));
+        InitAndStartIOWorker(io_worker.get());
+        http_workers_.push_back(io_worker.get());
+        ipc_workers_.push_back(io_worker.get());
+        io_workers_.push_back(std::move(io_worker));
     }
-    // Listen on address:port for HTTP requests
+    // Listen on address:http_port for HTTP requests
     struct sockaddr_in bind_addr;
     CHECK(!address_.empty());
-    CHECK_NE(port_, -1);
-    UV_CHECK_OK(uv_ip4_addr(address_.c_str(), port_, &bind_addr));
+    CHECK_NE(http_port_, -1);
+    UV_CHECK_OK(uv_ip4_addr(address_.c_str(), http_port_, &bind_addr));
     UV_CHECK_OK(uv_tcp_bind(&uv_http_handle_, (const struct sockaddr *)&bind_addr, 0));
-    HLOG(INFO) << "Listen on " << address_ << ":" << port_ << " for HTTP requests";
+    HLOG(INFO) << "Listen on " << address_ << ":" << http_port_ << " for HTTP requests";
     UV_DCHECK_OK(uv_listen(
         UV_AS_STREAM(&uv_http_handle_), listen_backlog_,
         &Server::HttpConnectionCallback));
@@ -147,11 +117,12 @@ void Server::Start() {
         UV_AS_STREAM(&uv_grpc_handle_), listen_backlog_,
         &Server::GrpcConnectionCallback));
     // Listen on ipc_path
-    if (fs_utils::Exists(ipc_path_)) {
-        PCHECK(fs_utils::Remove(ipc_path_));
+    std::string ipc_path(ipc::GetGatewayUnixSocketPath());
+    if (fs_utils::Exists(ipc_path)) {
+        PCHECK(fs_utils::Remove(ipc_path));
     }
-    UV_CHECK_OK(uv_pipe_bind(&uv_ipc_handle_, ipc_path_.c_str()));
-    HLOG(INFO) << "Listen on " << ipc_path_ << " for IPC connections";
+    UV_CHECK_OK(uv_pipe_bind(&uv_ipc_handle_, ipc_path.c_str()));
+    HLOG(INFO) << "Listen on " << ipc_path << " for IPC connections";
     UV_CHECK_OK(uv_listen(
         UV_AS_STREAM(&uv_ipc_handle_), listen_backlog_,
         &Server::MessageConnectionCallback));
@@ -332,44 +303,35 @@ public:
     ExternalFuncCallContext(FuncCall call, std::shared_ptr<GrpcCallContext> grpc_context)
         : call_(call), http_context_(nullptr), grpc_context_(grpc_context),
           input_region_(nullptr), output_region_(nullptr) {}
-    
-    ~ExternalFuncCallContext() {
-        if (input_region_ != nullptr) {
-            input_region_->Close(true);
-        }
-        if (output_region_ != nullptr) {
-            output_region_->Close(true);
-        }
-    }
 
-    const FuncCall& call() const { return call_; }
+    FuncCall call() const { return call_; }
 
-    void CreateInputRegion(utils::SharedMemory* shared_memory) {
+    void CreateInputRegion() {
+        std::span<const char> body;
         if (http_context_ != nullptr) {
-            std::span<const char> body = http_context_->body();
-            input_region_ = shared_memory->Create(
-                utils::SharedMemory::InputPath(call_.full_call_id), body.size());
+            body = http_context_->body();
+        } else if (grpc_context_ != nullptr) {
+            body = grpc_context_->request_body();
+        } else {
+            LOG(FATAL) << "http_context_ and grpc_context_ are both nullptr";
+        }
+        input_region_ = ipc::ShmCreate(
+            ipc::GetFuncCallInputShmName(call_.full_call_id), body.size());
+        input_region_->EnableRemoveOnDestruction();
+        if (body.size() > 0) {
             memcpy(input_region_->base(), body.data(), body.size());
         }
-        if (grpc_context_ != nullptr) {
-            std::span<const char> body = grpc_context_->request_body();
-            input_region_ = shared_memory->Create(
-                utils::SharedMemory::InputPath(call_.full_call_id), body.size());
-            char* buf = input_region_->base();
-            if (body.size() > 0) {
-                memcpy(buf, body.data(), body.size());
-            }
-        }
     }
 
-    void WriteOutput(utils::SharedMemory* shared_memory) {
-        output_region_ = shared_memory->OpenReadOnly(
-            shared_memory->OutputPath(call_.full_call_id));
+    void WriteOutput() {
+        output_region_ = ipc::ShmOpen(ipc::GetFuncCallOutputShmName(call_.full_call_id));
+        output_region_->EnableRemoveOnDestruction();
         if (http_context_ != nullptr) {
             http_context_->AppendToResponseBody(output_region_->to_span());
-        }
-        if (grpc_context_ != nullptr) {
+        } else if (grpc_context_ != nullptr) {
             grpc_context_->AppendToResponseBody(output_region_->to_span());
+        } else {
+            LOG(FATAL) << "http_context_ and grpc_context_ are both nullptr";
         }
     }
 
@@ -390,9 +352,10 @@ public:
         if (http_context_ != nullptr) {
             http_context_->AppendToResponseBody("Function call failed\n");
             http_context_->SetStatus(500);
-        }
-        if (grpc_context_ != nullptr) {
+        } else if (grpc_context_ != nullptr) {
             grpc_context_->set_grpc_status(GrpcStatus::UNKNOWN);
+        } else {
+            LOG(FATAL) << "http_context_ and grpc_context_ are both nullptr";
         }
         Finish();
     }
@@ -402,9 +365,10 @@ public:
             http_context_->AppendToResponseBody(
                 absl::StrFormat("Cannot find watchdog for func_id %d\n", call_.func_id));
             http_context_->SetStatus(404);
-        }
-        if (grpc_context_ != nullptr) {
+        } else if (grpc_context_ != nullptr) {
             grpc_context_->set_grpc_status(GrpcStatus::UNIMPLEMENTED);
+        } else {
+            LOG(FATAL) << "http_context_ and grpc_context_ are both nullptr";
         }
         Finish();
     }
@@ -412,9 +376,10 @@ public:
     void Finish() {
         if (http_context_ != nullptr) {
             http_context_->Finish();
-        }
-        if (grpc_context_ != nullptr) {
+        } else if (grpc_context_ != nullptr) {
             grpc_context_->Finish();
+        } else {
+            LOG(FATAL) << "http_context_ and grpc_context_ are both nullptr";
         }
     }
 
@@ -422,9 +387,8 @@ private:
     FuncCall call_;
     std::shared_ptr<HttpAsyncRequestContext> http_context_;
     std::shared_ptr<GrpcCallContext> grpc_context_;
-    utils::SharedMemory::Region* input_region_;
-    utils::SharedMemory::Region* output_region_;
-
+    std::unique_ptr<ipc::ShmRegion> input_region_;
+    std::unique_ptr<ipc::ShmRegion> output_region_;
     DISALLOW_COPY_AND_ASSIGN(ExternalFuncCallContext);
 };
 
@@ -473,7 +437,7 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
             if (external_func_calls_.contains(full_call_id)) {
                 ExternalFuncCallContext* func_call_context = external_func_calls_[full_call_id].get();
                 if (type == MessageType::FUNC_CALL_COMPLETE) {
-                    func_call_context->WriteOutput(shared_memory_.get());
+                    func_call_context->WriteOutput();
                     func_call_context->Finish();
                 } else if (type == MessageType::FUNC_CALL_FAILED) {
                     func_call_context->FinishWithError();
@@ -523,7 +487,7 @@ void Server::NewExternalFuncCall(std::unique_ptr<ExternalFuncCallContext> func_c
     if (!func_call_context->CheckInputNotEmpty()) {
         return;
     }
-    func_call_context->CreateInputRegion(shared_memory_.get());
+    func_call_context->CreateInputRegion();
     uint16_t func_id = func_call_context->call().func_id;
     {
         absl::MutexLock lk(&message_connection_mu_);

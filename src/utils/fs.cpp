@@ -78,5 +78,13 @@ bool ReadContents(std::string_view path, std::string* contents) {
     return nread == size;
 }
 
+std::string JoinPath(std::string_view path1, std::string_view path2) {
+    return fmt::format("{}/{}", path1, path2);
+}
+
+std::string JoinPath(std::string_view path1, std::string_view path2, std::string_view path3) {
+    return fmt::format("{}/{}/{}", path1, path2, path3);
+}
+
 }  // namespace fs_utils
 }  // namespace faas

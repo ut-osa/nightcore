@@ -5,7 +5,7 @@
 #endif
 
 #include "base/common.h"
-#include "utils/shared_memory.h"
+#include "ipc/shm_region.h"
 
 namespace faas {
 namespace ipc {
@@ -32,7 +32,7 @@ public:
 
 private:
     bool consumer_;
-    utils::SharedMemory::Region* shm_region_;
+    std::unique_ptr<ShmRegion> shm_region_;
     size_t queue_size_;
     size_t* head_;
     size_t* tail_;
@@ -41,7 +41,7 @@ private:
     std::function<void()> wakeup_consumer_fn_;
     bool wakeup_consumer_flag_;
 
-    SPSCQueue(bool producer, utils::SharedMemory::Region* shm_region);
+    SPSCQueue(bool producer, std::unique_ptr<ShmRegion> shm_region);
     static size_t compute_total_bytesize(size_t queue_size);
     static void BuildMemoryLayout(char* base_ptr, size_t queue_size);
     void* cell(size_t idx) { return cell_base_ + idx * sizeof(T); }

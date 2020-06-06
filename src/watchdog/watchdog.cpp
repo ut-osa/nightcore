@@ -1,5 +1,6 @@
 #include "watchdog/watchdog.h"
 
+#include "ipc/base.h"
 #include "common/time.h"
 #include "utils/fs.h"
 
@@ -93,16 +94,13 @@ void Watchdog::Start() {
     default:
         HLOG(FATAL) << "Unknown run mode";
     }
-    // Create shared memory pool
-    CHECK(!shared_mem_path_.empty());
-    shared_memory_ = std::make_unique<utils::SharedMemory>(shared_mem_path_);
     // Connect to gateway via IPC path
     uv_pipe_t* pipe_handle = gateway_connection_.uv_pipe_handle();
     UV_DCHECK_OK(uv_pipe_init(&uv_loop_, pipe_handle, 0));
     HandshakeMessage message;
     message.role = gsl::narrow_cast<uint16_t>(Role::WATCHDOG);
     message.func_id = func_id_;
-    gateway_connection_.Start(gateway_ipc_path_, message);
+    gateway_connection_.Start(ipc::GetGatewayUnixSocketPath(), message);
     // Start thread for running event loop
     event_loop_thread_.Start();
     state_.store(kRunning);
@@ -161,7 +159,7 @@ void Watchdog::OnRecvMessage(const protocol::Message& message) {
         case RunMode::SERIALIZING:
             func_runner = new SerializingFuncRunner(
                 this, func_call.full_call_id,
-                buffer_pool_for_subprocess_pipes_.get(), shared_memory_.get());
+                buffer_pool_for_subprocess_pipes_.get());
             break;
         case RunMode::FUNC_WORKER_FIXED:
         case RunMode::FUNC_WORKER_ON_DEMAND:

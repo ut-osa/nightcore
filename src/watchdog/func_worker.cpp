@@ -31,11 +31,9 @@ void FuncWorker::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool) 
     read_buffer_pool_ = read_buffer_pool;
     input_pipe_fd_ = subprocess_.CreateReadablePipe();
     output_pipe_fd_ = subprocess_.CreateWritablePipe();
-    subprocess_.AddEnvVariable("GATEWAY_IPC_PATH", fs_utils::GetRealPath(watchdog_->gateway_ipc_path()));
     subprocess_.AddEnvVariable("FUNC_ID", watchdog_->func_id());
     subprocess_.AddEnvVariable("INPUT_PIPE_FD", input_pipe_fd_);
     subprocess_.AddEnvVariable("OUTPUT_PIPE_FD", output_pipe_fd_);
-    subprocess_.AddEnvVariable("SHARED_MEMORY_PATH", fs_utils::GetRealPath(watchdog_->shared_mem_path()));
     subprocess_.AddEnvVariable("FUNC_CONFIG_FILE", fs_utils::GetRealPath(watchdog_->func_config_file()));
     subprocess_.AddEnvVariable("WORKER_ID", worker_id_);
     if (!watchdog_->func_worker_output_dir().empty()) {

@@ -11,6 +11,8 @@
 
 #include <absl/flags/flag.h>
 
+ABSL_FLAG(std::string, root_path_for_ipc, "/dev/shm/faas_ipc",
+          "Root directory for IPCs used by FaaS");
 ABSL_FLAG(int, server_cpu, -1, "Pin server process to this CPU");
 ABSL_FLAG(int, client_cpu, -1, "Pin client process to this CPU");
 ABSL_FLAG(absl::Duration, duration, absl::Seconds(30), "Duration to run");
@@ -154,6 +156,7 @@ void Client(int infd, int outfd) {
 
 int main(int argc, char* argv[]) {
     base::InitMain(argc, argv);
+    ipc::SetRootPathForIpc(absl::GetFlag(FLAGS_root_path_for_ipc), /* create= */ true);
 
     int fd1 = eventfd(0, 0);
     PCHECK(fd1 != -1);

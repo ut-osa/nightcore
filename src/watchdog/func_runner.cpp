@@ -17,11 +17,9 @@ void FuncRunner::Complete(Status status, uint32_t processing_time) {
 }
 
 SerializingFuncRunner::SerializingFuncRunner(Watchdog* watchdog, uint64_t call_id,
-                                             utils::BufferPool* read_buffer_pool,
-                                             utils::SharedMemory* shared_memory)
+                                             utils::BufferPool* read_buffer_pool)
     : FuncRunner(watchdog, call_id), subprocess_(watchdog->fprocess()),
-      read_buffer_pool_(read_buffer_pool), shared_memory_(shared_memory),
-      input_region_(nullptr) {}
+      read_buffer_pool_(read_buffer_pool), input_region_(nullptr) {}
 
 SerializingFuncRunner::~SerializingFuncRunner() {
     DCHECK(input_region_ == nullptr);
@@ -37,7 +35,7 @@ void SerializingFuncRunner::Start(uv_loop_t* uv_loop) {
         return;
     }
     uv_pipe_t* subprocess_stdin = subprocess_.GetPipe(Subprocess::kStdin);
-    input_region_ = shared_memory_->OpenReadOnly(utils::SharedMemory::InputPath(call_id_));
+    input_region_ = ipc::ShmOpen(ipc::GetFuncCallInputShmName(call_id_));
     uv_buf_t buf = {
         .base = const_cast<char*>(input_region_->base()),
         .len = input_region_->size()
@@ -57,12 +55,10 @@ void SerializingFuncRunner::OnSubprocessExit(int exit_status,
         Complete(kProcessExitAbnormally);
         return;
     }
-    utils::SharedMemory::Region* region = shared_memory_->Create(
-        utils::SharedMemory::OutputPath(call_id_), stdout.size());
+    auto output_region = ipc::ShmCreate(ipc::GetFuncCallOutputShmName(call_id_), stdout.size());
     if (stdout.size() > 0) {
-        memcpy(region->base(), stdout.data(), stdout.size());
+        memcpy(output_region->base(), stdout.data(), stdout.size());
     }
-    region->Close();
 #ifdef __FAAS_ENABLE_PROFILING
     Complete(kSuccess, GetMonotonicMicroTimestamp() - start_timestamp_);
 #else
@@ -76,8 +72,7 @@ void SerializingFuncRunner::ScheduleStop() {
 
 UV_WRITE_CB_FOR_CLASS(SerializingFuncRunner, WriteSubprocessStdin) {
     DCHECK(input_region_ != nullptr);
-    input_region_->Close();
-    input_region_ = nullptr;
+    input_region_.reset(nullptr);
     if (status == 0) {
         subprocess_.ClosePipe(Subprocess::kStdin);
     } else {

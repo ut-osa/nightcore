@@ -1,5 +1,4 @@
 #include "base/asm.h"
-#include "ipc/common.h"
 
 #define LOAD(T, ptr) *reinterpret_cast<T*>(ptr)
 #define STORE(T, ptr, value) *reinterpret_cast<T*>(ptr) = (value)
@@ -13,28 +12,29 @@ constexpr size_t SPSCQueue<T>::kConsumerSleepMask;
 template<class T>
 std::unique_ptr<SPSCQueue<T>> SPSCQueue<T>::Create(std::string_view name, size_t queue_size) {
     CHECK_GE(queue_size, 2U) << "Queue size must be at least 2";
-    utils::SharedMemory* shared_memory = GetSharedMemoryInstance();
-    auto region = shared_memory->Create(name, compute_total_bytesize(queue_size));
+    auto region = ShmCreate(fmt::format("SPSCQueue_{}", name), compute_total_bytesize(queue_size));
     BuildMemoryLayout(region->base(), queue_size);
-    return std::unique_ptr<SPSCQueue<T>>(new SPSCQueue<T>(true, region));
+    return std::unique_ptr<SPSCQueue<T>>(new SPSCQueue<T>(true, std::move(region)));
 }
 
 template<class T>
 std::unique_ptr<SPSCQueue<T>> SPSCQueue<T>::Open(std::string_view name) {
-    utils::SharedMemory* shared_memory = GetSharedMemoryInstance();
-    auto region = shared_memory->Open(name);
-    return std::unique_ptr<SPSCQueue<T>>(new SPSCQueue<T>(false, region));
+    auto region = ShmOpen(fmt::format("SPSCQueue_{}", name), /* readonly= */ false);
+    return std::unique_ptr<SPSCQueue<T>>(new SPSCQueue<T>(false, std::move(region)));
 }
 
 template<class T>
-SPSCQueue<T>::SPSCQueue(bool consumer, utils::SharedMemory::Region* shm_region) {
+SPSCQueue<T>::SPSCQueue(bool consumer, std::unique_ptr<ShmRegion> shm_region) {
     consumer_ = consumer;
-    shm_region_ = shm_region;
-    char* base_ptr = shm_region->base();
+    shm_region_ = std::move(shm_region);
+    if (consumer_) {
+        shm_region_->EnableRemoveOnDestruction();
+    }
+    char* base_ptr = shm_region_->base();
     size_t message_size = LOAD(size_t, base_ptr);
     CHECK_EQ(message_size, sizeof(T));
     queue_size_ = LOAD(size_t, base_ptr + sizeof(size_t));
-    CHECK_EQ(shm_region->size(), compute_total_bytesize(queue_size_));
+    CHECK_EQ(shm_region_->size(), compute_total_bytesize(queue_size_));
     head_ = reinterpret_cast<size_t*>(base_ptr + __FAAS_CACHE_LINE_SIZE);
     tail_ = reinterpret_cast<size_t*>(base_ptr + __FAAS_CACHE_LINE_SIZE * 2);
     cell_base_ = reinterpret_cast<char*>(base_ptr + __FAAS_CACHE_LINE_SIZE * 3);
@@ -42,13 +42,7 @@ SPSCQueue<T>::SPSCQueue(bool consumer, utils::SharedMemory::Region* shm_region) 
 }
 
 template<class T>
-SPSCQueue<T>::~SPSCQueue() {
-    if (consumer_) {
-        shm_region_->Close(true);
-    } else {
-        shm_region_->Close();
-    }
-}
+SPSCQueue<T>::~SPSCQueue() {}
 
 template<class T>
 size_t SPSCQueue<T>::compute_total_bytesize(size_t queue_size) {

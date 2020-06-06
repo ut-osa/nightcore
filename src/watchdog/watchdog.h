@@ -6,7 +6,6 @@
 #include "common/protocol.h"
 #include "common/func_config.h"
 #include "common/uv.h"
-#include "utils/shared_memory.h"
 #include "utils/buffer_pool.h"
 #include "watchdog/run_mode.h"
 #include "watchdog/gateway_connection.h"
@@ -25,9 +24,6 @@ public:
     Watchdog();
     ~Watchdog();
 
-    void set_gateway_ipc_path(std::string_view path) {
-        gateway_ipc_path_ = std::string(path);
-    }
     void set_func_id(int func_id) {
         func_id_ = func_id;
     }
@@ -36,9 +32,6 @@ public:
     }
     void set_fprocess_working_dir(std::string_view path) {
         fprocess_working_dir_ = std::string(path);
-    }
-    void set_shared_mem_path(std::string_view path) {
-        shared_mem_path_ = std::string(path);
     }
     void set_func_config_file(std::string_view path) {
         func_config_file_ = std::string(path);
@@ -56,12 +49,10 @@ public:
         func_worker_output_dir_ = std::string(path);
     }
 
-    std::string_view gateway_ipc_path() const { return gateway_ipc_path_; }
     int func_id() const { return func_id_; }
     std::string_view fprocess() const { return fprocess_; }
     std::string_view fprocess_working_dir() const { return fprocess_working_dir_; }
     bool func_worker_async_mode() const { return run_mode_ == RunMode::FUNC_WORKER_ASYNC; }
-    std::string_view shared_mem_path() const { return shared_mem_path_; }
     std::string_view func_config_file() const { return func_config_file_; }
     std::string_view func_worker_output_dir() const { return func_worker_output_dir_; }
 
@@ -89,11 +80,9 @@ private:
     enum State { kCreated, kRunning, kStopping, kStopped };
     std::atomic<State> state_;
 
-    std::string gateway_ipc_path_;
     int func_id_;
     std::string fprocess_;
     std::string fprocess_working_dir_;
-    std::string shared_mem_path_;
     std::string func_config_file_;
     RunMode run_mode_;
     int min_num_func_workers_;
@@ -106,7 +95,6 @@ private:
     base::Thread event_loop_thread_;
 
     FuncConfig func_config_;
-    std::unique_ptr<utils::SharedMemory> shared_memory_;
 
     GatewayConnection gateway_connection_;
     std::unique_ptr<utils::BufferPool> buffer_pool_for_subprocess_pipes_;

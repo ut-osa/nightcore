@@ -7,7 +7,6 @@
 #include "common/protocol.h"
 #include "common/func_config.h"
 #include "utils/buffer_pool.h"
-#include "utils/shared_memory.h"
 #include "gateway/connection.h"
 #include "gateway/io_worker.h"
 #include "gateway/http_request_context.h"
@@ -21,8 +20,7 @@ namespace gateway {
 class Server : public uv::Base {
 public:
     static constexpr int kDefaultListenBackLog = 32;
-    static constexpr int kDefaultNumHttpWorkers = 1;
-    static constexpr int kDefaultNumIpcWorkers = 1;
+    static constexpr int kDefaultNumIOWorkers = 1;
     static constexpr size_t kHttpConnectionBufferSize = 4096;
     static constexpr size_t kMessageConnectionBufferSize = 256;
 
@@ -32,16 +30,10 @@ public:
     ~Server();
 
     void set_address(std::string_view address) { address_ = std::string(address); }
-    void set_port(int port) { port_ = port; }
+    void set_http_port(int port) { http_port_ = port; }
     void set_grpc_port(int port) { grpc_port_ = port; }
-    void set_ipc_path(std::string_view address) { ipc_path_ = std::string(address); }
     void set_listen_backlog(int value) { listen_backlog_ = value; }
-    void set_num_http_workers(int value) { num_http_workers_ = value; }
-    void set_num_ipc_workers(int value) { num_ipc_workers_ = value; }
     void set_num_io_workers(int value) { num_io_workers_ = value; }
-    void set_shared_mem_path(std::string_view path) {
-        shared_mem_path_ = std::string(path);
-    }
     void set_func_config_file(std::string_view path) {
         func_config_file_ = std::string(path);
     }
@@ -105,14 +97,10 @@ private:
     std::atomic<State> state_;
 
     std::string address_;
-    int port_;
+    int http_port_;
     int grpc_port_;
-    std::string ipc_path_;
     int listen_backlog_;
-    int num_http_workers_;
-    int num_ipc_workers_;
     int num_io_workers_;
-    std::string shared_mem_path_;
     std::string func_config_file_;
 
     uv_loop_t uv_loop_;
@@ -148,7 +136,6 @@ private:
 
     FuncConfig func_config_;
     std::atomic<uint32_t> next_call_id_;
-    std::unique_ptr<utils::SharedMemory> shared_memory_;
     absl::Mutex external_func_calls_mu_;
     absl::flat_hash_map<uint64_t, std::unique_ptr<ExternalFuncCallContext>>
         external_func_calls_ ABSL_GUARDED_BY(external_func_calls_mu_);
