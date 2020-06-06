@@ -33,6 +33,7 @@ DLINK_FLAGS =
 
 # These options can be overridden in config.mk
 ENABLE_PROFILING = 0
+DEBUG_BUILD = 0
 
 ifneq ("$(wildcard config.mk)","")
     include config.mk
@@ -64,17 +65,18 @@ ifeq ($(V),1)
     CMD_PREFIX :=
 endif
 
-# Combine compiler and linker flags
-release: export CXXFLAGS := $(CXXFLAGS) $(COMPILE_FLAGS) $(RCOMPILE_FLAGS)
-release: export LDFLAGS := $(LDFLAGS) $(LINK_FLAGS) $(RLINK_FLAGS)
-debug: export CXXFLAGS := $(CXXFLAGS) $(COMPILE_FLAGS) $(DCOMPILE_FLAGS)
-debug: export LDFLAGS := $(LDFLAGS) $(LINK_FLAGS) $(DLINK_FLAGS)
+ifeq ($(DEBUG_BUILD),1)
+    BUILD_NAME := debug
+    CXXFLAGS   := $(CXXFLAGS) $(COMPILE_FLAGS) $(DCOMPILE_FLAGS)
+    LDFLAGS    := $(LDFLAGS) $(LINK_FLAGS) $(DLINK_FLAGS)
+else
+    BUILD_NAME := release
+    CXXFLAGS   := $(CXXFLAGS) $(COMPILE_FLAGS) $(RCOMPILE_FLAGS)
+    LDFLAGS    := $(LDFLAGS) $(LINK_FLAGS) $(RLINK_FLAGS)
+endif
 
-# Build and output paths
-release: export BUILD_PATH := build/release
-release: export BIN_PATH := bin/release
-debug: export BUILD_PATH := build/debug
-debug: export BIN_PATH := bin/debug
+BUILD_PATH := build/$(BUILD_NAME)
+BIN_PATH := bin/$(BUILD_NAME)
 
 # Find all source files in the source directory, sorted by most
 # recently modified
@@ -102,21 +104,11 @@ END_TIME = read st < $(TIME_FILE) ; \
 	st=$$((`date '+%s'` - $$st - 86400)) ; \
 	echo `date -u -d @$$st '+%H:%M:%S'`
 
-# Standard, non-optimized release build
-.PHONY: release
-release: dirs
-	@echo "Beginning release build"
+.PHONY: all
+all: dirs
+	@echo "Beginning $(BUILD_NAME) build"
 	@$(START_TIME)
-	@$(MAKE) all --no-print-directory
-	@echo -n "Total build time: "
-	@$(END_TIME)
-
-# Debug build for gdb debugging
-.PHONY: debug
-debug: dirs
-	@echo "Beginning debug build"
-	@$(START_TIME)
-	@$(MAKE) all --no-print-directory
+	@$(MAKE) binary --no-print-directory
 	@echo -n "Total build time: "
 	@$(END_TIME)
 
@@ -130,11 +122,9 @@ dirs:
 .PHONY: clean
 clean:
 	@echo "Deleting directories"
-	@$(RM) -r build
-	@$(RM) -r bin
+	@$(RM) -r build bin
 
-# Main rule, checks the executable and symlinks to the output
-all: $(BIN_OUTPUTS)
+binary: $(BIN_OUTPUTS)
 
 # Link the executable
 $(BIN_PATH)/%: $(BUILD_PATH)/bin/%.o $(NON_BIN_OBJECTS)
