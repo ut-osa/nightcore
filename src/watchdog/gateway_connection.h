@@ -23,8 +23,7 @@ public:
 
     uv_pipe_t* uv_pipe_handle() { return &uv_pipe_handle_; }
 
-    void Start(std::string_view ipc_path,
-               const protocol::HandshakeMessage& handshake_message);
+    void Start(std::string_view ipc_path, const protocol::Message& handshake_message);
     void ScheduleClose();
 
     void WriteMessage(const protocol::Message& message);
@@ -40,7 +39,7 @@ private:
 
     utils::BufferPool buffer_pool_;
     utils::AppendableBuffer message_buffer_;
-    protocol::HandshakeMessage handshake_message_;
+    protocol::Message handshake_message_;
     utils::SimpleObjectPool<uv_write_t> write_req_pool_;
 
     void RecvHandshakeResponse();

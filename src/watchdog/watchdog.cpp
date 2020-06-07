@@ -10,13 +10,14 @@
 namespace faas {
 namespace watchdog {
 
-using protocol::Status;
-using protocol::Role;
-using protocol::HandshakeMessage;
-using protocol::HandshakeResponse;
-using protocol::MessageType;
 using protocol::FuncCall;
 using protocol::Message;
+using protocol::IsHandshakeResponseMessage;
+using protocol::IsInvokeFuncMessage;
+using protocol::NewWatchdogHandshakeMessage;
+using protocol::NewFuncCallCompleteMessage;
+using protocol::NewFuncCallFailedMessage;
+using protocol::GetFuncCallFromMessage;
 
 constexpr size_t Watchdog::kSubprocessPipeBufferSizeForSerializingMode;
 constexpr size_t Watchdog::kSubprocessPipeBufferSizeForFuncWorkerMode;
@@ -59,11 +60,7 @@ void Watchdog::ScheduleStop() {
 
 void Watchdog::Start() {
     DCHECK(state_.load() == kCreated);
-    // Load function config file
-    CHECK(!func_config_file_.empty());
-    CHECK(func_config_.Load(func_config_file_));
     CHECK(func_id_ != -1);
-    CHECK(func_config_.find_by_func_id(func_id_) != nullptr);
     CHECK(!fprocess_.empty());
     switch (run_mode_) {
     case RunMode::SERIALIZING:
@@ -97,10 +94,8 @@ void Watchdog::Start() {
     // Connect to gateway via IPC path
     uv_pipe_t* pipe_handle = gateway_connection_.uv_pipe_handle();
     UV_DCHECK_OK(uv_pipe_init(&uv_loop_, pipe_handle, 0));
-    HandshakeMessage message;
-    message.role = gsl::narrow_cast<uint16_t>(Role::WATCHDOG);
-    message.func_id = func_id_;
-    gateway_connection_.Start(ipc::GetGatewayUnixSocketPath(), message);
+    gateway_connection_.Start(ipc::GetGatewayUnixSocketPath(),
+                              NewWatchdogHandshakeMessage(func_id_));
     // Start thread for running event loop
     event_loop_thread_.Start();
     state_.store(kRunning);
@@ -129,26 +124,30 @@ void Watchdog::EventLoopThreadMain() {
     state_.store(kStopped);
 }
 
-bool Watchdog::OnRecvHandshakeResponse(const HandshakeResponse& response) {
+bool Watchdog::OnRecvHandshakeResponse(const Message& handshake_response,
+                                       std::span<const char> payload) {
     DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
-    if (Status{response.status} != Status::OK) {
-        HLOG(WARNING) << "Handshake failed, will close the connection";
+    if (!IsHandshakeResponseMessage(handshake_response)) {
+        HLOG(ERROR) << "Invalid handshake response, will close the connection";
         gateway_connection_.ScheduleClose();
         return false;
     }
-    client_id_ = response.client_id;
+    if (!func_config_.Load(std::string_view(payload.data(), payload.size()))) {
+        HLOG(ERROR) << "Failed to load function config from handshake response, will close the connection";
+        gateway_connection_.ScheduleClose();
+        return false;
+    }
     return true;
 }
 
 void Watchdog::OnRecvMessage(const protocol::Message& message) {
     DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
-    MessageType type{message.message_type};
 #ifdef __FAAS_ENABLE_PROFILING
     gateway_message_delay_stat_.AddSample(gsl::narrow_cast<int32_t>(
         GetMonotonicMicroTimestamp() - message.send_timestamp));
 #endif
-    if (type == MessageType::INVOKE_FUNC) {
-        FuncCall func_call = message.func_call;
+    if (IsInvokeFuncMessage(message)) {
+        FuncCall func_call = GetFuncCallFromMessage(message);
         if (func_call.func_id != func_id_) {
             HLOG(ERROR) << "I am not running func_id " << func_call.func_id;
             return;
@@ -177,7 +176,8 @@ void Watchdog::OnRecvMessage(const protocol::Message& message) {
     }
 }
 
-void Watchdog::OnFuncRunnerComplete(FuncRunner* func_runner, FuncRunner::Status status, int32_t processing_time) {
+void Watchdog::OnFuncRunnerComplete(FuncRunner* func_runner, FuncRunner::Status status,
+                                    int32_t processing_time) {
     DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
     DCHECK(func_runners_.contains(func_runner->call_id()));
     FuncCall func_call;
@@ -189,25 +189,21 @@ void Watchdog::OnFuncRunnerComplete(FuncRunner* func_runner, FuncRunner::Status 
     }
     if (status == FuncRunner::kSuccess) {
         if (run_mode_ == RunMode::SERIALIZING) {
-            gateway_connection_.WriteMessage({
+            Message message = NewFuncCallCompleteMessage(func_call);
 #ifdef __FAAS_ENABLE_PROFILING
-                .send_timestamp = GetMonotonicMicroTimestamp(),
-                .processing_time = processing_time,
+            message.send_timestamp = GetMonotonicMicroTimestamp();
+            message.processing_time = processing_time;
 #endif
-                .message_type = gsl::narrow_cast<uint16_t>(MessageType::FUNC_CALL_COMPLETE),
-                .func_call = func_call
-            });
+            gateway_connection_.WriteMessage(message);
         }
         processing_delay_stat_.AddSample(processing_time);
     } else {
-        gateway_connection_.WriteMessage({
+        Message message = NewFuncCallFailedMessage(func_call);
 #ifdef __FAAS_ENABLE_PROFILING
-            .send_timestamp = GetMonotonicMicroTimestamp(),
-            .processing_time = processing_time,
+        message.send_timestamp = GetMonotonicMicroTimestamp();
+        message.processing_time = processing_time;
 #endif
-            .message_type = gsl::narrow_cast<uint16_t>(MessageType::FUNC_CALL_FAILED),
-            .func_call = func_call
-        });
+        gateway_connection_.WriteMessage(message);
     }
 }
 

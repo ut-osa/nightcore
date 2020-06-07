@@ -11,13 +11,13 @@ namespace faas {
 namespace gateway {
 
 using protocol::Message;
-using protocol::Role;
-using protocol::HandshakeMessage;
-using protocol::HandshakeResponse;
+using protocol::IsWatchdogHandshakeMessage;
+using protocol::IsFuncWorkerHandshakeMessage;
 
 MessageConnection::MessageConnection(Server* server)
-    : Connection(Connection::Type::Message, server), io_worker_(nullptr), state_(kCreated),
-      role_(Role::INVALID), func_id_(0), client_id_(0),
+    : Connection(Connection::Type::Message, server),
+      io_worker_(nullptr), state_(kCreated),
+      func_id_(0), client_id_(0), handshake_done_(false),
       log_header_("MessageConnection[Handshaking]: ") {
 }
 
@@ -93,23 +93,32 @@ void MessageConnection::SendPendingMessages() {
 void MessageConnection::RecvHandshakeMessage() {
     DCHECK_IN_EVENT_LOOP_THREAD(uv_pipe_handle_.loop);
     UV_DCHECK_OK(uv_read_stop(UV_AS_STREAM(&uv_pipe_handle_)));
-    HandshakeMessage* message = reinterpret_cast<HandshakeMessage*>(
-        message_buffer_.data());
-    server_->OnNewHandshake(this, *message, &handshake_response_);
-    role_ = Role{message->role};
+    Message* message = reinterpret_cast<Message*>(message_buffer_.data());
+    std::span<const char> payload;
+    if (!server_->OnNewHandshake(this, *message, &handshake_response_, &payload)) {
+        ScheduleClose();
+        return;
+    }
     func_id_ = message->func_id;
-    client_id_ = handshake_response_.client_id;
-    if (role_ == Role::WATCHDOG) {
+    if (IsWatchdogHandshakeMessage(*message)) {
+        client_id_ = 0;
         log_header_ = absl::StrFormat("WatchdogConnection[%d]: ", func_id_);
-    } else if (role_ == Role::FUNC_WORKER) {
+    } else if (IsFuncWorkerHandshakeMessage(*message)) {
+        client_id_ = message->client_id;
         log_header_ = absl::StrFormat("FuncWorkerConnection[%d-%d]: ", func_id_, client_id_);
     }
-    uv_buf_t buf = {
+    uv_buf_t bufs[2];
+    bufs[0] = {
         .base = reinterpret_cast<char*>(&handshake_response_),
-        .len = sizeof(HandshakeResponse)
+        .len = sizeof(Message)
+    };
+    bufs[1] = {
+        .base = const_cast<char*>(payload.data()),
+        .len = payload.size()
     };
     UV_DCHECK_OK(uv_write(io_worker_->NewWriteRequest(), UV_AS_STREAM(&uv_pipe_handle_),
-                          &buf, 1, &MessageConnection::WriteHandshakeResponseCallback));
+                          bufs, 2, &MessageConnection::WriteHandshakeResponseCallback));
+    handshake_done_ = true;
     state_ = kRunning;
 }
 
@@ -143,10 +152,10 @@ UV_READ_CB_FOR_CLASS(MessageConnection, ReadHandshake) {
         return;
     }
     message_buffer_.AppendData(buf->base, nread);
-    if (message_buffer_.length() > sizeof(HandshakeMessage)) {
+    if (message_buffer_.length() > sizeof(Message)) {
         HLOG(ERROR) << "Invalid handshake, will close this connection";
         ScheduleClose();
-    } else if (message_buffer_.length() == sizeof(HandshakeMessage)) {
+    } else if (message_buffer_.length() == sizeof(Message)) {
         RecvHandshakeMessage();
     }
 }

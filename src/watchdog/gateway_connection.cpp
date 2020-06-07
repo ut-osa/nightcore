@@ -9,8 +9,6 @@ namespace faas {
 namespace watchdog {
 
 using protocol::Message;
-using protocol::HandshakeMessage;
-using protocol::HandshakeResponse;
 
 constexpr size_t GatewayConnection::kBufferSize;
 
@@ -22,8 +20,7 @@ GatewayConnection::~GatewayConnection() {
     DCHECK(state_ == kCreated || state_ == kClosed);
 }
 
-void GatewayConnection::Start(std::string_view ipc_path,
-                              const HandshakeMessage& handshake_message) {
+void GatewayConnection::Start(std::string_view ipc_path, const Message& handshake_message) {
     DCHECK(state_ == kCreated);
     handshake_message_ = handshake_message;
     uv_pipe_handle_.data = this;
@@ -36,22 +33,20 @@ void GatewayConnection::Start(std::string_view ipc_path,
 void GatewayConnection::ScheduleClose() {
     DCHECK_IN_EVENT_LOOP_THREAD(uv_pipe_handle_.loop);
     if (state_ == kHandshake || state_ == kRunning) {
-        uv_close(UV_AS_HANDLE(&uv_pipe_handle_),
-                &GatewayConnection::CloseCallback);
+        uv_close(UV_AS_HANDLE(&uv_pipe_handle_), &GatewayConnection::CloseCallback);
         state_ = kClosing;
     }
 }
 
 void GatewayConnection::RecvHandshakeResponse() {
     UV_DCHECK_OK(uv_read_stop(UV_AS_STREAM(&uv_pipe_handle_)));
-    HandshakeResponse* response = reinterpret_cast<HandshakeResponse*>(
-        message_buffer_.data());
-    if (watchdog_->OnRecvHandshakeResponse(*response)) {
+    Message* response = reinterpret_cast<Message*>(message_buffer_.data());
+    std::span<const char> payload(message_buffer_.data() + sizeof(Message), response->payload_size);
+    if (watchdog_->OnRecvHandshakeResponse(*response, payload)) {
         HLOG(INFO) << "Handshake done";
-        message_buffer_.Reset();
         UV_DCHECK_OK(uv_read_start(UV_AS_STREAM(&uv_pipe_handle_),
-                                  &GatewayConnection::BufferAllocCallback,
-                                  &GatewayConnection::ReadMessageCallback));
+                                   &GatewayConnection::BufferAllocCallback,
+                                   &GatewayConnection::ReadMessageCallback));
         state_ = kRunning;
     }
 }
@@ -79,7 +74,7 @@ UV_CONNECT_CB_FOR_CLASS(GatewayConnection, Connect) {
     HLOG(INFO) << "Connected to gateway, start writing handshake message";
     uv_buf_t buf = {
         .base = reinterpret_cast<char*>(&handshake_message_),
-        .len = sizeof(HandshakeMessage)
+        .len = sizeof(Message)
     };
     UV_DCHECK_OK(uv_write(write_req_pool_.Get(), UV_AS_STREAM(&uv_pipe_handle_),
                           &buf, 1, &GatewayConnection::WriteHandshakeCallback));
@@ -106,9 +101,18 @@ UV_READ_CB_FOR_CLASS(GatewayConnection, ReadHandshakeResponse) {
         return;
     }
     message_buffer_.AppendData(buf->base, nread);
-    DCHECK_LE(message_buffer_.length(), sizeof(HandshakeResponse));
-    if (message_buffer_.length() == sizeof(HandshakeResponse)) {
-        RecvHandshakeResponse();
+    if (message_buffer_.length() >= sizeof(Message)) {
+        Message* response = reinterpret_cast<Message*>(message_buffer_.data());
+        size_t expected_size = sizeof(Message) + response->payload_size;
+        if (message_buffer_.length() >= expected_size) {
+            RecvHandshakeResponse();
+            message_buffer_.ConsumeFront(expected_size);
+            while (message_buffer_.length() >= sizeof(Message)) {
+                Message* message = reinterpret_cast<Message*>(message_buffer_.data());
+                watchdog_->OnRecvMessage(*message);
+                message_buffer_.ConsumeFront(sizeof(Message));
+            }
+        }
     }
 }
 

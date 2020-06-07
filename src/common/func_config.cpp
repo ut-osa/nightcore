@@ -54,12 +54,7 @@ bool FuncConfig::ValidateFuncName(std::string_view func_name) {
     return true;
 }
 
-bool FuncConfig::Load(std::string_view json_path) {
-    std::string json_contents;
-    if (!fs_utils::ReadContents(json_path, &json_contents)) {
-        LOG(ERROR) << "Failed to read from file " << json_path;
-        return false;
-    }
+bool FuncConfig::Load(std::string_view json_contents) {
     json config;
 #ifndef __FAAS_CXX_NO_EXCEPTIONS
     try {

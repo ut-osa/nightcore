@@ -18,9 +18,10 @@ public:
     explicit MessageConnection(Server* server);
     ~MessageConnection();
 
-    protocol::Role role() const { return role_; }
     uint16_t func_id() const { return func_id_; }
     uint16_t client_id() const { return client_id_; }
+    bool handshake_done() const { return handshake_done_; }
+    bool is_watchdog_connection() const { return client_id_ == 0; }
 
     uv_stream_t* InitUVHandle(uv_loop_t* uv_loop) override;
     void Start(IOWorker* io_worker) override;
@@ -34,15 +35,15 @@ private:
 
     IOWorker* io_worker_;
     State state_;
-    protocol::Role role_;
     uint16_t func_id_;
     uint16_t client_id_;
+    bool handshake_done_;
     uv_pipe_t uv_pipe_handle_;
 
     std::string log_header_;
 
     utils::AppendableBuffer message_buffer_;
-    protocol::HandshakeResponse handshake_response_;
+    protocol::Message handshake_response_;
     utils::AppendableBuffer write_message_buffer_;
 
     absl::Mutex write_message_mu_;

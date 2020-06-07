@@ -7,7 +7,6 @@
 
 ABSL_FLAG(std::string, root_path_for_ipc, "/dev/shm/faas_ipc",
           "Root directory for IPCs used by FaaS");
-ABSL_FLAG(std::string, func_config_file, "", "Path to function config file");
 ABSL_FLAG(int, func_id, -1, "Function ID of this watchdog process");
 ABSL_FLAG(std::string, fprocess, "", "Function process");
 ABSL_FLAG(std::string, fprocess_working_dir, "",
@@ -39,7 +38,6 @@ int main(int argc, char* argv[]) {
     watchdog->set_run_mode(absl::GetFlag(FLAGS_run_mode));
     watchdog->set_min_num_func_workers(absl::GetFlag(FLAGS_min_num_func_workers));
     watchdog->set_max_num_func_workers(absl::GetFlag(FLAGS_max_num_func_workers));
-    watchdog->set_func_config_file(absl::GetFlag(FLAGS_func_config_file));
     watchdog->set_func_worker_output_dir(absl::GetFlag(FLAGS_func_worker_output_dir));
 
     watchdog->Start();

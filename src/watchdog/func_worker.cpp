@@ -11,8 +11,12 @@
 namespace faas {
 namespace watchdog {
 
-using protocol::MessageType;
+using protocol::FuncCall;
 using protocol::Message;
+using protocol::GetFuncCallFromMessage;
+using protocol::IsFuncCallCompleteMessage;
+using protocol::IsFuncCallFailedMessage;
+using protocol::NewInvokeFuncMessage;
 
 constexpr size_t FuncWorker::kWriteBufferSize;
 
@@ -34,7 +38,6 @@ void FuncWorker::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool) 
     subprocess_.AddEnvVariable("FUNC_ID", watchdog_->func_id());
     subprocess_.AddEnvVariable("INPUT_PIPE_FD", input_pipe_fd_);
     subprocess_.AddEnvVariable("OUTPUT_PIPE_FD", output_pipe_fd_);
-    subprocess_.AddEnvVariable("FUNC_CONFIG_FILE", fs_utils::GetRealPath(watchdog_->func_config_file()));
     subprocess_.AddEnvVariable("WORKER_ID", worker_id_);
     if (!watchdog_->func_worker_output_dir().empty()) {
         std::string_view output_dir = watchdog_->func_worker_output_dir();
@@ -127,12 +130,12 @@ void FuncWorker::OnRecvMessage(const Message& message) {
     watchdog_->func_worker_message_delay_stat()->AddSample(gsl::narrow_cast<int32_t>(
         GetMonotonicMicroTimestamp() - message.send_timestamp));
 #endif
-    MessageType type{message.message_type};
-    uint64_t call_id = message.func_call.full_call_id;
-    if (type == MessageType::FUNC_CALL_COMPLETE || type == MessageType::FUNC_CALL_FAILED) {
+    FuncCall func_call = GetFuncCallFromMessage(message);
+    uint64_t call_id = func_call.full_call_id;
+    if (IsFuncCallCompleteMessage(message) || IsFuncCallFailedMessage(message)) {
         if (func_runners_.contains(call_id)) {
             WorkerFuncRunner* func_runner = func_runners_[call_id];
-            if (type == MessageType::FUNC_CALL_COMPLETE) {
+            if (IsFuncCallCompleteMessage(message)) {
 #ifdef __FAAS_ENABLE_PROFILING
                 func_runner->Complete(FuncRunner::kSuccess, message.processing_time);
 #else
@@ -190,10 +193,12 @@ void FuncWorker::DispatchFuncCall(uint64_t call_id) {
         message = &message_to_send_;
         write_req = &write_req_;
     }
-    message->message_type = gsl::narrow_cast<uint16_t>(MessageType::INVOKE_FUNC);
-    message->func_call.full_call_id = call_id;
+    FuncCall func_call;
+    func_call.full_call_id = call_id;
+    *message = NewInvokeFuncMessage(func_call);
 #ifdef __FAAS_ENABLE_PROFILING
     message->send_timestamp = GetMonotonicMicroTimestamp();
+    message->processing_time = 0;
 #endif
     uv_buf_t buf = {
         .base = reinterpret_cast<char*>(message),

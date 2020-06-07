@@ -85,9 +85,10 @@ public:
                       const RequestHandler** request_handler) const;
 
     // Must be thread-safe
-    void OnNewHandshake(MessageConnection* connection,
-                        const protocol::HandshakeMessage& message,
-                        protocol::HandshakeResponse* response);
+    bool OnNewHandshake(MessageConnection* connection,
+                        const protocol::Message& handshake_message,
+                        protocol::Message* response,
+                        std::span<const char>* response_payload);
     void OnRecvMessage(MessageConnection* connection, const protocol::Message& message);
     void OnNewGrpcCall(std::shared_ptr<GrpcCallContext> call_context);
 
@@ -134,6 +135,7 @@ private:
         watchdog_connections_by_func_id_ ABSL_GUARDED_BY(message_connection_mu_);
     absl::flat_hash_set<std::unique_ptr<MessageConnection>> message_connections_;
 
+    std::string func_config_json_;
     FuncConfig func_config_;
     std::atomic<uint32_t> next_call_id_;
     absl::Mutex external_func_calls_mu_;

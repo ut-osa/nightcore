@@ -33,9 +33,6 @@ public:
     void set_fprocess_working_dir(std::string_view path) {
         fprocess_working_dir_ = std::string(path);
     }
-    void set_func_config_file(std::string_view path) {
-        func_config_file_ = std::string(path);
-    }
     void set_run_mode(int run_mode) {
         run_mode_ = gsl::narrow_cast<RunMode>(run_mode);
     }
@@ -53,7 +50,6 @@ public:
     std::string_view fprocess() const { return fprocess_; }
     std::string_view fprocess_working_dir() const { return fprocess_working_dir_; }
     bool func_worker_async_mode() const { return run_mode_ == RunMode::FUNC_WORKER_ASYNC; }
-    std::string_view func_config_file() const { return func_config_file_; }
     std::string_view func_worker_output_dir() const { return func_worker_output_dir_; }
 
     std::string_view func_name() const {
@@ -66,14 +62,16 @@ public:
     void WaitForFinish();
 
     void OnGatewayConnectionClose();
-    void OnFuncRunnerComplete(FuncRunner* func_runner, FuncRunner::Status status, int32_t processing_time);
+    void OnFuncRunnerComplete(FuncRunner* func_runner, FuncRunner::Status status,
+                              int32_t processing_time);
     void OnFuncWorkerClose(FuncWorker* func_worker);
     void OnFuncWorkerIdle(FuncWorker* func_worker);
     stat::StatisticsCollector<int32_t>* func_worker_message_delay_stat() {
         return &func_worker_message_delay_stat_;
     }
 
-    bool OnRecvHandshakeResponse(const protocol::HandshakeResponse& response);
+    bool OnRecvHandshakeResponse(const protocol::Message& handshake_response,
+                                 std::span<const char> payload);
     void OnRecvMessage(const protocol::Message& message);
 
 private:
@@ -83,7 +81,6 @@ private:
     int func_id_;
     std::string fprocess_;
     std::string fprocess_working_dir_;
-    std::string func_config_file_;
     RunMode run_mode_;
     int min_num_func_workers_;
     int max_num_func_workers_;
