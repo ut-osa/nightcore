@@ -1,14 +1,15 @@
-#include "watchdog/subprocess.h"
+#include "common/subprocess.h"
 
 #define HLOG(l) LOG(l) << "Subprocess: "
 #define HVLOG(l) VLOG(l) << "Subprocess: "
 
 namespace faas {
-namespace watchdog {
+namespace uv {
 
 Subprocess::Subprocess(std::string_view cmd, size_t max_stdout_size, size_t max_stderr_size)
     : state_(kCreated), cmd_(cmd),
-      max_stdout_size_(max_stdout_size), max_stderr_size_(max_stderr_size) {
+      max_stdout_size_(max_stdout_size), max_stderr_size_(max_stderr_size),
+      pid_(-1) {
     pipe_types_.push_back(UV_READABLE_PIPE);  // stdin
     pipe_types_.push_back(UV_WRITABLE_PIPE);  // stdout
     pipe_types_.push_back(UV_WRITABLE_PIPE);  // stderr
@@ -112,6 +113,7 @@ bool Subprocess::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool,
     if (uv_spawn(uv_loop, &uv_process_handle_, &options) != 0) {
         return false;
     }
+    pid_ = uv_process_handle_.pid;
     handle_scope_.AddHandle(&uv_process_handle_);
     if (std_fds_[kStdout] == -1) {
         UV_DCHECK_OK(uv_read_start(UV_AS_STREAM(&uv_pipe_handles_[kStdout]),
@@ -238,5 +240,5 @@ UV_EXIT_CB_FOR_CLASS(Subprocess, ProcessExit) {
     state_ = kExited;
 }
 
-}  // namespace watchdog
+}  // namespace uv
 }  // namespace faas

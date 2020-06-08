@@ -23,7 +23,7 @@ static_assert(sizeof(FuncCall) == 8, "Unexpected FuncCall size");
 
 enum class MessageType : uint16_t {
     INVALID               = 0,
-    WATCHDOG_HANDSHAKE    = 1,
+    LAUNCHER_HANDSHAKE    = 1,
     FUNC_WORKER_HANDSHAKE = 2,
     HANDSHAKE_RESPONSE    = 3,
     CREATE_FUNC_WORKER    = 4,
@@ -57,8 +57,8 @@ inline bool IsInvalidMessage(const Message& message) {
     return static_cast<MessageType>(message.message_type) == MessageType::INVALID;
 }
 
-inline bool IsWatchdogHandshakeMessage(const Message& message) {
-    return static_cast<MessageType>(message.message_type) == MessageType::WATCHDOG_HANDSHAKE;
+inline bool IsLauncherHandshakeMessage(const Message& message) {
+    return static_cast<MessageType>(message.message_type) == MessageType::LAUNCHER_HANDSHAKE;
 }
 
 inline bool IsFuncWorkerHandshakeMessage(const Message& message) {
@@ -67,6 +67,10 @@ inline bool IsFuncWorkerHandshakeMessage(const Message& message) {
 
 inline bool IsHandshakeResponseMessage(const Message& message) {
     return static_cast<MessageType>(message.message_type) == MessageType::HANDSHAKE_RESPONSE;
+}
+
+inline bool IsCreateFuncWorkerMessage(const Message& message) {
+    return static_cast<MessageType>(message.message_type) == MessageType::CREATE_FUNC_WORKER;
 }
 
 inline bool IsInvokeFuncMessage(const Message& message) {
@@ -105,9 +109,9 @@ inline FuncCall GetFuncCallFromMessage(const Message& message) {
     Message var;                     \
     memset(&var, 0, sizeof(Message))
 
-inline Message NewWatchdogHandshakeMessage(uint16_t func_id) {
+inline Message NewLauncherHandshakeMessage(uint16_t func_id) {
     NEW_EMPTY_MESSAGE(message);
-    message.message_type = static_cast<uint16_t>(MessageType::WATCHDOG_HANDSHAKE);
+    message.message_type = static_cast<uint16_t>(MessageType::LAUNCHER_HANDSHAKE);
     message.func_id = func_id;
     return message;
 }
@@ -124,6 +128,13 @@ inline Message NewHandshakeResponseMessage(uint32_t payload_size) {
     NEW_EMPTY_MESSAGE(message);
     message.message_type = static_cast<uint16_t>(MessageType::HANDSHAKE_RESPONSE);
     message.payload_size = payload_size;
+    return message;
+}
+
+inline Message NewCreateFuncWorkerMessage(uint16_t client_id) {
+    NEW_EMPTY_MESSAGE(message);
+    message.message_type = static_cast<uint16_t>(MessageType::CREATE_FUNC_WORKER);
+    message.client_id = client_id;
     return message;
 }
 

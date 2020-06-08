@@ -6,9 +6,9 @@
 #include "utils/buffer_pool.h"
 
 namespace faas {
-namespace watchdog {
+namespace uv {
 
-class Subprocess : public uv::Base {
+class Subprocess : public Base {
 public:
     static constexpr size_t kDefaultMaxStdoutSize = 16 * 1024 * 1024;  // 16MB‬
     static constexpr size_t kDefaultMaxStderrSize = 1 * 1024 * 1024;   // 1MB
@@ -20,6 +20,8 @@ public:
                         size_t max_stdout_size = kDefaultMaxStdoutSize,
                         size_t max_stderr_size = kDefaultMaxStderrSize);
     ~Subprocess();
+
+    int pid() const { return pid_; }
 
     // Open file for standard file
     void SetStandardFile(StandardPipe pipe, std::string_view file_path);
@@ -58,7 +60,7 @@ private:
     size_t max_stdout_size_;
     size_t max_stderr_size_;
     long exit_status_;
-    uv::HandleScope handle_scope_;
+    HandleScope handle_scope_;
     ExitCallback exit_callback_;
 
     std::vector<int> std_fds_;
@@ -74,6 +76,8 @@ private:
     utils::AppendableBuffer stdout_;
     utils::AppendableBuffer stderr_;
 
+    int pid_;
+
     void OnAllHandlesClosed();
 
     DECLARE_UV_ALLOC_CB_FOR_CLASS(BufferAlloc);
@@ -84,5 +88,5 @@ private:
     DISALLOW_COPY_AND_ASSIGN(Subprocess);
 };
 
-}  // namespace watchdog
+}  // namespace uv
 }  // namespace faas

@@ -11,7 +11,7 @@ namespace faas {
 namespace gateway {
 
 using protocol::Message;
-using protocol::IsWatchdogHandshakeMessage;
+using protocol::IsLauncherHandshakeMessage;
 using protocol::IsFuncWorkerHandshakeMessage;
 
 MessageConnection::MessageConnection(Server* server)
@@ -54,6 +54,9 @@ void MessageConnection::ScheduleClose() {
 
 void MessageConnection::SendPendingMessages() {
     DCHECK_IN_EVENT_LOOP_THREAD(uv_pipe_handle_.loop);
+    if (state_ == kHandshake) {
+        return;
+    }
     if (state_ != kRunning) {
         HLOG(WARNING) << "MessageConnection is closing or has closed, will not send pending messages";
         return;
@@ -100,9 +103,9 @@ void MessageConnection::RecvHandshakeMessage() {
         return;
     }
     func_id_ = message->func_id;
-    if (IsWatchdogHandshakeMessage(*message)) {
+    if (IsLauncherHandshakeMessage(*message)) {
         client_id_ = 0;
-        log_header_ = absl::StrFormat("WatchdogConnection[%d]: ", func_id_);
+        log_header_ = absl::StrFormat("LauncherConnection[%d]: ", func_id_);
     } else if (IsFuncWorkerHandshakeMessage(*message)) {
         client_id_ = message->client_id;
         log_header_ = absl::StrFormat("FuncWorkerConnection[%d-%d]: ", func_id_, client_id_);
@@ -120,6 +123,7 @@ void MessageConnection::RecvHandshakeMessage() {
                           bufs, 2, &MessageConnection::WriteHandshakeResponseCallback));
     handshake_done_ = true;
     state_ = kRunning;
+    SendPendingMessages();
 }
 
 void MessageConnection::WriteMessage(const Message& message) {

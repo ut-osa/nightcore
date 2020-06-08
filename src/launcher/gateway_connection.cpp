@@ -1,19 +1,19 @@
-#include "watchdog/gateway_connection.h"
+#include "launcher/gateway_connection.h"
 
-#include "watchdog/watchdog.h"
+#include "launcher/launcher.h"
 
 #define HLOG(l) LOG(l) << "GatewayConnection: "
 #define HVLOG(l) VLOG(l) << "GatewayConnection: "
 
 namespace faas {
-namespace watchdog {
+namespace launcher {
 
 using protocol::Message;
 
 constexpr size_t GatewayConnection::kBufferSize;
 
-GatewayConnection::GatewayConnection(Watchdog* watchdog)
-    : watchdog_(watchdog), state_(kCreated),
+GatewayConnection::GatewayConnection(Launcher* launcher)
+    : launcher_(launcher), state_(kCreated),
       buffer_pool_("GatewayConnection", kBufferSize) {}
 
 GatewayConnection::~GatewayConnection() {
@@ -42,7 +42,7 @@ void GatewayConnection::RecvHandshakeResponse() {
     UV_DCHECK_OK(uv_read_stop(UV_AS_STREAM(&uv_pipe_handle_)));
     Message* response = reinterpret_cast<Message*>(message_buffer_.data());
     std::span<const char> payload(message_buffer_.data() + sizeof(Message), response->payload_size);
-    if (watchdog_->OnRecvHandshakeResponse(*response, payload)) {
+    if (launcher_->OnRecvHandshakeResponse(*response, payload)) {
         HLOG(INFO) << "Handshake done";
         UV_DCHECK_OK(uv_read_start(UV_AS_STREAM(&uv_pipe_handle_),
                                    &GatewayConnection::BufferAllocCallback,
@@ -109,7 +109,7 @@ UV_READ_CB_FOR_CLASS(GatewayConnection, ReadHandshakeResponse) {
             message_buffer_.ConsumeFront(expected_size);
             while (message_buffer_.length() >= sizeof(Message)) {
                 Message* message = reinterpret_cast<Message*>(message_buffer_.data());
-                watchdog_->OnRecvMessage(*message);
+                launcher_->OnRecvMessage(*message);
                 message_buffer_.ConsumeFront(sizeof(Message));
             }
         }
@@ -150,7 +150,7 @@ UV_READ_CB_FOR_CLASS(GatewayConnection, ReadMessage) {
     utils::ReadMessages<Message>(
         &message_buffer_, buf->base, nread,
         [this] (Message* message) {
-            watchdog_->OnRecvMessage(*message);
+            launcher_->OnRecvMessage(*message);
         });
 }
 
@@ -168,8 +168,8 @@ UV_WRITE_CB_FOR_CLASS(GatewayConnection, WriteMessage) {
 
 UV_CLOSE_CB_FOR_CLASS(GatewayConnection, Close) {
     state_ = kClosed;
-    watchdog_->OnGatewayConnectionClose();
+    launcher_->OnGatewayConnectionClose();
 }
 
-}  // namespace watchdog
+}  // namespace launcher
 }  // namespace faas

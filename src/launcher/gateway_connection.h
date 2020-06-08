@@ -8,9 +8,9 @@
 #include "utils/object_pool.h"
 
 namespace faas {
-namespace watchdog {
+namespace launcher {
 
-class Watchdog;
+class Launcher;
 
 class GatewayConnection : public uv::Base {
 public:
@@ -18,7 +18,7 @@ public:
     static_assert(sizeof(protocol::Message) <= kBufferSize,
                   "kBufferSize is too small");
 
-    explicit GatewayConnection(Watchdog* watchdog);
+    explicit GatewayConnection(Launcher* launcher);
     ~GatewayConnection();
 
     uv_pipe_t* uv_pipe_handle() { return &uv_pipe_handle_; }
@@ -31,7 +31,7 @@ public:
 private:
     enum State { kCreated, kHandshake, kRunning, kClosing, kClosed };
 
-    Watchdog* watchdog_;
+    Launcher* launcher_;
     State state_;
 
     uv_connect_t connect_req_;
@@ -55,5 +55,5 @@ private:
     DISALLOW_COPY_AND_ASSIGN(GatewayConnection);
 };
 
-}  // namespace watchdog
+}  // namespace launcher
 }  // namespace faas

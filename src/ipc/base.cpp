@@ -37,6 +37,11 @@ void SetRootPathForIpc(std::string_view path, bool create) {
     }
 }
 
+std::string_view GetRootPathForIpc() {
+    CHECK_NE(root_path_for_ipc, "NOT_SET");
+    return root_path_for_ipc;
+}
+
 std::string_view GetGatewayUnixSocketPath() {
     CHECK_NE(gateway_unix_ipc_path, "NOT_SET");
     return gateway_unix_ipc_path;

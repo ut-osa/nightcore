@@ -21,7 +21,7 @@ public:
     uint16_t func_id() const { return func_id_; }
     uint16_t client_id() const { return client_id_; }
     bool handshake_done() const { return handshake_done_; }
-    bool is_watchdog_connection() const { return client_id_ == 0; }
+    bool is_launcher_connection() const { return client_id_ == 0; }
 
     uv_stream_t* InitUVHandle(uv_loop_t* uv_loop) override;
     void Start(IOWorker* io_worker) override;

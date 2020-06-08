@@ -13,6 +13,8 @@ ABSL_FLAG(int, num_io_workers, 1, "Number of IO workers.");
 ABSL_FLAG(std::string, root_path_for_ipc, "/dev/shm/faas_ipc",
           "Root directory for IPCs used by FaaS");
 ABSL_FLAG(std::string, func_config_file, "", "Path to function config file");
+ABSL_FLAG(int, dispatcher_min_workers_per_func, 1,
+          "[Dispatcher option] Minimum number of workers per function.");
 
 static std::atomic<faas::gateway::Server*> server_ptr(nullptr);
 void SignalHandlerToStopServer(int signal) {
@@ -33,6 +35,9 @@ int main(int argc, char* argv[]) {
     server->set_grpc_port(absl::GetFlag(FLAGS_grpc_port));
     server->set_num_io_workers(absl::GetFlag(FLAGS_num_io_workers));
     server->set_func_config_file(absl::GetFlag(FLAGS_func_config_file));
+
+    auto dispatcher = server->dispatcher();
+    dispatcher->set_min_workers_per_func(absl::GetFlag(FLAGS_dispatcher_min_workers_per_func));
 
     server->Start();
     server_ptr.store(server.get());

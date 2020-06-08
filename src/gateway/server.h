@@ -13,6 +13,7 @@
 #include "gateway/http_connection.h"
 #include "gateway/grpc_connection.h"
 #include "gateway/message_connection.h"
+#include "gateway/dispatcher.h"
 
 namespace faas {
 namespace gateway {
@@ -23,8 +24,6 @@ public:
     static constexpr int kDefaultNumIOWorkers = 1;
     static constexpr size_t kHttpConnectionBufferSize = 4096;
     static constexpr size_t kMessageConnectionBufferSize = 256;
-
-    static constexpr int kMaxClientId = (1 << protocol::kClientIdBits) - 1;
 
     Server();
     ~Server();
@@ -37,6 +36,7 @@ public:
     void set_func_config_file(std::string_view path) {
         func_config_file_ = std::string(path);
     }
+    Dispatcher* dispatcher() { return dispatcher_.get(); }
 
     void Start();
     void ScheduleStop();
@@ -127,19 +127,14 @@ private:
 
     std::vector<std::unique_ptr<RequestHandler>> request_handlers_;
 
-    absl::Mutex message_connection_mu_;
-    std::atomic<uint16_t> next_client_id_;
-    absl::flat_hash_map<uint16_t, MessageConnection*>
-        message_connections_by_client_id_ ABSL_GUARDED_BY(message_connection_mu_);
-    absl::flat_hash_map<uint16_t, MessageConnection*>
-        watchdog_connections_by_func_id_ ABSL_GUARDED_BY(message_connection_mu_);
     absl::flat_hash_set<std::unique_ptr<MessageConnection>> message_connections_;
+    std::unique_ptr<Dispatcher> dispatcher_;
 
     std::string func_config_json_;
     FuncConfig func_config_;
     std::atomic<uint32_t> next_call_id_;
     absl::Mutex external_func_calls_mu_;
-    absl::flat_hash_map<uint64_t, std::unique_ptr<ExternalFuncCallContext>>
+    absl::flat_hash_map</* full_call_id */ uint64_t, std::unique_ptr<ExternalFuncCallContext>>
         external_func_calls_ ABSL_GUARDED_BY(external_func_calls_mu_);
 
     stat::StatisticsCollector<int32_t> message_delay_stat_;

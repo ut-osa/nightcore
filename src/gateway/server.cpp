@@ -14,29 +14,24 @@ namespace gateway {
 using protocol::FuncCall;
 using protocol::Message;
 using protocol::GetFuncCallFromMessage;
-using protocol::IsWatchdogHandshakeMessage;
+using protocol::IsLauncherHandshakeMessage;
 using protocol::IsFuncWorkerHandshakeMessage;
 using protocol::IsInvokeFuncMessage;
 using protocol::IsFuncCallCompleteMessage;
 using protocol::IsFuncCallFailedMessage;
 using protocol::NewHandshakeResponseMessage;
-using protocol::NewInvokeFuncMessage;
-using protocol::NewFuncCallCompleteMessage;
-using protocol::NewFuncCallFailedMessage;
 
 constexpr int Server::kDefaultListenBackLog;
 constexpr int Server::kDefaultNumIOWorkers;
 constexpr size_t Server::kHttpConnectionBufferSize;
 constexpr size_t Server::kMessageConnectionBufferSize;
 
-constexpr int Server::kMaxClientId;
-
 Server::Server()
     : state_(kCreated), http_port_(-1), grpc_port_(-1),
       listen_backlog_(kDefaultListenBackLog), num_io_workers_(kDefaultNumIOWorkers),
       event_loop_thread_("Server/EL", absl::bind_front(&Server::EventLoopThreadMain, this)),
       next_http_connection_id_(0), next_grpc_connection_id_(0),
-      next_http_worker_id_(0), next_ipc_worker_id_(0), next_client_id_(1), next_call_id_(0),
+      next_http_worker_id_(0), next_ipc_worker_id_(0), next_call_id_(0),
       message_delay_stat_(
           stat::StatisticsCollector<int32_t>::StandardReportCallback("message_delay")) {
     UV_DCHECK_OK(uv_loop_init(&uv_loop_));
@@ -253,22 +248,14 @@ void Server::ReturnConnection(Connection* connection) {
         grpc_connections_.erase(grpc_connection);
     } else if (connection->type() == Connection::Type::Message) {
         MessageConnection* message_connection = static_cast<MessageConnection*>(connection);
-        {
-            absl::MutexLock lk(&message_connection_mu_);
-            if (message_connection->handshake_done()) {
-                if (message_connection->is_watchdog_connection()) {
-                    uint16_t func_id = message_connection->func_id();
-                    DCHECK(watchdog_connections_by_func_id_.contains(func_id));
-                    if (watchdog_connections_by_func_id_[func_id] == connection) {
-                        watchdog_connections_by_func_id_.erase(func_id);
-                    }
-                } else {
-                    DCHECK(message_connections_by_client_id_.contains(message_connection->client_id()));
-                    message_connections_by_client_id_.erase(message_connection->client_id());
-                }
+        if (message_connection->handshake_done()) {
+            if (message_connection->is_launcher_connection()) {
+                dispatcher_->OnLauncherDisconnected(message_connection);
+            } else {
+                dispatcher_->OnFuncWorkerDisconnected(message_connection);
             }
-            message_connections_.erase(message_connection);
         }
+        message_connections_.erase(message_connection);
         HLOG(INFO) << "A MessageConnection is returned";
     } else {
         LOG(FATAL) << "Unknown connection type!";
@@ -278,7 +265,7 @@ void Server::ReturnConnection(Connection* connection) {
 bool Server::OnNewHandshake(MessageConnection* connection,
                             const Message& handshake_message, Message* response,
                             std::span<const char>* response_payload) {
-    if (!IsWatchdogHandshakeMessage(handshake_message)
+    if (!IsLauncherHandshakeMessage(handshake_message)
           && !IsFuncWorkerHandshakeMessage(handshake_message)) {
         HLOG(ERROR) << "Received message is not a handshake message";
         return false;
@@ -289,18 +276,14 @@ bool Server::OnNewHandshake(MessageConnection* connection,
         HLOG(ERROR) << "Invalid func_id " << func_id << " in handshake message";
         return false;
     }
-    {
-        absl::MutexLock lk(&message_connection_mu_);
-        if (IsWatchdogHandshakeMessage(handshake_message)) {
-            if (watchdog_connections_by_func_id_.contains(func_id)) {
-                HLOG(ERROR) << "Watchdog for func_id " << func_id << " already exists";
-                return false;
-            } else {
-                watchdog_connections_by_func_id_[func_id] = connection;
-            }
-        } else {
-            message_connections_by_client_id_[handshake_message.client_id] = connection;
-        }
+    bool success;
+    if (IsLauncherHandshakeMessage(handshake_message)) {
+        success = dispatcher_->OnLauncherConnected(connection);
+    } else {
+        success = dispatcher_->OnFuncWorkerConnected(connection);
+    }
+    if (!success) {
+        return false;
     }
     *response = NewHandshakeResponseMessage(func_config_json_.size());
     *response_payload = std::span<const char>(func_config_json_.data(), func_config_json_.size());
@@ -373,10 +356,10 @@ public:
         Finish();
     }
 
-    void FinishWithWatchdogNotFound() {
+    void FinishWithDispatcherFailure() {
         if (http_context_ != nullptr) {
             http_context_->AppendToResponseBody(
-                absl::StrFormat("Cannot find watchdog for func_id %d\n", call_.func_id));
+                absl::StrFormat("Dispatch failed for func_id %d\n", call_.func_id));
             http_context_->SetStatus(404);
         } else if (grpc_context_ != nullptr) {
             grpc_context_->set_grpc_status(GrpcStatus::UNIMPLEMENTED);
@@ -412,56 +395,35 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
 #endif
     if (IsInvokeFuncMessage(message)) {
         FuncCall func_call = GetFuncCallFromMessage(message);
-        uint16_t func_id = func_call.func_id;
-        absl::MutexLock lk(&message_connection_mu_);
-        if (watchdog_connections_by_func_id_.contains(func_id)) {
-            MessageConnection* connection = watchdog_connections_by_func_id_[func_id];
-            Message new_message = NewInvokeFuncMessage(func_call);
-#ifdef __FAAS_ENABLE_PROFILING
-            new_message.send_timestamp = GetMonotonicMicroTimestamp();
-            new_message.processing_time = 0;
-#endif
-            connection->WriteMessage(new_message);
-        } else {
-            HLOG(ERROR) << "Cannot find message connection of watchdog with func_id " << func_id;
+        if (!dispatcher_->OnNewFuncCall(connection, func_call)) {
+            HLOG(ERROR) << "Dispatcher failed for func_id " << func_call.func_id;
         }
     } else if (IsFuncCallCompleteMessage(message) || IsFuncCallFailedMessage(message)) {
         FuncCall func_call = GetFuncCallFromMessage(message);
         uint16_t client_id = func_call.client_id;
-        if (client_id > 0) {
-            absl::MutexLock lk(&message_connection_mu_);
-            if (message_connections_by_client_id_.contains(client_id)) {
-                MessageConnection* connection = message_connections_by_client_id_[client_id];
-                Message new_message;
-                if (IsFuncCallCompleteMessage(message)) {
-                    new_message = NewFuncCallCompleteMessage(func_call);
-                } else {
-                    new_message = NewFuncCallFailedMessage(func_call);
-                }
-#ifdef __FAAS_ENABLE_PROFILING
-                new_message.send_timestamp = GetMonotonicMicroTimestamp();
-                new_message.processing_time = message.processing_time;
-#endif
-                connection->WriteMessage(new_message);
-            } else {
-                HLOG(ERROR) << "Cannot find message connection with client_id " << client_id;
-            }
-        } else {
+        if (client_id == 0) {
             absl::MutexLock lk(&external_func_calls_mu_);
-            FuncCall func_call = GetFuncCallFromMessage(message);
             uint64_t full_call_id = func_call.full_call_id;
             if (external_func_calls_.contains(full_call_id)) {
                 ExternalFuncCallContext* func_call_context = external_func_calls_[full_call_id].get();
                 if (IsFuncCallCompleteMessage(message)) {
                     func_call_context->WriteOutput();
                     func_call_context->Finish();
+                    dispatcher_->OnFuncCallCompleted(connection, func_call);
                 } else {
                     func_call_context->FinishWithError();
+                    dispatcher_->OnFuncCallFailed(connection, func_call);
                 }
                 external_func_calls_.erase(full_call_id);
             } else {
                 HLOG(ERROR) << "Cannot find external call with func_id=" << func_call.func_id << ", "
                             << "call_id=" << func_call.call_id;
+            }
+        } else {
+            if (IsFuncCallCompleteMessage(message)) {
+                dispatcher_->OnFuncCallCompleted(connection, func_call);
+            } else {
+                dispatcher_->OnFuncCallFailed(connection, func_call);
             }
         }
     } else {
@@ -505,26 +467,11 @@ void Server::NewExternalFuncCall(std::unique_ptr<ExternalFuncCallContext> func_c
         return;
     }
     func_call_context->CreateInputRegion();
-    uint16_t func_id = func_call_context->call().func_id;
-    {
-        absl::MutexLock lk(&message_connection_mu_);
-        if (watchdog_connections_by_func_id_.contains(func_id)) {
-            MessageConnection* connection = watchdog_connections_by_func_id_[func_id];
-            Message message = NewInvokeFuncMessage(func_call_context->call());
-#ifdef __FAAS_ENABLE_PROFILING
-            message.send_timestamp = GetMonotonicMicroTimestamp();
-            message.processing_time = 0;
-#endif
-            connection->WriteMessage(message);
-        } else {
-            HLOG(WARNING) << "Watchdog for func_id " << func_id << " not found";
-            func_call_context->FinishWithWatchdogNotFound();
-            return;
-        }
-    }
-    {
+    if (dispatcher_->OnNewFuncCall(nullptr, func_call_context->call())) {
         absl::MutexLock lk(&external_func_calls_mu_);
         external_func_calls_[func_call_context->call().full_call_id] = std::move(func_call_context);
+    } else {
+        func_call_context->FinishWithDispatcherFailure();
     }
 }
 
