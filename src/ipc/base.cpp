@@ -69,6 +69,10 @@ std::string GetFuncCallInputShmName(uint64_t full_call_id) {
     return fmt::format("{}.i", full_call_id);
 }
 
+std::string GetFuncCallOutputShmName(uint64_t full_call_id) {
+    return fmt::format("{}.o", full_call_id);
+}
+
 std::string GetFuncCallOutputFifoName(uint64_t full_call_id) {
     return fmt::format("{}.o", full_call_id);
 }

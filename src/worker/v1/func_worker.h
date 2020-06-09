@@ -19,6 +19,8 @@ namespace worker_v1 {
 
 class FuncWorker {
 public:
+    static constexpr absl::Duration kDefaultFuncCallTimeout = absl::Milliseconds(100);
+
     FuncWorker();
     ~FuncWorker();
 

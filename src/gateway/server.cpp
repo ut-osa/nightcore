@@ -1,7 +1,6 @@
 #include "gateway/server.h"
 
 #include "ipc/base.h"
-#include "ipc/fifo.h"
 #include "ipc/shm_region.h"
 #include "common/time.h"
 #include "utils/fs.h"
@@ -14,6 +13,7 @@ namespace faas {
 namespace gateway {
 
 using protocol::FuncCall;
+using protocol::FuncCallDebugString;
 using protocol::NewFuncCall;
 using protocol::NewFuncCallWithMethod;
 using protocol::Message;
@@ -120,7 +120,8 @@ void Server::Start() {
         }
     } else {
         CHECK_GT(num_io_workers_, 0);
-        HLOG(INFO) << "Start " << num_io_workers_ << " IO workers for both HTTP and IPC connections";
+        HLOG(INFO) << "Start " << num_io_workers_
+                   << " IO workers for both HTTP and IPC connections";
         for (int i = 0; i < num_io_workers_; i++) {
             auto io_worker = std::make_unique<IOWorker>(this, absl::StrFormat("IO-%d", i));
             InitAndStartIOWorker(io_worker.get());
@@ -323,22 +324,15 @@ class Server::ExternalFuncCallContext {
 public:
     ExternalFuncCallContext(FuncCall call, std::shared_ptr<HttpAsyncRequestContext> http_context)
         : call_(call), http_context_(http_context), grpc_context_(nullptr),
-          input_region_(nullptr), output_fifo_fd_(-1) {}
+          input_region_(nullptr), output_region_(nullptr) {}
     
     ExternalFuncCallContext(FuncCall call, std::shared_ptr<GrpcCallContext> grpc_context)
         : call_(call), http_context_(nullptr), grpc_context_(grpc_context),
-          input_region_(nullptr), output_fifo_fd_(-1) {}
-
-    ~ExternalFuncCallContext() {
-        if (output_fifo_fd_ != -1) {
-            PCHECK(close(output_fifo_fd_) == 0) << "close failed";
-            ipc::FifoRemove(ipc::GetFuncCallOutputFifoName(call_.full_call_id));
-        }
-    }
+          input_region_(nullptr), output_region_(nullptr) {}
 
     FuncCall call() const { return call_; }
 
-    void PrepareIpcForInputAndOutput() {
+    bool PrepareIpcForInputAndOutput() {
         std::span<const char> body;
         if (http_context_ != nullptr) {
             body = http_context_->body();
@@ -349,39 +343,31 @@ public:
         }
         input_region_ = ipc::ShmCreate(
             ipc::GetFuncCallInputShmName(call_.full_call_id), body.size());
+        if (input_region_ == nullptr) {
+            LOG(ERROR) << "ShmCreate failed";
+            FinishWithError();
+            return false;
+        }
         input_region_->EnableRemoveOnDestruction();
         if (body.size() > 0) {
             memcpy(input_region_->base(), body.data(), body.size());
         }
-        ipc::FifoCreate(ipc::GetFuncCallOutputFifoName(call_.full_call_id));
+        return true;
     }
 
     void FinishWithOutput() {
-        output_fifo_fd_ = ipc::FifoOpenForRead(
-            ipc::GetFuncCallOutputFifoName(call_.full_call_id), /* nonblocking= */ false);
-        int32_t output_size;
-        if (!io_utils::RecvMessage(output_fifo_fd_, &output_size, nullptr)) {
-            HLOG(ERROR) << "Failed to receive output size";
+        output_region_ = ipc::ShmOpen(ipc::GetFuncCallOutputShmName(call_.full_call_id));
+        if (output_region_ == nullptr) {
+            HLOG(ERROR) << "Failed to open output shm";
             FinishWithError();
             return;
         }
-        if (output_size < 0) {
-            HLOG(ERROR) << "Negative output size";
-            FinishWithError();
-            return;
-        }
-        if (output_size > 0) {
-            char* output = new char[output_size];
-            auto reclaim_output_buffer = gsl::finally([output] { delete[] output; });
-            if (!io_utils::RecvData(output_fifo_fd_, output, output_size, nullptr)) {
-                HLOG(ERROR) << "Failed to receive output data";
-                FinishWithError();
-                return;
-            }
+        output_region_->EnableRemoveOnDestruction();
+        if (output_region_->size() > 0) {
             if (http_context_ != nullptr) {
-                http_context_->AppendToResponseBody(std::span<const char>(output, output_size));
+                http_context_->AppendToResponseBody(output_region_->to_span());
             } else if (grpc_context_ != nullptr) {
-                grpc_context_->AppendToResponseBody(std::span<const char>(output, output_size));
+                grpc_context_->AppendToResponseBody(output_region_->to_span());
             } else {
                 LOG(FATAL) << "http_context_ and grpc_context_ are both nullptr";
             }
@@ -442,7 +428,7 @@ private:
     std::shared_ptr<HttpAsyncRequestContext> http_context_;
     std::shared_ptr<GrpcCallContext> grpc_context_;
     std::unique_ptr<ipc::ShmRegion> input_region_;
-    int output_fifo_fd_;
+    std::unique_ptr<ipc::ShmRegion> output_region_;
     DISALLOW_COPY_AND_ASSIGN(ExternalFuncCallContext);
 };
 
@@ -473,8 +459,7 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
                 }
                 external_func_calls_.erase(full_call_id);
             } else {
-                HLOG(ERROR) << "Cannot find external call with func_id=" << func_call.func_id << ", "
-                            << "call_id=" << func_call.call_id;
+                HLOG(ERROR) << "Cannot find external call " << FuncCallDebugString(func_call);
             }
         } else {
             if (IsFuncCallCompleteMessage(message)) {
@@ -519,7 +504,9 @@ void Server::NewExternalFuncCall(std::unique_ptr<ExternalFuncCallContext> func_c
     if (!func_call_context->CheckInputNotEmpty()) {
         return;
     }
-    func_call_context->PrepareIpcForInputAndOutput();
+    if (!func_call_context->PrepareIpcForInputAndOutput()) {
+        return;
+    }
     FuncCall func_call = func_call_context->call();
     if (dispatcher_->OnNewFuncCall(nullptr, func_call_context->call())) {
         absl::MutexLock lk(&external_func_calls_mu_);

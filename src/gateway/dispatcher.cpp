@@ -148,8 +148,10 @@ void Dispatcher::RequestNewFuncWorker(MessageConnection* launcher_connection) {
     HLOG(INFO) << "Request new FuncWorker for func_id " << launcher_connection->func_id()
                << " with client_id " << client_id;
     CHECK_LE(client_id, kMaxClientId) << "Reach maximum number of clients!";
-    ipc::FifoCreate(ipc::GetFuncWorkerInputFifoName(client_id));
-    ipc::FifoCreate(ipc::GetFuncWorkerOutputFifoName(client_id));
+    CHECK(ipc::FifoCreate(ipc::GetFuncWorkerInputFifoName(client_id)))
+        << "FifoCreate failed";
+    CHECK(ipc::FifoCreate(ipc::GetFuncWorkerOutputFifoName(client_id)))
+        << "FifoCreate failed";
     Message message = NewCreateFuncWorkerMessage(client_id);
 #ifdef __FAAS_ENABLE_PROFILING
     message->send_timestamp = GetMonotonicMicroTimestamp();

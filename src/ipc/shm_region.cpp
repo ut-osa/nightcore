@@ -16,7 +16,10 @@ namespace ipc {
 std::unique_ptr<ShmRegion> ShmCreate(std::string_view name, size_t size) {
     std::string full_path = fs_utils::JoinPath(GetRootPathForShm(), name);
     int fd = open(full_path.c_str(), O_CREAT|O_EXCL|O_RDWR, __FAAS_FILE_CREAT_MODE);
-    PCHECK(fd != -1) << "open failed";
+    if (fd == -1) {
+        PLOG(ERROR) << "open " << full_path << " failed";
+        return nullptr;
+    }
     PCHECK(ftruncate(fd, size) == 0) << "ftruncate failed";
     void* ptr = nullptr;
     if (size > 0) {
@@ -31,7 +34,10 @@ std::unique_ptr<ShmRegion> ShmCreate(std::string_view name, size_t size) {
 std::unique_ptr<ShmRegion> ShmOpen(std::string_view name, bool readonly) {
     std::string full_path = fs_utils::JoinPath(GetRootPathForShm(), name);
     int fd = open(full_path.c_str(), readonly ? O_RDONLY : O_RDWR);
-    PCHECK(fd != -1) << "open failed";
+    if (fd == -1) {
+        PLOG(ERROR) << "open " << full_path << " failed";
+        return nullptr;
+    }
     struct stat statbuf;
     PCHECK(fstat(fd, &statbuf) == 0) << "fstat failed";
     size_t size = gsl::narrow_cast<size_t>(statbuf.st_size);

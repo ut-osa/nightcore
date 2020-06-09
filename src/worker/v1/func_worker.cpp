@@ -24,6 +24,8 @@ using protocol::NewFuncCallCompleteMessage;
 using protocol::NewFuncCallFailedMessage;
 using protocol::NewInvokeFuncMessage;
 
+constexpr absl::Duration FuncWorker::kDefaultFuncCallTimeout;
+
 FuncWorker::FuncWorker()
     : func_id_(-1), fprocess_id_(-1), client_id_(0),
       gateway_sock_fd_(-1), input_pipe_fd_(-1), output_pipe_fd_(-1), next_call_id_(0),
@@ -148,10 +150,23 @@ void FuncWorker::ExecuteFunc(void* worker_handle, const FuncCall& func_call) {
     response.processing_time = processing_time;
 #endif
     VLOG(1) << "Finish executing func_call " << FuncCallDebugString(func_call);
+    if (ret == 0 && func_call.client_id == 0) {
+        // FuncCall from gateway, will use shm for output
+        output_size_stat_.AddSample(func_output_buffer_.length());
+        auto output_region = ipc::ShmCreate(
+            ipc::GetFuncCallOutputShmName(func_call.full_call_id), func_output_buffer_.length());
+        if (func_output_buffer_.length() > 0) {
+            memcpy(output_region->base(), func_output_buffer_.data(), func_output_buffer_.length());
+        }
+    }
     VLOG(1) << "Send response to gateway";
     PCHECK(io_utils::SendMessage(output_pipe_fd_, response));
-    VLOG(1) << "Start writing output to FIFO";
+    if (func_call.client_id == 0) {
+        // We're done if FuncCall from gateway
+        return;
+    }
     // Write output to FIFO
+    VLOG(1) << "Start writing output to FIFO";
     int output_fifo = ipc::FifoOpenForWrite(
         ipc::GetFuncCallOutputFifoName(func_call.full_call_id), /* nonblocking= */ false);
     if (ret == 0) {
@@ -172,31 +187,48 @@ bool FuncWorker::InvokeFunc(const char* func_name, const char* input_data, size_
     const FuncConfig::Entry* func_entry = func_config_.find_by_func_name(
         std::string_view(func_name, strlen(func_name)));
     if (func_entry == nullptr) {
+        LOG(ERROR) << "Function " << func_name << " does not exist";
         return false;
     }
     FuncCall func_call = NewFuncCall(
         gsl::narrow_cast<uint16_t>(func_entry->func_id),
         client_id_, next_call_id_.fetch_add(1));
     VLOG(1) << "Invoke func_call " << FuncCallDebugString(func_call);
+    // Create shm for input
     auto input_region = ipc::ShmCreate(
         ipc::GetFuncCallInputShmName(func_call.full_call_id), input_length);
+    if (input_region == nullptr) {
+        LOG(ERROR) << "ShmCreate failed";
+        return false;
+    }
+    input_region->EnableRemoveOnDestruction();
     if (input_length > 0) {
         memcpy(input_region->base(), input_data, input_length);
     }
-    input_region->EnableRemoveOnDestruction();
-    ipc::FifoCreate(ipc::GetFuncCallOutputFifoName(func_call.full_call_id));
+    // Create fifo for output
+    if (!ipc::FifoCreate(ipc::GetFuncCallOutputFifoName(func_call.full_call_id))) {
+        LOG(ERROR) << "FifoCreate failed";
+        return false;
+    }
+    auto remove_output_fifo = gsl::finally([func_call] {
+        ipc::FifoRemove(ipc::GetFuncCallOutputFifoName(func_call.full_call_id));
+    });
+    int output_fifo = ipc::FifoOpenForRead(
+        ipc::GetFuncCallOutputFifoName(func_call.full_call_id), /* nonblocking= */ true);
+    if (output_fifo == -1) {
+        LOG(ERROR) << "FifoOpenForRead failed";
+        return false;
+    }
+    auto close_output_fifo = gsl::finally([output_fifo] {
+        PCHECK(close(output_fifo) == 0) << "close failed";
+    });
+    // Send message to gateway (dispatcher)
     Message message = NewInvokeFuncMessage(func_call);
     {
         absl::MutexLock lk(&mu_);
         PCHECK(io_utils::SendMessage(output_pipe_fd_, message));
     }
     VLOG(1) << "InvokeFuncMessage sent to gateway";
-    int output_fifo = ipc::FifoOpenForRead(
-        ipc::GetFuncCallOutputFifoName(func_call.full_call_id), /* nonblocking= */ false);
-    auto reclaim_output_fifo = gsl::finally([output_fifo, func_call] {
-        PCHECK(close(output_fifo) == 0) << "close failed";
-        ipc::FifoRemove(ipc::GetFuncCallOutputFifoName(func_call.full_call_id));
-    });
     int32_t ret;
     PCHECK(io_utils::RecvMessage(output_fifo, &ret, nullptr));
     if (ret >= 0) {

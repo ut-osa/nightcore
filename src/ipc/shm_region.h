@@ -8,6 +8,7 @@ namespace ipc {
 
 class ShmRegion;
 
+// Shm{Create, Open} returns nullptr on failure
 std::unique_ptr<ShmRegion> ShmCreate(std::string_view name, size_t size);
 std::unique_ptr<ShmRegion> ShmOpen(std::string_view name, bool readonly = true);
 

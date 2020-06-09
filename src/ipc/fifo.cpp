@@ -10,9 +10,11 @@
 namespace faas {
 namespace ipc {
 
-void FifoCreate(std::string_view name) {
+bool FifoCreate(std::string_view name) {
     std::string full_path = fs_utils::JoinPath(GetRootPathForFifo(), name);
-    PCHECK(mkfifo(full_path.c_str(), __FAAS_FILE_CREAT_MODE) == 0) << "mkfifo failed";
+    if (mkfifo(full_path.c_str(), __FAAS_FILE_CREAT_MODE) != 0) {
+        PLOG(ERROR) << "mkfifo " << full_path << " failed";
+    }
 }
 
 void FifoRemove(std::string_view name) {
@@ -29,7 +31,9 @@ int FifoOpenForRead(std::string_view name, bool nonblocking) {
         flags |= O_NONBLOCK;
     }
     int fd = open(full_path.c_str(), flags);
-    PCHECK(fd != -1) << "open " << full_path << " failed";
+    if (fd == -1) {
+        PLOG(ERROR) << "open " << full_path << " failed";
+    }
     return fd;
 }
 
@@ -40,7 +44,9 @@ int FifoOpenForWrite(std::string_view name, bool nonblocking) {
         flags |= O_NONBLOCK;
     }
     int fd = open(full_path.c_str(), flags);
-    PCHECK(fd != -1) << "open " << full_path << " failed";
+    if (fd == -1) {
+        PLOG(ERROR) << "open " << full_path << " failed";
+    }
     return fd;
 }
 

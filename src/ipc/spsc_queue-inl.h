@@ -13,6 +13,7 @@ template<class T>
 std::unique_ptr<SPSCQueue<T>> SPSCQueue<T>::Create(std::string_view name, size_t queue_size) {
     CHECK_GE(queue_size, 2U) << "Queue size must be at least 2";
     auto region = ShmCreate(fmt::format("SPSCQueue_{}", name), compute_total_bytesize(queue_size));
+    CHECK(region != nullptr) << "ShmCreate failed";
     BuildMemoryLayout(region->base(), queue_size);
     return std::unique_ptr<SPSCQueue<T>>(new SPSCQueue<T>(true, std::move(region)));
 }
@@ -20,6 +21,7 @@ std::unique_ptr<SPSCQueue<T>> SPSCQueue<T>::Create(std::string_view name, size_t
 template<class T>
 std::unique_ptr<SPSCQueue<T>> SPSCQueue<T>::Open(std::string_view name) {
     auto region = ShmOpen(fmt::format("SPSCQueue_{}", name), /* readonly= */ false);
+    CHECK(region != nullptr) << "ShmOpen failed";
     return std::unique_ptr<SPSCQueue<T>>(new SPSCQueue<T>(false, std::move(region)));
 }
 
