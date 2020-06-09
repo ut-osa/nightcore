@@ -26,13 +26,15 @@ using protocol::IsFuncCallFailedMessage;
 using protocol::NewHandshakeResponseMessage;
 
 constexpr int Server::kDefaultListenBackLog;
-constexpr int Server::kDefaultNumIOWorkers;
+constexpr int Server::kDefaultNumHttpWorkers;
+constexpr int Server::kDefaultNumIpcWorkers;
 constexpr size_t Server::kHttpConnectionBufferSize;
 constexpr size_t Server::kMessageConnectionBufferSize;
 
 Server::Server()
     : state_(kCreated), http_port_(-1), grpc_port_(-1),
-      listen_backlog_(kDefaultListenBackLog), num_io_workers_(kDefaultNumIOWorkers),
+      listen_backlog_(kDefaultListenBackLog), num_http_workers_(kDefaultNumHttpWorkers),
+      num_ipc_workers_(kDefaultNumIpcWorkers), num_io_workers_(-1),
       event_loop_thread_("Server/EL", absl::bind_front(&Server::EventLoopThreadMain, this)),
       next_http_connection_id_(0), next_grpc_connection_id_(0),
       next_http_worker_id_(0), next_ipc_worker_id_(0),
@@ -96,14 +98,36 @@ void Server::Start() {
         << "Failed to read from file " << func_config_file_;
     CHECK(func_config_.Load(func_config_json_));
     // Start IO workers
-    CHECK_GT(num_io_workers_, 0);
-    HLOG(INFO) << "Start " << num_io_workers_ << " IO workers for both HTTP and IPC connections";
-    for (int i = 0; i < num_io_workers_; i++) {
-        auto io_worker = std::make_unique<IOWorker>(this, absl::StrFormat("IO-%d", i));
-        InitAndStartIOWorker(io_worker.get());
-        http_workers_.push_back(io_worker.get());
-        ipc_workers_.push_back(io_worker.get());
-        io_workers_.push_back(std::move(io_worker));
+    if (num_io_workers_ == -1) {
+        CHECK_GT(num_http_workers_, 0);
+        CHECK_GT(num_ipc_workers_, 0);
+        HLOG(INFO) << "Start " << num_http_workers_ << " IO workers for HTTP connections";
+        for (int i = 0; i < num_http_workers_; i++) {
+            auto io_worker = std::make_unique<IOWorker>(this, absl::StrFormat("Http-%d", i),
+                                                        kHttpConnectionBufferSize);
+            InitAndStartIOWorker(io_worker.get());
+            http_workers_.push_back(io_worker.get());
+            io_workers_.push_back(std::move(io_worker));
+        }
+        HLOG(INFO) << "Start " << num_ipc_workers_ << " IO workers for IPC connections";
+        for (int i = 0; i < num_ipc_workers_; i++) {
+            auto io_worker = std::make_unique<IOWorker>(this, absl::StrFormat("Ipc-%d", i),
+                                                        kMessageConnectionBufferSize,
+                                                        kMessageConnectionBufferSize);
+            InitAndStartIOWorker(io_worker.get());
+            ipc_workers_.push_back(io_worker.get());
+            io_workers_.push_back(std::move(io_worker));
+        }
+    } else {
+        CHECK_GT(num_io_workers_, 0);
+        HLOG(INFO) << "Start " << num_io_workers_ << " IO workers for both HTTP and IPC connections";
+        for (int i = 0; i < num_io_workers_; i++) {
+            auto io_worker = std::make_unique<IOWorker>(this, absl::StrFormat("IO-%d", i));
+            InitAndStartIOWorker(io_worker.get());
+            http_workers_.push_back(io_worker.get());
+            ipc_workers_.push_back(io_worker.get());
+            io_workers_.push_back(std::move(io_worker));
+        }
     }
     // Listen on address:http_port for HTTP requests
     struct sockaddr_in bind_addr;
@@ -496,10 +520,10 @@ void Server::NewExternalFuncCall(std::unique_ptr<ExternalFuncCallContext> func_c
         return;
     }
     func_call_context->PrepareIpcForInputAndOutput();
-    VLOG(1) << "Dispatch func_call " << func_call_context->call().full_call_id;
+    FuncCall func_call = func_call_context->call();
     if (dispatcher_->OnNewFuncCall(nullptr, func_call_context->call())) {
         absl::MutexLock lk(&external_func_calls_mu_);
-        external_func_calls_[func_call_context->call().full_call_id] = std::move(func_call_context);
+        external_func_calls_[func_call.full_call_id] = std::move(func_call_context);
     } else {
         func_call_context->FinishWithDispatcherFailure();
     }

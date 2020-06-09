@@ -7,11 +7,14 @@
 #include "utils/io.h"
 #include "utils/socket.h"
 
+#include <fcntl.h>
+
 namespace faas {
 namespace worker_v1 {
 
 using protocol::FuncCall;
 using protocol::NewFuncCall;
+using protocol::FuncCallDebugString;
 using protocol::Message;
 using protocol::GetFuncCallFromMessage;
 using protocol::IsHandshakeResponseMessage;
@@ -70,6 +73,11 @@ void FuncWorker::MainServingLoop() {
                                  &func_worker) == 0)
         << "Failed to create function worker";
 
+    // Unset O_NONBLOCK for input_pipe_fd_
+    int flags = fcntl(input_pipe_fd_, F_GETFL, 0);
+    PCHECK(flags != -1) << "fcntl failed";
+    PCHECK(fcntl(input_pipe_fd_, F_SETFL, flags & ~O_NONBLOCK) == 0) << "fcntl failed";
+
     while (true) {
         Message message;
         CHECK(io_utils::RecvMessage(input_pipe_fd_, &message, nullptr))
@@ -80,7 +88,6 @@ void FuncWorker::MainServingLoop() {
 #endif
         if (IsInvokeFuncMessage(message)) {
             FuncCall func_call = GetFuncCallFromMessage(message);
-            VLOG(1) << "Execute func_call " << func_call.full_call_id;
             ExecuteFunc(func_worker, func_call);
         } else {
             LOG(FATAL) << "Unknown message type";
@@ -109,6 +116,7 @@ void FuncWorker::HandshakeWithGateway() {
 }
 
 void FuncWorker::ExecuteFunc(void* worker_handle, const FuncCall& func_call) {
+    VLOG(1) << "Execute func_call " << FuncCallDebugString(func_call);
     auto input_region = ipc::ShmOpen(ipc::GetFuncCallInputShmName(func_call.full_call_id));
     input_size_stat_.AddSample(input_region->size());
     func_output_buffer_.Reset();
@@ -139,7 +147,10 @@ void FuncWorker::ExecuteFunc(void* worker_handle, const FuncCall& func_call) {
     response.send_timestamp = GetMonotonicMicroTimestamp();
     response.processing_time = processing_time;
 #endif
+    VLOG(1) << "Finish executing func_call " << FuncCallDebugString(func_call);
+    VLOG(1) << "Send response to gateway";
     PCHECK(io_utils::SendMessage(output_pipe_fd_, response));
+    VLOG(1) << "Start writing output to FIFO";
     // Write output to FIFO
     int output_fifo = ipc::FifoOpenForWrite(
         ipc::GetFuncCallOutputFifoName(func_call.full_call_id), /* nonblocking= */ false);
@@ -152,6 +163,7 @@ void FuncWorker::ExecuteFunc(void* worker_handle, const FuncCall& func_call) {
         int32_t err_ret = -1;
         PCHECK(io_utils::SendMessage(output_fifo, err_ret));
     }
+    VLOG(1) << "Finish writing output to FIFO";
     PCHECK(close(output_fifo) == 0) << "close failed";
 }
 
@@ -165,6 +177,7 @@ bool FuncWorker::InvokeFunc(const char* func_name, const char* input_data, size_
     FuncCall func_call = NewFuncCall(
         gsl::narrow_cast<uint16_t>(func_entry->func_id),
         client_id_, next_call_id_.fetch_add(1));
+    VLOG(1) << "Invoke func_call " << FuncCallDebugString(func_call);
     auto input_region = ipc::ShmCreate(
         ipc::GetFuncCallInputShmName(func_call.full_call_id), input_length);
     if (input_length > 0) {
@@ -177,6 +190,7 @@ bool FuncWorker::InvokeFunc(const char* func_name, const char* input_data, size_
         absl::MutexLock lk(&mu_);
         PCHECK(io_utils::SendMessage(output_pipe_fd_, message));
     }
+    VLOG(1) << "InvokeFuncMessage sent to gateway";
     int output_fifo = ipc::FifoOpenForRead(
         ipc::GetFuncCallOutputFifoName(func_call.full_call_id), /* nonblocking= */ false);
     auto reclaim_output_fifo = gsl::finally([output_fifo, func_call] {

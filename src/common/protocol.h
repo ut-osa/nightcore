@@ -43,6 +43,17 @@ inline FuncCall NewFuncCallWithMethod(uint16_t func_id, uint16_t method_id,
     return func_call; 
 }
 
+inline std::string FuncCallDebugString(const FuncCall& func_call) {
+    if (func_call.method_id == 0) {
+        return fmt::format("func_id={}, client_id={}, call_id={}",
+                           func_call.func_id, func_call.client_id, func_call.call_id);
+    } else {
+        return fmt::format("func_id={}, method_id={}, client_id={}, call_id={}",
+                           func_call.func_id, func_call.method_id,
+                           func_call.client_id, func_call.call_id);
+    }
+}
+
 #undef NEW_EMPTY_FUNC_CALL
 
 enum class MessageType : uint16_t {

@@ -10,6 +10,7 @@ namespace faas {
 namespace gateway {
 
 using protocol::FuncCall;
+using protocol::FuncCallDebugString;
 using protocol::Message;
 using protocol::NewCreateFuncWorkerMessage;
 using protocol::NewInvokeFuncMessage;
@@ -49,7 +50,14 @@ bool Dispatcher::OnFuncWorkerConnected(MessageConnection* worker_connection) {
         HLOG(ERROR) << "PerFuncState of func_id " << func_id << " does not exist";
         return false;
     }
-    per_func_states_[func_id]->NewWorker(worker_connection);
+    auto per_func_state = per_func_states_[func_id].get();
+    per_func_state->NewWorker(worker_connection);
+    FuncCall pending_func_call;
+    if (per_func_state->PopPendingFuncCall(&pending_func_call)) {
+        VLOG(1) << "Found pending func_call " << FuncCallDebugString(pending_func_call);
+        DispatchFuncCall(worker_connection, pending_func_call);
+        per_func_state->WorkerBecomeRunning(worker_connection, pending_func_call);
+    }
     return true;
 }
 
@@ -79,6 +87,7 @@ void Dispatcher::OnFuncWorkerDisconnected(MessageConnection* worker_connection) 
 
 bool Dispatcher::OnNewFuncCall(MessageConnection* caller_connection,
                                const FuncCall& func_call) {
+    VLOG(1) << "OnNewFuncCall " << FuncCallDebugString(func_call);
     uint16_t func_id = func_call.func_id;
     absl::MutexLock lk(&mu_);
     if (!launcher_connections_.contains(func_id)) {
@@ -92,7 +101,7 @@ bool Dispatcher::OnNewFuncCall(MessageConnection* caller_connection,
         DispatchFuncCall(idle_worker, func_call);
         per_func_state->WorkerBecomeRunning(idle_worker, func_call);
     } else {
-        HLOG(INFO) << "No idle worker at the moment";
+        VLOG(1) << "No idle worker at the moment";
         per_func_state->PushPendingFuncCall(func_call);
     }
     return true;
@@ -100,6 +109,7 @@ bool Dispatcher::OnNewFuncCall(MessageConnection* caller_connection,
 
 void Dispatcher::OnFuncCallCompleted(MessageConnection* worker_connection,
                                      const FuncCall& func_call) {
+    VLOG(1) << "OnFuncCallCompleted " << FuncCallDebugString(func_call);
     uint16_t func_id = func_call.func_id;
     DCHECK_EQ(func_id, worker_connection->func_id());
     absl::MutexLock lk(&mu_);
@@ -110,6 +120,7 @@ void Dispatcher::OnFuncCallCompleted(MessageConnection* worker_connection,
 
 void Dispatcher::OnFuncCallFailed(MessageConnection* worker_connection,
                                   const FuncCall& func_call) {
+    VLOG(1) << "OnFuncCallFailed " << FuncCallDebugString(func_call);
     uint16_t func_id = func_call.func_id;
     DCHECK_EQ(func_id, worker_connection->func_id());
     absl::MutexLock lk(&mu_);
@@ -123,8 +134,13 @@ void Dispatcher::FuncWorkerFinished(PerFuncState* per_func_state,
     per_func_state->WorkerBecomeIdle(worker_connection);
     FuncCall pending_func_call;
     if (per_func_state->PopPendingFuncCall(&pending_func_call)) {
+        VLOG(1) << "Found pending func_call " << FuncCallDebugString(pending_func_call);
+        DispatchFuncCall(worker_connection, pending_func_call);
         per_func_state->WorkerBecomeRunning(worker_connection, pending_func_call);
     }
+    VLOG(1) << "func_id " << per_func_state->func_id() << ": "
+            << "running_workers=" << per_func_state->running_workers() << ", "
+            << "idle_workers=" << per_func_state->idle_workers();
 }
 
 void Dispatcher::RequestNewFuncWorker(MessageConnection* launcher_connection) {

@@ -21,7 +21,8 @@ namespace gateway {
 class Server : public uv::Base {
 public:
     static constexpr int kDefaultListenBackLog = 32;
-    static constexpr int kDefaultNumIOWorkers = 1;
+    static constexpr int kDefaultNumHttpWorkers = 1;
+    static constexpr int kDefaultNumIpcWorkers = 1;
     static constexpr size_t kHttpConnectionBufferSize = 4096;
     static constexpr size_t kMessageConnectionBufferSize = 256;
 
@@ -32,6 +33,8 @@ public:
     void set_http_port(int port) { http_port_ = port; }
     void set_grpc_port(int port) { grpc_port_ = port; }
     void set_listen_backlog(int value) { listen_backlog_ = value; }
+    void set_num_http_workers(int value) { num_http_workers_ = value; }
+    void set_num_ipc_workers(int value) { num_ipc_workers_ = value; }
     void set_num_io_workers(int value) { num_io_workers_ = value; }
     void set_func_config_file(std::string_view path) {
         func_config_file_ = std::string(path);
@@ -101,6 +104,8 @@ private:
     int http_port_;
     int grpc_port_;
     int listen_backlog_;
+    int num_http_workers_;
+    int num_ipc_workers_;
     int num_io_workers_;
     std::string func_config_file_;
 

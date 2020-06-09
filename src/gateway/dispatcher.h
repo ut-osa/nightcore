@@ -44,6 +44,7 @@ private:
         explicit PerFuncState(uint16_t func_id);
         ~PerFuncState();
 
+        int16_t func_id() const { return func_id_; }
         size_t total_workers() const { return workers_.size(); }
         size_t running_workers() const { return running_workers_.size(); }
         size_t idle_workers() const { return total_workers() - running_workers(); }
