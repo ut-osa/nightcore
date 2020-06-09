@@ -27,11 +27,15 @@ template<class T>
 bool RecvMessage(int fd, T* message, bool* eof) {
     char* buffer = reinterpret_cast<char*>(message);
     size_t pos = 0;
-    *eof = false;
+    if (eof != nullptr) {
+        *eof = false;
+    }
     while (pos < sizeof(T)) {
         ssize_t nread = read(fd, buffer + pos, sizeof(T) - pos);
         if (nread == 0) {
-            *eof = true;
+            if (eof != nullptr) {
+                *eof = true;
+            }
             return false;
         }
         if (nread < 0) {
@@ -67,11 +71,15 @@ inline bool SendData(int fd, std::span<const char> data) {
 
 inline bool RecvData(int fd, char* buffer, size_t size, bool* eof) {
     size_t pos = 0;
-    *eof = false;
+    if (eof != nullptr) {
+        *eof = false;
+    }
     while (pos < size) {
         ssize_t nread = read(fd, buffer + pos, size - pos);
         if (nread == 0) {
-            *eof = true;
+            if (eof != nullptr) {
+                *eof = true;
+            }
             return false;
         }
         if (nread < 0) {

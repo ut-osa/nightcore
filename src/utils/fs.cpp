@@ -49,8 +49,8 @@ std::string GetRealPath(std::string_view path) {
     return result_str;
 }
 
-bool MakeDirectory(std::string_view path, mode_t mode) {
-    return mkdir(std::string(path).c_str(), mode) == 0;
+bool MakeDirectory(std::string_view path) {
+    return mkdir(std::string(path).c_str(), __FAAS_DIR_CREAT_MODE) == 0;
 }
 
 bool Remove(std::string_view path) {

@@ -32,7 +32,7 @@ int main(int argc, char* argv[]) {
             fs_utils::Remove(shm_base_path);
         }
     }
-    fs_utils::MakeDirectory(shm_base_path, /* mode= */ 0700);
+    fs_utils::MakeDirectory(shm_base_path);
 
     bench_utils::Samples<int32_t> file_creation_delay(kBufferSizeForSamples);
     bench_utils::Samples<int32_t> ftruncate_delay(kBufferSizeForSamples);

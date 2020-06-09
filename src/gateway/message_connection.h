@@ -40,6 +40,12 @@ private:
     bool handshake_done_;
     uv_pipe_t uv_pipe_handle_;
 
+    uv_pipe_t uv_in_fifo_handle_;
+    uv_pipe_t uv_out_fifo_handle_;
+    uv_pipe_t* pipe_for_read_message_;
+    uv_pipe_t* pipe_for_write_message_;
+    uv::HandleScope handle_scope_;
+
     std::string log_header_;
 
     utils::AppendableBuffer message_buffer_;
@@ -52,6 +58,7 @@ private:
 
     void RecvHandshakeMessage();
     void SendPendingMessages();
+    void OnAllHandlesClosed();
 
     DECLARE_UV_ALLOC_CB_FOR_CLASS(BufferAlloc);
     DECLARE_UV_READ_CB_FOR_CLASS(ReadHandshake);
@@ -59,7 +66,6 @@ private:
     DECLARE_UV_READ_CB_FOR_CLASS(ReadMessage);
     DECLARE_UV_WRITE_CB_FOR_CLASS(WriteMessage);
     DECLARE_UV_ASYNC_CB_FOR_CLASS(NewMessageForWrite);
-    DECLARE_UV_CLOSE_CB_FOR_CLASS(Close);
 
     DISALLOW_COPY_AND_ASSIGN(MessageConnection);
 };

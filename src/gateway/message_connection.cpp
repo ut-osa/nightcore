@@ -2,6 +2,8 @@
 
 #include "common/time.h"
 #include "common/uv.h"
+#include "ipc/base.h"
+#include "ipc/fifo.h"
 #include "gateway/server.h"
 
 #define HLOG(l) LOG(l) << log_header_
@@ -27,6 +29,8 @@ MessageConnection::~MessageConnection() {
 
 uv_stream_t* MessageConnection::InitUVHandle(uv_loop_t* uv_loop) {
     UV_DCHECK_OK(uv_pipe_init(uv_loop, &uv_pipe_handle_, 0));
+    handle_scope_.Init(uv_loop, absl::bind_front(&MessageConnection::OnAllHandlesClosed, this));
+    handle_scope_.AddHandle(&uv_pipe_handle_);
     return UV_AS_STREAM(&uv_pipe_handle_);
 }
 
@@ -48,7 +52,11 @@ void MessageConnection::ScheduleClose() {
         return;
     }
     DCHECK(state_ == kHandshake || state_ == kRunning);
-    uv_close(UV_AS_HANDLE(&uv_pipe_handle_), &MessageConnection::CloseCallback);
+    handle_scope_.CloseHandle(&uv_pipe_handle_);
+    if (client_id_ > 0) {
+        handle_scope_.CloseHandle(&uv_in_fifo_handle_);
+        handle_scope_.CloseHandle(&uv_out_fifo_handle_);
+    }
     state_ = kClosing;
 }
 
@@ -86,22 +94,23 @@ void MessageConnection::SendPendingMessages() {
         buf.len = copy_size;
         uv_write_t* write_req = io_worker_->NewWriteRequest();
         write_req->data = buf.base;
-        UV_DCHECK_OK(uv_write(write_req, UV_AS_STREAM(&uv_pipe_handle_),
+        UV_DCHECK_OK(uv_write(write_req, UV_AS_STREAM(pipe_for_write_message_),
                               &buf, 1, &MessageConnection::WriteMessageCallback));
         write_size -= copy_size;
         ptr += copy_size;
     }
 }
 
+void MessageConnection::OnAllHandlesClosed() {
+    DCHECK(state_ == kClosing);
+    state_ = kClosed;
+    io_worker_->OnConnectionClose(this);
+}
+
 void MessageConnection::RecvHandshakeMessage() {
     DCHECK_IN_EVENT_LOOP_THREAD(uv_pipe_handle_.loop);
     UV_DCHECK_OK(uv_read_stop(UV_AS_STREAM(&uv_pipe_handle_)));
     Message* message = reinterpret_cast<Message*>(message_buffer_.data());
-    std::span<const char> payload;
-    if (!server_->OnNewHandshake(this, *message, &handshake_response_, &payload)) {
-        ScheduleClose();
-        return;
-    }
     func_id_ = message->func_id;
     if (IsLauncherHandshakeMessage(*message)) {
         client_id_ = 0;
@@ -109,6 +118,35 @@ void MessageConnection::RecvHandshakeMessage() {
     } else if (IsFuncWorkerHandshakeMessage(*message)) {
         client_id_ = message->client_id;
         log_header_ = absl::StrFormat("FuncWorkerConnection[%d-%d]: ", func_id_, client_id_);
+    } else {
+        HLOG(FATAL) << "Unknown handshake message type";
+    }
+    std::span<const char> payload;
+    if (!server_->OnNewHandshake(this, *message, &handshake_response_, &payload)) {
+        ScheduleClose();
+        return;
+    }
+    if (IsLauncherHandshakeMessage(*message)) {
+        pipe_for_read_message_ = &uv_pipe_handle_;
+        pipe_for_write_message_ = &uv_pipe_handle_;
+    } else if (IsFuncWorkerHandshakeMessage(*message)) {
+        // Open input FIFO
+        UV_DCHECK_OK(uv_pipe_init(uv_pipe_handle_.loop, &uv_in_fifo_handle_, 0));
+        uv_in_fifo_handle_.data = this;
+        int in_fifo_fd = ipc::FifoOpenForWrite(ipc::GetFuncWorkerInputFifoName(client_id_));
+        UV_DCHECK_OK(uv_pipe_open(&uv_in_fifo_handle_, in_fifo_fd));
+        handle_scope_.AddHandle(&uv_in_fifo_handle_);
+        // Open output FIFO
+        UV_DCHECK_OK(uv_pipe_init(uv_pipe_handle_.loop, &uv_out_fifo_handle_, 0));
+        uv_out_fifo_handle_.data = this;
+        int out_fifo_fd = ipc::FifoOpenForRead(ipc::GetFuncWorkerOutputFifoName(client_id_));
+        UV_DCHECK_OK(uv_pipe_open(&uv_out_fifo_handle_, out_fifo_fd));
+        handle_scope_.AddHandle(&uv_out_fifo_handle_);
+        // Use FIFOs for sending and receiving messages
+        pipe_for_read_message_ = &uv_out_fifo_handle_;
+        pipe_for_write_message_ = &uv_in_fifo_handle_;
+    } else {
+        HLOG(FATAL) << "Unknown handshake message type";
     }
     uv_buf_t bufs[2];
     bufs[0] = {
@@ -173,7 +211,7 @@ UV_WRITE_CB_FOR_CLASS(MessageConnection, WriteHandshakeResponse) {
     }
     HLOG(INFO) << "Handshake done";
     message_buffer_.Reset();
-    UV_DCHECK_OK(uv_read_start(UV_AS_STREAM(&uv_pipe_handle_),
+    UV_DCHECK_OK(uv_read_start(UV_AS_STREAM(pipe_for_read_message_),
                                &MessageConnection::BufferAllocCallback,
                                &MessageConnection::ReadMessageCallback));
 }
@@ -216,12 +254,6 @@ UV_WRITE_CB_FOR_CLASS(MessageConnection, WriteMessage) {
                     << uv_strerror(status);
         ScheduleClose();
     }
-}
-
-UV_CLOSE_CB_FOR_CLASS(MessageConnection, Close) {
-    DCHECK(state_ == kClosing);
-    state_ = kClosed;
-    io_worker_->OnConnectionClose(this);
 }
 
 }  // namespace gateway

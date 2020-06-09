@@ -1,9 +1,11 @@
 #include "gateway/server.h"
 
 #include "ipc/base.h"
+#include "ipc/fifo.h"
 #include "ipc/shm_region.h"
 #include "common/time.h"
 #include "utils/fs.h"
+#include "utils/io.h"
 
 #define HLOG(l) LOG(l) << "Server: "
 #define HVLOG(l) VLOG(l) << "Server: "
@@ -12,6 +14,8 @@ namespace faas {
 namespace gateway {
 
 using protocol::FuncCall;
+using protocol::NewFuncCall;
+using protocol::NewFuncCallWithMethod;
 using protocol::Message;
 using protocol::GetFuncCallFromMessage;
 using protocol::IsLauncherHandshakeMessage;
@@ -31,7 +35,8 @@ Server::Server()
       listen_backlog_(kDefaultListenBackLog), num_io_workers_(kDefaultNumIOWorkers),
       event_loop_thread_("Server/EL", absl::bind_front(&Server::EventLoopThreadMain, this)),
       next_http_connection_id_(0), next_grpc_connection_id_(0),
-      next_http_worker_id_(0), next_ipc_worker_id_(0), next_call_id_(0),
+      next_http_worker_id_(0), next_ipc_worker_id_(0),
+      dispatcher_(new Dispatcher()), next_call_id_(0),
       message_delay_stat_(
           stat::StatisticsCollector<int32_t>::StandardReportCallback("message_delay")) {
     UV_DCHECK_OK(uv_loop_init(&uv_loop_));
@@ -294,15 +299,22 @@ class Server::ExternalFuncCallContext {
 public:
     ExternalFuncCallContext(FuncCall call, std::shared_ptr<HttpAsyncRequestContext> http_context)
         : call_(call), http_context_(http_context), grpc_context_(nullptr),
-          input_region_(nullptr), output_region_(nullptr) {}
+          input_region_(nullptr), output_fifo_fd_(-1) {}
     
     ExternalFuncCallContext(FuncCall call, std::shared_ptr<GrpcCallContext> grpc_context)
         : call_(call), http_context_(nullptr), grpc_context_(grpc_context),
-          input_region_(nullptr), output_region_(nullptr) {}
+          input_region_(nullptr), output_fifo_fd_(-1) {}
+
+    ~ExternalFuncCallContext() {
+        if (output_fifo_fd_ != -1) {
+            PCHECK(close(output_fifo_fd_) == 0) << "close failed";
+            ipc::FifoRemove(ipc::GetFuncCallOutputFifoName(call_.full_call_id));
+        }
+    }
 
     FuncCall call() const { return call_; }
 
-    void CreateInputRegion() {
+    void PrepareIpcForInputAndOutput() {
         std::span<const char> body;
         if (http_context_ != nullptr) {
             body = http_context_->body();
@@ -317,18 +329,40 @@ public:
         if (body.size() > 0) {
             memcpy(input_region_->base(), body.data(), body.size());
         }
+        ipc::FifoCreate(ipc::GetFuncCallOutputFifoName(call_.full_call_id));
     }
 
-    void WriteOutput() {
-        output_region_ = ipc::ShmOpen(ipc::GetFuncCallOutputShmName(call_.full_call_id));
-        output_region_->EnableRemoveOnDestruction();
-        if (http_context_ != nullptr) {
-            http_context_->AppendToResponseBody(output_region_->to_span());
-        } else if (grpc_context_ != nullptr) {
-            grpc_context_->AppendToResponseBody(output_region_->to_span());
-        } else {
-            LOG(FATAL) << "http_context_ and grpc_context_ are both nullptr";
+    void FinishWithOutput() {
+        output_fifo_fd_ = ipc::FifoOpenForRead(
+            ipc::GetFuncCallOutputFifoName(call_.full_call_id), /* nonblocking= */ false);
+        int32_t output_size;
+        if (!io_utils::RecvMessage(output_fifo_fd_, &output_size, nullptr)) {
+            HLOG(ERROR) << "Failed to receive output size";
+            FinishWithError();
+            return;
         }
+        if (output_size < 0) {
+            HLOG(ERROR) << "Negative output size";
+            FinishWithError();
+            return;
+        }
+        if (output_size > 0) {
+            char* output = new char[output_size];
+            auto reclaim_output_buffer = gsl::finally([output] { delete[] output; });
+            if (!io_utils::RecvData(output_fifo_fd_, output, output_size, nullptr)) {
+                HLOG(ERROR) << "Failed to receive output data";
+                FinishWithError();
+                return;
+            }
+            if (http_context_ != nullptr) {
+                http_context_->AppendToResponseBody(std::span<const char>(output, output_size));
+            } else if (grpc_context_ != nullptr) {
+                grpc_context_->AppendToResponseBody(std::span<const char>(output, output_size));
+            } else {
+                LOG(FATAL) << "http_context_ and grpc_context_ are both nullptr";
+            }
+        }
+        Finish();
     }
 
     bool CheckInputNotEmpty() {
@@ -384,7 +418,7 @@ private:
     std::shared_ptr<HttpAsyncRequestContext> http_context_;
     std::shared_ptr<GrpcCallContext> grpc_context_;
     std::unique_ptr<ipc::ShmRegion> input_region_;
-    std::unique_ptr<ipc::ShmRegion> output_region_;
+    int output_fifo_fd_;
     DISALLOW_COPY_AND_ASSIGN(ExternalFuncCallContext);
 };
 
@@ -407,8 +441,7 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
             if (external_func_calls_.contains(full_call_id)) {
                 ExternalFuncCallContext* func_call_context = external_func_calls_[full_call_id].get();
                 if (IsFuncCallCompleteMessage(message)) {
-                    func_call_context->WriteOutput();
-                    func_call_context->Finish();
+                    func_call_context->FinishWithOutput();
                     dispatcher_->OnFuncCallCompleted(connection, func_call);
                 } else {
                     func_call_context->FinishWithError();
@@ -442,31 +475,28 @@ void Server::OnNewGrpcCall(std::shared_ptr<GrpcCallContext> call_context) {
         return;
     }
     NewExternalFuncCall(std::unique_ptr<ExternalFuncCallContext>(
-        new ExternalFuncCallContext(NewFuncCall(func_entry->func_id,
-                                                func_entry->grpc_method_ids.at(method_name)),
-                                    std::move(call_context))));
-}
-
-FuncCall Server::NewFuncCall(uint16_t func_id, uint16_t method_id) {
-    FuncCall call;
-    call.func_id = func_id;
-    call.method_id = method_id;
-    call.client_id = 0;
-    call.call_id = next_call_id_.fetch_add(1);
-    return call;
+        new ExternalFuncCallContext(
+                NewFuncCallWithMethod(func_entry->func_id,
+                                      func_entry->grpc_method_ids.at(method_name),
+                                      /* client_id= */ 0,
+                                      next_call_id_.fetch_add(1)),
+                std::move(call_context))));
 }
 
 void Server::OnExternalFuncCall(uint16_t func_id,
                                 std::shared_ptr<HttpAsyncRequestContext> http_context) {
     NewExternalFuncCall(std::unique_ptr<ExternalFuncCallContext>(
-        new ExternalFuncCallContext(NewFuncCall(func_id), std::move(http_context))));
+        new ExternalFuncCallContext(
+                NewFuncCall(func_id, /* client_id= */ 0, next_call_id_.fetch_add(1)),
+                std::move(http_context))));
 }
 
 void Server::NewExternalFuncCall(std::unique_ptr<ExternalFuncCallContext> func_call_context) {
     if (!func_call_context->CheckInputNotEmpty()) {
         return;
     }
-    func_call_context->CreateInputRegion();
+    func_call_context->PrepareIpcForInputAndOutput();
+    VLOG(1) << "Dispatch func_call " << func_call_context->call().full_call_id;
     if (dispatcher_->OnNewFuncCall(nullptr, func_call_context->call())) {
         absl::MutexLock lk(&external_func_calls_mu_);
         external_func_calls_[func_call_context->call().full_call_id] = std::move(func_call_context);

@@ -19,6 +19,7 @@
 
 #ifdef __FAAS_SRC
 
+#include <absl/synchronization/mutex.h>
 #include <absl/synchronization/notification.h>
 #include "base/thread.h"
 
@@ -27,7 +28,7 @@
 #include <sys/syscall.h>
 #include "base/absl_mutex_polyfill.h"
 
-pid_t gettid() {
+static pid_t gettid() {
     return syscall(SYS_gettid);
 }
 

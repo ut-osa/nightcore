@@ -21,6 +21,30 @@ union FuncCall {
 };
 static_assert(sizeof(FuncCall) == 8, "Unexpected FuncCall size");
 
+#define NEW_EMPTY_FUNC_CALL(var)      \
+    FuncCall var;                     \
+    memset(&var, 0, sizeof(FuncCall))
+
+inline FuncCall NewFuncCall(uint16_t func_id, uint16_t client_id, uint32_t call_id) {
+    NEW_EMPTY_FUNC_CALL(func_call);
+    func_call.func_id = func_id;
+    func_call.client_id = client_id;
+    func_call.call_id = call_id;
+    return func_call; 
+}
+
+inline FuncCall NewFuncCallWithMethod(uint16_t func_id, uint16_t method_id,
+                                      uint16_t client_id, uint32_t call_id) {
+    NEW_EMPTY_FUNC_CALL(func_call);
+    func_call.func_id = func_id;
+    func_call.method_id = method_id;
+    func_call.client_id = client_id;
+    func_call.call_id = call_id;
+    return func_call; 
+}
+
+#undef NEW_EMPTY_FUNC_CALL
+
 enum class MessageType : uint16_t {
     INVALID               = 0,
     LAUNCHER_HANDSHAKE    = 1,

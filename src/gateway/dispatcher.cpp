@@ -1,5 +1,8 @@
 #include "gateway/dispatcher.h"
 
+#include "ipc/base.h"
+#include "ipc/fifo.h"
+
 #define HLOG(l) LOG(l) << "Dispatcher: "
 #define HVLOG(l) VLOG(l) << "Dispatcher: "
 
@@ -22,6 +25,7 @@ Dispatcher::~Dispatcher() {}
 
 bool Dispatcher::OnLauncherConnected(MessageConnection* launcher_connection) {
     uint16_t func_id = launcher_connection->func_id();
+    HLOG(INFO) << "Launcher of func_id " << func_id << " connected";
     absl::MutexLock lk(&mu_);
     if (launcher_connections_.contains(func_id)) {
         HLOG(ERROR) << "Launcher of func_id " << func_id << " already connected";
@@ -37,6 +41,9 @@ bool Dispatcher::OnLauncherConnected(MessageConnection* launcher_connection) {
 
 bool Dispatcher::OnFuncWorkerConnected(MessageConnection* worker_connection) {
     uint16_t func_id = worker_connection->func_id();
+    uint16_t client_id = worker_connection->client_id();
+    HLOG(INFO) << "FuncWorker of func_id " << func_id
+               << ", client_id " << client_id << " connected";
     absl::MutexLock lk(&mu_);
     if (!per_func_states_.contains(func_id)) {
         HLOG(ERROR) << "PerFuncState of func_id " << func_id << " does not exist";
@@ -48,6 +55,7 @@ bool Dispatcher::OnFuncWorkerConnected(MessageConnection* worker_connection) {
 
 void Dispatcher::OnLauncherDisconnected(MessageConnection* launcher_connection) {
     uint16_t func_id = launcher_connection->func_id();
+    HLOG(INFO) << "Launcher of func_id " << func_id << " disconnected";
     absl::MutexLock lk(&mu_);
     if (launcher_connections_.contains(func_id)
           && launcher_connections_[func_id] == launcher_connection) {
@@ -59,9 +67,14 @@ void Dispatcher::OnLauncherDisconnected(MessageConnection* launcher_connection) 
 
 void Dispatcher::OnFuncWorkerDisconnected(MessageConnection* worker_connection) {
     uint16_t func_id = worker_connection->func_id();
+    uint16_t client_id = worker_connection->client_id();
+    HLOG(INFO) << "FuncWorker of func_id " << func_id
+               << ", client_id " << client_id << " disconnected";
     absl::MutexLock lk(&mu_);
     DCHECK(per_func_states_.contains(func_id));
     per_func_states_[func_id]->RemoveWorker(worker_connection);
+    ipc::FifoRemove(ipc::GetFuncWorkerInputFifoName(client_id));
+    ipc::FifoRemove(ipc::GetFuncWorkerOutputFifoName(client_id));
 }
 
 bool Dispatcher::OnNewFuncCall(MessageConnection* caller_connection,
@@ -69,6 +82,7 @@ bool Dispatcher::OnNewFuncCall(MessageConnection* caller_connection,
     uint16_t func_id = func_call.func_id;
     absl::MutexLock lk(&mu_);
     if (!launcher_connections_.contains(func_id)) {
+        HLOG(ERROR) << "There is no launcher for func_id " << func_id;
         return false;
     }
     DCHECK(per_func_states_.contains(func_id));
@@ -78,6 +92,7 @@ bool Dispatcher::OnNewFuncCall(MessageConnection* caller_connection,
         DispatchFuncCall(idle_worker, func_call);
         per_func_state->WorkerBecomeRunning(idle_worker, func_call);
     } else {
+        HLOG(INFO) << "No idle worker at the moment";
         per_func_state->PushPendingFuncCall(func_call);
     }
     return true;
@@ -114,7 +129,11 @@ void Dispatcher::FuncWorkerFinished(PerFuncState* per_func_state,
 
 void Dispatcher::RequestNewFuncWorker(MessageConnection* launcher_connection) {
     uint16_t client_id = next_client_id_.fetch_add(1);
+    HLOG(INFO) << "Request new FuncWorker for func_id " << launcher_connection->func_id()
+               << " with client_id " << client_id;
     CHECK_LE(client_id, kMaxClientId) << "Reach maximum number of clients!";
+    ipc::FifoCreate(ipc::GetFuncWorkerInputFifoName(client_id));
+    ipc::FifoCreate(ipc::GetFuncWorkerOutputFifoName(client_id));
     Message message = NewCreateFuncWorkerMessage(client_id);
 #ifdef __FAAS_ENABLE_PROFILING
     message->send_timestamp = GetMonotonicMicroTimestamp();
@@ -142,6 +161,7 @@ void Dispatcher::PerFuncState::NewWorker(MessageConnection* worker_connection) {
     uint16_t client_id = worker_connection->client_id();
     DCHECK(!workers_.contains(client_id));
     workers_[client_id] = worker_connection;
+    idle_workers_.push_back(worker_connection);
 }
 
 void Dispatcher::PerFuncState::RemoveWorker(MessageConnection* worker_connection) {

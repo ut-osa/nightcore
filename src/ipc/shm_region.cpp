@@ -15,7 +15,7 @@ namespace ipc {
 
 std::unique_ptr<ShmRegion> ShmCreate(std::string_view name, size_t size) {
     std::string full_path = fs_utils::JoinPath(GetRootPathForShm(), name);
-    int fd = open(full_path.c_str(), O_CREAT|O_EXCL|O_RDWR, 0644);
+    int fd = open(full_path.c_str(), O_CREAT|O_EXCL|O_RDWR, __FAAS_FILE_CREAT_MODE);
     PCHECK(fd != -1) << "open failed";
     PCHECK(ftruncate(fd, size) == 0) << "ftruncate failed";
     void* ptr = nullptr;
