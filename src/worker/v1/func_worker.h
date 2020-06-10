@@ -11,7 +11,8 @@
 #include "common/func_config.h"
 #include "utils/dynamic_library.h"
 #include "utils/appendable_buffer.h"
-#include "utils/object_pool.h"
+#include "utils/buffer_pool.h"
+#include "ipc/shm_region.h"
 #include "faas/worker_v1_interface.h"
 
 namespace faas {
@@ -38,6 +39,7 @@ private:
     int fprocess_id_;
     uint16_t client_id_;
     std::string func_library_path_;
+    absl::Duration func_call_timeout_;
 
     absl::Mutex mu_;
 
@@ -53,7 +55,14 @@ private:
     faas_destroy_func_worker_fn_t destroy_func_worker_fn_;
     faas_func_call_fn_t func_call_fn_;
 
-    absl::flat_hash_set<char*> temporary_buffers_ ABSL_GUARDED_BY(mu_);
+    struct InvokeFuncResource {
+        protocol::FuncCall func_call;
+        std::unique_ptr<ipc::ShmRegion> output_region;
+        char* pipe_buffer;
+    };
+
+    std::vector<InvokeFuncResource> invoke_func_resources_ ABSL_GUARDED_BY(mu_);
+    utils::BufferPool buffer_pool_for_pipes_ ABSL_GUARDED_BY(mu_);
     utils::AppendableBuffer func_output_buffer_;
 
     std::atomic<uint32_t> next_call_id_;
@@ -70,6 +79,11 @@ private:
     bool InvokeFunc(const char* func_name,
                     const char* input_data, size_t input_length,
                     const char** output_data, size_t* output_length);
+    bool WriteOutputToShm(const protocol::FuncCall& func_call);
+    bool WriteOutputToFifo(const protocol::FuncCall& func_call, bool func_call_succeed);
+    bool ReadOutputFromFifo(int fd, InvokeFuncResource* invoke_func_resource,
+                            const char** output_data, size_t* output_length);
+    void ReclaimInvokeFuncResources();
 
     // Assume caller_context is an instance of FuncWorker
     static void AppendOutputWrapper(void* caller_context, const char* data, size_t length);
