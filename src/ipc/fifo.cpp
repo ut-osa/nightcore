@@ -75,7 +75,7 @@ bool FifoPollForRead(int fd, int timeout_ms) {
         return false;
     }
     if ((pfd.revents & POLLIN) == 0) {
-        LOG(ERROR) << "Error happens on given fifo";
+        LOG(ERROR) << "Error happens on given fifo: revents=" << pfd.revents;
         return false;
     }
     return true;
