@@ -38,7 +38,7 @@ Server::Server()
       event_loop_thread_("Server/EL", absl::bind_front(&Server::EventLoopThreadMain, this)),
       next_http_connection_id_(0), next_grpc_connection_id_(0),
       next_http_worker_id_(0), next_ipc_worker_id_(0),
-      dispatcher_(new Dispatcher()), next_call_id_(0),
+      dispatcher_(new Dispatcher(this)), next_call_id_(0),
       message_delay_stat_(
           stat::StatisticsCollector<int32_t>::StandardReportCallback("message_delay")) {
     UV_DCHECK_OK(uv_loop_init(&uv_loop_));
@@ -452,7 +452,11 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
                 ExternalFuncCallContext* func_call_context = external_func_calls_[full_call_id].get();
                 if (IsFuncCallCompleteMessage(message)) {
                     func_call_context->FinishWithOutput();
+#ifdef __FAAS_ENABLE_PROFILING
+                    dispatcher_->OnFuncCallCompleted(connection, func_call, message.processing_time);
+#else
                     dispatcher_->OnFuncCallCompleted(connection, func_call);
+#endif
                 } else {
                     func_call_context->FinishWithError();
                     dispatcher_->OnFuncCallFailed(connection, func_call);
@@ -463,7 +467,11 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
             }
         } else {
             if (IsFuncCallCompleteMessage(message)) {
+#ifdef __FAAS_ENABLE_PROFILING
+                dispatcher_->OnFuncCallCompleted(connection, func_call, message.processing_time);
+#else
                 dispatcher_->OnFuncCallCompleted(connection, func_call);
+#endif
             } else {
                 dispatcher_->OnFuncCallFailed(connection, func_call);
             }
@@ -508,11 +516,15 @@ void Server::NewExternalFuncCall(std::unique_ptr<ExternalFuncCallContext> func_c
         return;
     }
     FuncCall func_call = func_call_context->call();
-    if (dispatcher_->OnNewFuncCall(nullptr, func_call_context->call())) {
+    {
         absl::MutexLock lk(&external_func_calls_mu_);
         external_func_calls_[func_call.full_call_id] = std::move(func_call_context);
-    } else {
+    }
+    if (!dispatcher_->OnNewFuncCall(nullptr, func_call)) {
+        absl::MutexLock lk(&external_func_calls_mu_);
+        auto func_call_context = external_func_calls_[func_call.full_call_id].get();
         func_call_context->FinishWithDispatcherFailure();
+        external_func_calls_.erase(func_call.full_call_id);
     }
 }
 

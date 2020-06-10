@@ -39,6 +39,7 @@ public:
     void set_func_config_file(std::string_view path) {
         func_config_file_ = std::string(path);
     }
+    FuncConfig* func_config() { return &func_config_; }
     Dispatcher* dispatcher() { return dispatcher_.get(); }
 
     void Start();

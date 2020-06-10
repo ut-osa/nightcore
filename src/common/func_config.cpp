@@ -93,6 +93,10 @@ bool FuncConfig::Load(std::string_view json_contents) {
             auto entry = std::make_unique<Entry>();
             entry->func_name = func_name;
             entry->func_id = func_id;
+            entry->min_workers = -1;
+            if (item.contains("minWorkers")) {
+                entry->min_workers = item.at("minWorkers").get<int>();
+            }
             entry->is_grpc_service = false;
             if (StartsWith(func_name, "grpc:")) {
                 std::string_view service_name = StripPrefix(func_name, "grpc:");

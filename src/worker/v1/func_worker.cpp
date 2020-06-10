@@ -200,6 +200,10 @@ bool FuncWorker::InvokeFunc(const char* func_name, const char* input_data, size_
     });
     // Send message to gateway (dispatcher)
     Message message = NewInvokeFuncMessage(func_call);
+#ifdef __FAAS_ENABLE_PROFILING
+    message.send_timestamp = GetMonotonicMicroTimestamp();
+    message.processing_time = 0;
+#endif
     {
         absl::MutexLock lk(&mu_);
         PCHECK(io_utils::SendMessage(output_pipe_fd_, message));

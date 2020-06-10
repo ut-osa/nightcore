@@ -1,23 +1,22 @@
 #pragma once
 
 #include "base/common.h"
+#include "common/stat.h"
 #include "common/protocol.h"
 #include "gateway/message_connection.h"
 
 namespace faas {
 namespace gateway {
 
+class Server;
+
 class Dispatcher {
 public:
-    static constexpr int kDefaultMinWorkersPerFunc = 2;
+    static constexpr int kDefaultMinWorkersPerFunc = 4;
     static constexpr int kMaxClientId = (1 << protocol::kClientIdBits) - 1;
 
-    Dispatcher();
+    explicit Dispatcher(Server* server);
     ~Dispatcher();
-
-    void set_min_workers_per_func(int value) {
-        min_workers_per_func_ = value;
-    }
 
     // All must be thread-safe
     bool OnLauncherConnected(MessageConnection* launcher_connection);
@@ -27,12 +26,13 @@ public:
     bool OnNewFuncCall(MessageConnection* caller_connection,
                        const protocol::FuncCall& func_call);
     void OnFuncCallCompleted(MessageConnection* worker_connection,
-                             const protocol::FuncCall& func_call);
+                             const protocol::FuncCall& func_call,
+                             int32_t processing_time = 0);
     void OnFuncCallFailed(MessageConnection* worker_connection,
                           const protocol::FuncCall& func_call);
 
 private:
-    int min_workers_per_func_;
+    Server* server_;
     std::atomic<uint16_t> next_client_id_;
 
     absl::Mutex mu_;
@@ -59,6 +59,22 @@ private:
         void PushPendingFuncCall(const protocol::FuncCall& func_call);
         bool PopPendingFuncCall(protocol::FuncCall* func_call);
 
+        stat::Counter* incoming_requests_stat() {
+            return &incoming_requests_stat_;
+        }
+
+        stat::StatisticsCollector<int32_t>* queueing_delay_stat() {
+            return &queueing_delay_stat_;
+        }
+
+        stat::StatisticsCollector<int32_t>* processing_delay_stat() {
+            return &processing_delay_stat_;
+        }
+
+        stat::StatisticsCollector<int32_t>* dispatch_overhead_stat() {
+            return &dispatch_overhead_stat_;
+        }
+
     private:
         uint16_t func_id_;
         absl::flat_hash_map</* client_id */ uint16_t, MessageConnection*> workers_;
@@ -66,16 +82,29 @@ private:
         std::vector<MessageConnection*> idle_workers_;
         std::queue<protocol::FuncCall> pending_func_calls_;
 
+        stat::Counter incoming_requests_stat_;
+        stat::StatisticsCollector<int32_t> queueing_delay_stat_;
+        stat::StatisticsCollector<int32_t> processing_delay_stat_;
+        stat::StatisticsCollector<int32_t> dispatch_overhead_stat_;
+
         DISALLOW_COPY_AND_ASSIGN(PerFuncState);
     };
 
     absl::flat_hash_map</* client_id */ uint16_t, std::unique_ptr<PerFuncState>>
         per_func_states_ ABSL_GUARDED_BY(mu_);
 
-    void FuncWorkerFinished(PerFuncState* per_func_state, MessageConnection* worker_connection);
-    void RequestNewFuncWorker(MessageConnection* launcher_connection);
+    struct PerFuncCallState {
+        int64_t recv_timestamp;
+        int64_t dispatch_timestamp;
+    };
+    absl::flat_hash_map</* full_call_id */ uint64_t, PerFuncCallState>
+        per_func_call_states_ ABSL_GUARDED_BY(mu_);
+
+    void FuncWorkerFinished(PerFuncState* per_func_state,
+                            MessageConnection* worker_connection) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
+    void RequestNewFuncWorker(MessageConnection* launcher_connection) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
     void DispatchFuncCall(MessageConnection* worker_connection,
-                          const protocol::FuncCall& func_call);
+                          const protocol::FuncCall& func_call) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
 
     DISALLOW_COPY_AND_ASSIGN(Dispatcher);
 };

@@ -2,6 +2,7 @@
 
 #include "ipc/base.h"
 #include "ipc/fifo.h"
+#include "gateway/server.h"
 
 #define HLOG(l) LOG(l) << "Dispatcher: "
 #define HVLOG(l) VLOG(l) << "Dispatcher: "
@@ -18,9 +19,8 @@ using protocol::NewInvokeFuncMessage;
 constexpr int Dispatcher::kDefaultMinWorkersPerFunc;
 constexpr int Dispatcher::kMaxClientId;
 
-Dispatcher::Dispatcher()
-    : min_workers_per_func_(kDefaultMinWorkersPerFunc),
-      next_client_id_(1) {}
+Dispatcher::Dispatcher(Server* server)
+    : server_(server), next_client_id_(1) {}
 
 Dispatcher::~Dispatcher() {}
 
@@ -34,7 +34,13 @@ bool Dispatcher::OnLauncherConnected(MessageConnection* launcher_connection) {
     }
     launcher_connections_[func_id] = launcher_connection;
     per_func_states_[func_id] = std::make_unique<PerFuncState>(func_id);
-    for (int i = 0; i < min_workers_per_func_; i++) {
+    const FuncConfig::Entry* func_entry = server_->func_config()->find_by_func_id(func_id);
+    DCHECK(func_entry != nullptr);
+    int min_workers = func_entry->min_workers;
+    if (min_workers == -1) {
+        min_workers = kDefaultMinWorkersPerFunc;
+    }
+    for (int i = 0; i < min_workers; i++) {
         RequestNewFuncWorker(launcher_connection);
     }
     return true;
@@ -94,8 +100,13 @@ bool Dispatcher::OnNewFuncCall(MessageConnection* caller_connection,
         HLOG(ERROR) << "There is no launcher for func_id " << func_id;
         return false;
     }
+    per_func_call_states_[func_call.full_call_id] = {
+        .recv_timestamp = GetMonotonicMicroTimestamp(),
+        .dispatch_timestamp = 0
+    };
     DCHECK(per_func_states_.contains(func_id));
     auto per_func_state = per_func_states_[func_id].get();
+    per_func_state->incoming_requests_stat()->Tick();
     MessageConnection* idle_worker = per_func_state->PickIdleWorker();
     if (idle_worker) {
         DispatchFuncCall(idle_worker, func_call);
@@ -108,14 +119,24 @@ bool Dispatcher::OnNewFuncCall(MessageConnection* caller_connection,
 }
 
 void Dispatcher::OnFuncCallCompleted(MessageConnection* worker_connection,
-                                     const FuncCall& func_call) {
+                                     const FuncCall& func_call, int32_t processing_time) {
     VLOG(1) << "OnFuncCallCompleted " << FuncCallDebugString(func_call);
     uint16_t func_id = func_call.func_id;
     DCHECK_EQ(func_id, worker_connection->func_id());
     absl::MutexLock lk(&mu_);
+    DCHECK(per_func_call_states_.contains(func_call.full_call_id));
+    auto per_func_call_state = &per_func_call_states_[func_call.full_call_id];
     DCHECK(per_func_states_.contains(func_id));
     auto per_func_state = per_func_states_[func_id].get();
     FuncWorkerFinished(per_func_state, worker_connection);
+    int64_t current_timestamp = GetMonotonicMicroTimestamp();
+    per_func_state->processing_delay_stat()->AddSample(gsl::narrow_cast<int32_t>(
+        current_timestamp - per_func_call_state->dispatch_timestamp));
+    if (processing_time > 0) {
+        per_func_state->dispatch_overhead_stat()->AddSample(gsl::narrow_cast<int32_t>(
+            current_timestamp - per_func_call_state->dispatch_timestamp - processing_time));
+    }
+    per_func_call_states_.erase(func_call.full_call_id);
 }
 
 void Dispatcher::OnFuncCallFailed(MessageConnection* worker_connection,
@@ -124,9 +145,11 @@ void Dispatcher::OnFuncCallFailed(MessageConnection* worker_connection,
     uint16_t func_id = func_call.func_id;
     DCHECK_EQ(func_id, worker_connection->func_id());
     absl::MutexLock lk(&mu_);
+    DCHECK(per_func_call_states_.contains(func_call.full_call_id));
     DCHECK(per_func_states_.contains(func_id));
     auto per_func_state = per_func_states_[func_id].get();
     FuncWorkerFinished(per_func_state, worker_connection);
+    per_func_call_states_.erase(func_call.full_call_id);
 }
 
 void Dispatcher::FuncWorkerFinished(PerFuncState* per_func_state,
@@ -154,24 +177,40 @@ void Dispatcher::RequestNewFuncWorker(MessageConnection* launcher_connection) {
         << "FifoCreate failed";
     Message message = NewCreateFuncWorkerMessage(client_id);
 #ifdef __FAAS_ENABLE_PROFILING
-    message->send_timestamp = GetMonotonicMicroTimestamp();
-    message->processing_time = 0;
+    message.send_timestamp = GetMonotonicMicroTimestamp();
+    message.processing_time = 0;
 #endif
     launcher_connection->WriteMessage(message);
 }
 
 void Dispatcher::DispatchFuncCall(MessageConnection* worker_connection,
                                   const FuncCall& func_call) {
+    int64_t current_timestamp = GetMonotonicMicroTimestamp();
+    DCHECK(per_func_call_states_.contains(func_call.full_call_id));
+    auto per_func_call_state = &per_func_call_states_[func_call.full_call_id];
+    per_func_call_state->dispatch_timestamp = current_timestamp;
+    DCHECK(per_func_states_.contains(func_call.func_id));
+    auto per_func_state = per_func_states_[func_call.func_id].get();
+    per_func_state->queueing_delay_stat()->AddSample(gsl::narrow_cast<int32_t>(
+        current_timestamp - per_func_call_state->recv_timestamp));
     Message message = NewInvokeFuncMessage(func_call);
 #ifdef __FAAS_ENABLE_PROFILING
-    message->send_timestamp = GetMonotonicMicroTimestamp();
-    message->processing_time = 0;
+    message.send_timestamp = current_timestamp;
+    message.processing_time = 0;
 #endif
     worker_connection->WriteMessage(message);
 }
 
 Dispatcher::PerFuncState::PerFuncState(uint16_t func_id)
-    : func_id_(func_id) {}
+    : func_id_(func_id),
+      incoming_requests_stat_(stat::Counter::StandardReportCallback(
+          fmt::format("incoming_requests[{}]", func_id))),
+      queueing_delay_stat_(stat::StatisticsCollector<int32_t>::StandardReportCallback(
+          fmt::format("queueing_delay[{}]", func_id))),
+      processing_delay_stat_(stat::StatisticsCollector<int32_t>::StandardReportCallback(
+          fmt::format("processing_delay[{}]", func_id))),
+      dispatch_overhead_stat_(stat::StatisticsCollector<int32_t>::StandardReportCallback(
+          fmt::format("dispatch_overhead[{}]", func_id))) {}
 
 Dispatcher::PerFuncState::~PerFuncState() {}
 
