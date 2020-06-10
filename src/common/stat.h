@@ -80,6 +80,7 @@ public:
     }
 
     void AddSample(T sample) {
+#ifndef __FAAS_DISABLE_STAT
         absl::MutexLock lk(&mu_);
         samples_.push_back(sample);
         if (samples_.size() >= min_report_samples_ && report_timer_.Check()) {
@@ -90,6 +91,7 @@ public:
             report_timer_.MarkReport(&duration_ms);
             report_callback_(duration_ms, n_samples, report);
         }
+#endif
     }
 
 private:
@@ -151,6 +153,7 @@ public:
     }
 
     void Tick(int delta = 1) {
+#ifndef __FAAS_DISABLE_STAT
         DCHECK_GT(delta, 0);
         absl::MutexLock lk(&mu_);
         value_ += delta;
@@ -160,6 +163,7 @@ public:
             report_callback_(duration_ms, value_, last_report_value_);
             last_report_value_ = value_;
         }
+#endif
     }
 
 private:
@@ -207,6 +211,7 @@ public:
     ~CategoryCounter() {}
 
     void Tick(int category, int delta = 1) {
+#ifndef __FAAS_DISABLE_STAT
         DCHECK_GT(delta, 0);
         absl::MutexLock lk(&mu_);
         values_[category] += delta;
@@ -220,6 +225,7 @@ public:
             }
             sum_ = 0;
         }
+#endif
     }
 
 private:
