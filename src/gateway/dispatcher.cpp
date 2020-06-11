@@ -13,6 +13,9 @@ namespace gateway {
 using protocol::FuncCall;
 using protocol::FuncCallDebugString;
 using protocol::Message;
+using protocol::SetInlineDataInMessage;
+using protocol::GetFuncCallFromMessage;
+using protocol::SetProfilingFieldsInMessage;
 using protocol::NewCreateFuncWorkerMessage;
 using protocol::NewInvokeFuncMessage;
 
@@ -58,12 +61,7 @@ bool Dispatcher::OnFuncWorkerConnected(MessageConnection* worker_connection) {
     }
     auto per_func_state = per_func_states_[func_id].get();
     per_func_state->NewWorker(worker_connection);
-    FuncCall pending_func_call;
-    if (per_func_state->PopPendingFuncCall(&pending_func_call)) {
-        VLOG(1) << "Found pending func_call " << FuncCallDebugString(pending_func_call);
-        DispatchFuncCall(worker_connection, pending_func_call);
-        per_func_state->WorkerBecomeRunning(worker_connection, pending_func_call);
-    }
+    DispatchPendingFuncCall(worker_connection, per_func_state);
     return true;
 }
 
@@ -92,7 +90,8 @@ void Dispatcher::OnFuncWorkerDisconnected(MessageConnection* worker_connection) 
 }
 
 bool Dispatcher::OnNewFuncCall(MessageConnection* caller_connection,
-                               const FuncCall& func_call) {
+                               const protocol::FuncCall& func_call, size_t input_size,
+                               std::span<const char> inline_input, bool shm_input) {
     VLOG(1) << "OnNewFuncCall " << FuncCallDebugString(func_call);
     uint16_t func_id = func_call.func_id;
     absl::MutexLock lk(&mu_);
@@ -107,19 +106,26 @@ bool Dispatcher::OnNewFuncCall(MessageConnection* caller_connection,
     DCHECK(per_func_states_.contains(func_id));
     auto per_func_state = per_func_states_[func_id].get();
     per_func_state->incoming_requests_stat()->Tick();
+    per_func_state->input_size_stat()->AddSample(gsl::narrow_cast<uint32_t>(input_size));
+    Message invoke_func_message = NewInvokeFuncMessage(func_call);
+    if (shm_input) {
+        invoke_func_message.payload_size = -gsl::narrow_cast<int32_t>(input_size);
+    } else {
+        SetInlineDataInMessage(&invoke_func_message, inline_input);
+    }
     MessageConnection* idle_worker = per_func_state->PickIdleWorker();
     if (idle_worker) {
-        DispatchFuncCall(idle_worker, func_call);
+        DispatchFuncCall(idle_worker, &invoke_func_message);
         per_func_state->WorkerBecomeRunning(idle_worker, func_call);
     } else {
         VLOG(1) << "No idle worker at the moment";
-        per_func_state->PushPendingFuncCall(func_call);
+        per_func_state->PushPendingFuncCall(invoke_func_message);
     }
     return true;
 }
 
-void Dispatcher::OnFuncCallCompleted(MessageConnection* worker_connection,
-                                     const FuncCall& func_call, int32_t processing_time) {
+void Dispatcher::OnFuncCallCompleted(MessageConnection* worker_connection, const FuncCall& func_call,
+                                     int32_t processing_time, size_t output_size) {
     VLOG(1) << "OnFuncCallCompleted " << FuncCallDebugString(func_call);
     uint16_t func_id = func_call.func_id;
     DCHECK_EQ(func_id, worker_connection->func_id());
@@ -135,7 +141,10 @@ void Dispatcher::OnFuncCallCompleted(MessageConnection* worker_connection,
     if (processing_time > 0) {
         per_func_state->dispatch_overhead_stat()->AddSample(gsl::narrow_cast<int32_t>(
             current_timestamp - per_func_call_state->dispatch_timestamp - processing_time));
+    } else {
+        HLOG(WARNING) << "processing_time is not set";
     }
+    per_func_state->output_size_stat()->AddSample(gsl::narrow_cast<uint32_t>(output_size));
     per_func_call_states_.erase(func_call.full_call_id);
 }
 
@@ -155,12 +164,7 @@ void Dispatcher::OnFuncCallFailed(MessageConnection* worker_connection,
 void Dispatcher::FuncWorkerFinished(PerFuncState* per_func_state,
                                     MessageConnection* worker_connection) {
     per_func_state->WorkerBecomeIdle(worker_connection);
-    FuncCall pending_func_call;
-    if (per_func_state->PopPendingFuncCall(&pending_func_call)) {
-        VLOG(1) << "Found pending func_call " << FuncCallDebugString(pending_func_call);
-        DispatchFuncCall(worker_connection, pending_func_call);
-        per_func_state->WorkerBecomeRunning(worker_connection, pending_func_call);
-    }
+    DispatchPendingFuncCall(worker_connection, per_func_state);
     VLOG(1) << "func_id " << per_func_state->func_id() << ": "
             << "running_workers=" << per_func_state->running_workers() << ", "
             << "idle_workers=" << per_func_state->idle_workers();
@@ -176,15 +180,27 @@ void Dispatcher::RequestNewFuncWorker(MessageConnection* launcher_connection) {
     CHECK(ipc::FifoCreate(ipc::GetFuncWorkerOutputFifoName(client_id)))
         << "FifoCreate failed";
     Message message = NewCreateFuncWorkerMessage(client_id);
-#ifdef __FAAS_ENABLE_PROFILING
-    message.send_timestamp = GetMonotonicMicroTimestamp();
-    message.processing_time = 0;
-#endif
+    SetProfilingFieldsInMessage(&message);
     launcher_connection->WriteMessage(message);
 }
 
+bool Dispatcher::DispatchPendingFuncCall(MessageConnection* worker_connection,
+                                         PerFuncState* per_func_state) {
+    Message* pending_invoke_func_message = per_func_state->PeekPendingFuncCall();
+    if (pending_invoke_func_message != nullptr) {
+        FuncCall func_call = GetFuncCallFromMessage(*pending_invoke_func_message);
+        VLOG(1) << "Found pending func_call " << FuncCallDebugString(func_call);
+        DispatchFuncCall(worker_connection, pending_invoke_func_message);
+        per_func_state->WorkerBecomeRunning(worker_connection, func_call);
+        per_func_state->PopPendingFuncCall();
+        return true;
+    }
+    return false;
+}
+
 void Dispatcher::DispatchFuncCall(MessageConnection* worker_connection,
-                                  const FuncCall& func_call) {
+                                  Message* invoke_func_message) {
+    FuncCall func_call = GetFuncCallFromMessage(*invoke_func_message);
     int64_t current_timestamp = GetMonotonicMicroTimestamp();
     DCHECK(per_func_call_states_.contains(func_call.full_call_id));
     auto per_func_call_state = &per_func_call_states_[func_call.full_call_id];
@@ -193,18 +209,18 @@ void Dispatcher::DispatchFuncCall(MessageConnection* worker_connection,
     auto per_func_state = per_func_states_[func_call.func_id].get();
     per_func_state->queueing_delay_stat()->AddSample(gsl::narrow_cast<int32_t>(
         current_timestamp - per_func_call_state->recv_timestamp));
-    Message message = NewInvokeFuncMessage(func_call);
-#ifdef __FAAS_ENABLE_PROFILING
-    message.send_timestamp = current_timestamp;
-    message.processing_time = 0;
-#endif
-    worker_connection->WriteMessage(message);
+    SetProfilingFieldsInMessage(invoke_func_message);
+    worker_connection->WriteMessage(*invoke_func_message);
 }
 
 Dispatcher::PerFuncState::PerFuncState(uint16_t func_id)
     : func_id_(func_id),
       incoming_requests_stat_(stat::Counter::StandardReportCallback(
           fmt::format("incoming_requests[{}]", func_id))),
+      input_size_stat_(stat::StatisticsCollector<uint32_t>::StandardReportCallback(
+          fmt::format("input_size[{}]", func_id))),
+      output_size_stat_(stat::StatisticsCollector<uint32_t>::StandardReportCallback(
+          fmt::format("output_size[{}]", func_id))),
       queueing_delay_stat_(stat::StatisticsCollector<int32_t>::StandardReportCallback(
           fmt::format("queueing_delay[{}]", func_id))),
       processing_delay_stat_(stat::StatisticsCollector<int32_t>::StandardReportCallback(
@@ -256,17 +272,21 @@ MessageConnection* Dispatcher::PerFuncState::PickIdleWorker() {
     return nullptr;
 }
 
-void Dispatcher::PerFuncState::PushPendingFuncCall(const FuncCall& func_call) {
-    pending_func_calls_.push(func_call);
+void Dispatcher::PerFuncState::PushPendingFuncCall(const Message& invoke_func_message) {
+    pending_func_calls_.push(invoke_func_message);
 }
 
-bool Dispatcher::PerFuncState::PopPendingFuncCall(FuncCall* func_call) {
+Message* Dispatcher::PerFuncState::PeekPendingFuncCall() {
     if (pending_func_calls_.empty()) {
-        return false;
+        return nullptr;
     } else {
-        *func_call = pending_func_calls_.front();
+        return &pending_func_calls_.front();
+    }
+}
+
+void Dispatcher::PerFuncState::PopPendingFuncCall() {
+    if (!pending_func_calls_.empty()) {
         pending_func_calls_.pop();
-        return true;
     }
 }
 

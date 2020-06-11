@@ -69,13 +69,11 @@ private:
 
     stat::StatisticsCollector<int32_t> gateway_message_delay_stat_;
     stat::StatisticsCollector<int32_t> processing_delay_stat_;
-    stat::StatisticsCollector<uint32_t> input_size_stat_;
-    stat::StatisticsCollector<uint32_t> output_size_stat_;
 
     void MainServingLoop();
     void HandshakeWithGateway();
 
-    void ExecuteFunc(void* worker_handle, const protocol::FuncCall& func_call);
+    void ExecuteFunc(void* worker_handle, const protocol::Message& invoke_func_message);
     bool InvokeFunc(const char* func_name,
                     const char* input_data, size_t input_length,
                     const char** output_data, size_t* output_length);

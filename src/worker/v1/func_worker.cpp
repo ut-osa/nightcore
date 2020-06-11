@@ -15,28 +15,28 @@ using protocol::FuncCall;
 using protocol::NewFuncCall;
 using protocol::FuncCallDebugString;
 using protocol::Message;
+using protocol::SetProfilingFieldsInMessage;
 using protocol::GetFuncCallFromMessage;
+using protocol::GetInlineDataFromMessage;
+using protocol::SetInlineDataInMessage;
 using protocol::IsHandshakeResponseMessage;
 using protocol::IsInvokeFuncMessage;
 using protocol::NewFuncWorkerHandshakeMessage;
 using protocol::NewFuncCallCompleteMessage;
 using protocol::NewFuncCallFailedMessage;
 using protocol::NewInvokeFuncMessage;
+using protocol::ComputeMessageDelay;
 
 constexpr absl::Duration FuncWorker::kDefaultFuncCallTimeout;
 
 FuncWorker::FuncWorker()
     : func_id_(-1), fprocess_id_(-1), client_id_(0), func_call_timeout_(kDefaultFuncCallTimeout),
       gateway_sock_fd_(-1), input_pipe_fd_(-1), output_pipe_fd_(-1),
-      buffer_pool_for_pipes_("Pipes", PIPE_BUF), next_call_id_(0),
+      buffer_pool_for_pipes_("Pipes", __FAAS_MESSAGE_SIZE), next_call_id_(0),
       gateway_message_delay_stat_(
           stat::StatisticsCollector<int32_t>::StandardReportCallback("gateway_message_delay")),
       processing_delay_stat_(
-          stat::StatisticsCollector<int32_t>::StandardReportCallback("processing_delay")),
-      input_size_stat_(
-          stat::StatisticsCollector<uint32_t>::StandardReportCallback("input_size")),
-      output_size_stat_(
-          stat::StatisticsCollector<uint32_t>::StandardReportCallback("output_size")) {}
+          stat::StatisticsCollector<int32_t>::StandardReportCallback("processing_delay")) {}
 
 FuncWorker::~FuncWorker() {
     close(gateway_sock_fd_);
@@ -81,13 +81,9 @@ void FuncWorker::MainServingLoop() {
         Message message;
         CHECK(io_utils::RecvMessage(input_pipe_fd_, &message, nullptr))
             << "Failed to receive message from gateway";
-#ifdef __FAAS_ENABLE_PROFILING
-        gateway_message_delay_stat_.AddSample(gsl::narrow_cast<int32_t>(
-            GetMonotonicMicroTimestamp() - message.send_timestamp));
-#endif
+        gateway_message_delay_stat_.AddSample(ComputeMessageDelay(message));
         if (IsInvokeFuncMessage(message)) {
-            FuncCall func_call = GetFuncCallFromMessage(message);
-            ExecuteFunc(func_worker, func_call);
+            ExecuteFunc(func_worker, message);
         } else {
             LOG(FATAL) << "Unknown message type";
         }
@@ -114,47 +110,58 @@ void FuncWorker::HandshakeWithGateway() {
     LOG(INFO) << "Handshake done";
 }
 
-void FuncWorker::ExecuteFunc(void* worker_handle, const FuncCall& func_call) {
+void FuncWorker::ExecuteFunc(void* worker_handle, const Message& invoke_func_message) {
+    FuncCall func_call = GetFuncCallFromMessage(invoke_func_message);
     VLOG(1) << "Execute func_call " << FuncCallDebugString(func_call);
-    auto input_region = ipc::ShmOpen(ipc::GetFuncCallInputShmName(func_call.full_call_id));
-    input_size_stat_.AddSample(input_region->size());
+    std::unique_ptr<ipc::ShmRegion> input_region;
+    std::span<const char> input;
+    if (invoke_func_message.payload_size < 0) {
+        // Input in shm
+        input_region = ipc::ShmOpen(ipc::GetFuncCallInputShmName(func_call.full_call_id));
+        if (input_region == nullptr) {
+            Message response = NewFuncCallFailedMessage(func_call);
+            SetProfilingFieldsInMessage(&response);
+            PCHECK(io_utils::SendMessage(output_pipe_fd_, response));
+            return;
+        }
+        input = input_region->to_span();
+    } else {
+        // Input in message's inline data
+        input = GetInlineDataFromMessage(invoke_func_message);
+    }
     func_output_buffer_.Reset();
     int64_t start_timestamp = GetMonotonicMicroTimestamp();
-    int ret = func_call_fn_(
-        worker_handle, input_region->base(), input_region->size());
+    int ret = func_call_fn_(worker_handle, input.data(), input.size());
     int32_t processing_time = gsl::narrow_cast<int32_t>(
         GetMonotonicMicroTimestamp() - start_timestamp);
     processing_delay_stat_.AddSample(processing_time);
-    if (ret == 0) {
-        output_size_stat_.AddSample(func_output_buffer_.length());
-    }
     ReclaimInvokeFuncResources();
     VLOG(1) << "Finish executing func_call " << FuncCallDebugString(func_call);
-    Message response;
+    Message response = (ret == 0) ? NewFuncCallCompleteMessage(func_call)
+                                  : NewFuncCallFailedMessage(func_call);
     if (func_call.client_id == 0) {
-        // FuncCall from gateway, will use shm for output
+        // FuncCall from gateway, will use message's inline data if possible
         if (ret == 0) {
-            if (WriteOutputToShm(func_call)) {
-                response = NewFuncCallCompleteMessage(func_call);
+            if (func_output_buffer_.length() <= MESSAGE_INLINE_DATA_SIZE) {
+                SetInlineDataInMessage(&response, func_output_buffer_.to_span());
             } else {
-                response = NewFuncCallFailedMessage(func_call);
+                if (WriteOutputToShm(func_call)) {
+                    response.payload_size = -gsl::narrow_cast<int32_t>(func_output_buffer_.length());
+                } else {
+                    response = NewFuncCallFailedMessage(func_call);
+                }
             }
-        } else {
-            response = NewFuncCallFailedMessage(func_call);
         }
     } else {
         // FuncCall from other FuncWorker, will use fifo for output
         if (WriteOutputToFifo(func_call, ret == 0)) {
-            response = NewFuncCallCompleteMessage(func_call);
+            response.payload_size = gsl::narrow_cast<int32_t>(func_output_buffer_.length());
         } else {
             response = NewFuncCallFailedMessage(func_call);
         }
     }
     VLOG(1) << "Send response to gateway";
-#ifdef __FAAS_ENABLE_PROFILING
-    response.send_timestamp = GetMonotonicMicroTimestamp();
-    response.processing_time = processing_time;
-#endif
+    SetProfilingFieldsInMessage(&response, processing_time);
     PCHECK(io_utils::SendMessage(output_pipe_fd_, response));
 }
 
@@ -170,16 +177,23 @@ bool FuncWorker::InvokeFunc(const char* func_name, const char* input_data, size_
         gsl::narrow_cast<uint16_t>(func_entry->func_id),
         client_id_, next_call_id_.fetch_add(1));
     VLOG(1) << "Invoke func_call " << FuncCallDebugString(func_call);
-    // Create shm for input
-    auto input_region = ipc::ShmCreate(
-        ipc::GetFuncCallInputShmName(func_call.full_call_id), input_length);
-    if (input_region == nullptr) {
-        LOG(ERROR) << "ShmCreate failed";
-        return false;
-    }
-    input_region->EnableRemoveOnDestruction();
-    if (input_length > 0) {
-        memcpy(input_region->base(), input_data, input_length);
+    Message message = NewInvokeFuncMessage(func_call);
+    std::unique_ptr<ipc::ShmRegion> input_region;
+    if (input_length <= MESSAGE_INLINE_DATA_SIZE) {
+        SetInlineDataInMessage(&message, std::span<const char>(input_data, input_length));
+    } else {
+        // Create shm for input
+        input_region = ipc::ShmCreate(
+            ipc::GetFuncCallInputShmName(func_call.full_call_id), input_length);
+        if (input_region == nullptr) {
+            LOG(ERROR) << "ShmCreate failed";
+            return false;
+        }
+        input_region->EnableRemoveOnDestruction();
+        if (input_length > 0) {
+            memcpy(input_region->base(), input_data, input_length);
+        }
+        message.payload_size = -gsl::narrow_cast<int32_t>(input_length);
     }
     // Create fifo for output
     if (!ipc::FifoCreate(ipc::GetFuncCallOutputFifoName(func_call.full_call_id))) {
@@ -199,11 +213,7 @@ bool FuncWorker::InvokeFunc(const char* func_name, const char* input_data, size_
         PCHECK(close(output_fifo) == 0) << "close failed";
     });
     // Send message to gateway (dispatcher)
-    Message message = NewInvokeFuncMessage(func_call);
-#ifdef __FAAS_ENABLE_PROFILING
-    message.send_timestamp = GetMonotonicMicroTimestamp();
-    message.processing_time = 0;
-#endif
+    SetProfilingFieldsInMessage(&message);
     {
         absl::MutexLock lk(&mu_);
         PCHECK(io_utils::SendMessage(output_pipe_fd_, message));
@@ -222,7 +232,7 @@ bool FuncWorker::InvokeFunc(const char* func_name, const char* input_data, size_
         absl::MutexLock lk(&mu_);
         size_t size;
         buffer_pool_for_pipes_.Get(&pipe_buffer, &size);
-        DCHECK(size == PIPE_BUF);
+        DCHECK(size == __FAAS_MESSAGE_SIZE);
     }
     InvokeFuncResource invoke_func_resource = {
         .func_call = func_call,
@@ -264,7 +274,7 @@ bool FuncWorker::WriteOutputToFifo(const protocol::FuncCall& func_call, bool fun
         absl::MutexLock lk(&mu_);
         size_t size;
         buffer_pool_for_pipes_.Get(&pipe_buffer, &size);
-        DCHECK(size == PIPE_BUF);
+        DCHECK(size == __FAAS_MESSAGE_SIZE);
     }
     auto reclaim_pipe_buffer = gsl::finally([this, pipe_buffer] {
         absl::MutexLock lk(&mu_);
@@ -283,9 +293,9 @@ bool FuncWorker::WriteOutputToFifo(const protocol::FuncCall& func_call, bool fun
     size_t write_size = sizeof(int32_t);
     memcpy(pipe_buffer, &header, sizeof(int32_t));
     if (func_call_succeed) {
-        if (func_output_buffer_.length() + sizeof(int32_t) <= PIPE_BUF) {
+        if (func_output_buffer_.length() + sizeof(int32_t) <= __FAAS_MESSAGE_SIZE) {
             write_size += func_output_buffer_.length();
-            DCHECK(write_size <= PIPE_BUF);
+            DCHECK(write_size <= __FAAS_MESSAGE_SIZE);
             memcpy(pipe_buffer + sizeof(uint32_t), func_output_buffer_.data(),
                    func_output_buffer_.length());
         } else {
@@ -308,7 +318,7 @@ bool FuncWorker::ReadOutputFromFifo(int fd, InvokeFuncResource* invoke_func_reso
                                     const char** output_data, size_t* output_length) {
     char* pipe_buffer = invoke_func_resource->pipe_buffer;
     invoke_func_resource->pipe_buffer = nullptr;
-    ssize_t nread = read(fd, pipe_buffer, PIPE_BUF);
+    ssize_t nread = read(fd, pipe_buffer, __FAAS_MESSAGE_SIZE);
     if (nread < 0) {
         PLOG(ERROR) << "Failed to read from fifo";
         return false;
@@ -323,7 +333,7 @@ bool FuncWorker::ReadOutputFromFifo(int fd, InvokeFuncResource* invoke_func_reso
         return false;
     }
     size_t output_size = gsl::narrow_cast<size_t>(header);
-    if (sizeof(int32_t) + output_size <= PIPE_BUF) {
+    if (sizeof(int32_t) + output_size <= __FAAS_MESSAGE_SIZE) {
         if (gsl::narrow_cast<size_t>(nread) < sizeof(int32_t) + output_size) {
             LOG(ERROR) << "Not all fifo data is read?";
             return false;

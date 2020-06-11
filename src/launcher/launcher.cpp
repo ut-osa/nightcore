@@ -15,6 +15,7 @@ using protocol::Message;
 using protocol::IsHandshakeResponseMessage;
 using protocol::IsCreateFuncWorkerMessage;
 using protocol::NewLauncherHandshakeMessage;
+using protocol::ComputeMessageDelay;
 
 constexpr size_t Launcher::kSubprocessPipeBufferSize;
 
@@ -108,10 +109,7 @@ bool Launcher::OnRecvHandshakeResponse(const Message& handshake_response,
 
 void Launcher::OnRecvMessage(const protocol::Message& message) {
     DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
-#ifdef __FAAS_ENABLE_PROFILING
-    gateway_message_delay_stat_.AddSample(gsl::narrow_cast<int32_t>(
-        GetMonotonicMicroTimestamp() - message.send_timestamp));
-#endif
+    gateway_message_delay_stat_.AddSample(ComputeMessageDelay(message));
     if (IsCreateFuncWorkerMessage(message)) {
         uint16_t client_id = message.client_id;
         auto func_process = std::make_unique<FuncProcess>(

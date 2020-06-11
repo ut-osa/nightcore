@@ -1,6 +1,7 @@
 #pragma once
 
 #include "base/common.h"
+#include "common/time.h"
 
 namespace faas {
 namespace protocol {
@@ -30,7 +31,7 @@ inline FuncCall NewFuncCall(uint16_t func_id, uint16_t client_id, uint32_t call_
     func_call.func_id = func_id;
     func_call.client_id = client_id;
     func_call.call_id = call_id;
-    return func_call; 
+    return func_call;
 }
 
 inline FuncCall NewFuncCallWithMethod(uint16_t func_id, uint16_t method_id,
@@ -40,7 +41,7 @@ inline FuncCall NewFuncCallWithMethod(uint16_t func_id, uint16_t method_id,
     func_call.method_id = method_id;
     func_call.client_id = client_id;
     func_call.call_id = call_id;
-    return func_call; 
+    return func_call;
 }
 
 inline std::string FuncCallDebugString(const FuncCall& func_call) {
@@ -68,25 +69,24 @@ enum class MessageType : uint16_t {
 };
 
 struct Message {
-#ifdef __FAAS_ENABLE_PROFILING
+    // Start profiling fields
     int64_t send_timestamp;
     int32_t processing_time;
-#endif
+    // End profiling fields
+
     uint16_t message_type : 4;
     uint16_t func_id      : 8;
     uint16_t method_id    : 6;
     uint16_t client_id    : 14;
-    union {
-        uint32_t call_id;
-        uint32_t payload_size;
-    };
-} __attribute__((packed));
+    uint32_t call_id;
+    int32_t payload_size;
 
-#ifdef __FAAS_ENABLE_PROFILING
-static_assert(sizeof(Message) == 20, "Unexpected Message size");
-#else
-static_assert(sizeof(Message) == 8, "Unexpected Message size");
-#endif
+    char inline_data[__FAAS_MESSAGE_SIZE - __FAAS_CACHE_LINE_SIZE]
+        __attribute__ ((aligned (__FAAS_CACHE_LINE_SIZE)));
+};
+
+#define MESSAGE_INLINE_DATA_SIZE (__FAAS_MESSAGE_SIZE - __FAAS_CACHE_LINE_SIZE)
+static_assert(sizeof(Message) == __FAAS_MESSAGE_SIZE, "Unexpected Message size");
 
 inline bool IsInvalidMessage(const Message& message) {
     return static_cast<MessageType>(message.message_type) == MessageType::INVALID;
@@ -138,6 +138,33 @@ inline FuncCall GetFuncCallFromMessage(const Message& message) {
     func_call.call_id = message.call_id;
     func_call.padding = 0;
     return func_call;
+}
+
+inline void SetInlineDataInMessage(Message* message, std::span<const char> data) {
+    message->payload_size = gsl::narrow_cast<int32_t>(data.size());
+    DCHECK(data.size() <= MESSAGE_INLINE_DATA_SIZE);
+    if (data.size() > 0) {
+        memcpy(message->inline_data, data.data(), data.size());
+    }
+}
+
+inline std::span<const char> GetInlineDataFromMessage(const Message& message) {
+    if (IsInvokeFuncMessage(message) || IsFuncCallCompleteMessage(message)) {
+        if (message.payload_size > 0) {
+            return std::span<const char>(
+                message.inline_data, gsl::narrow_cast<size_t>(message.payload_size));
+        }
+    }
+    return std::span<const char>();
+}
+
+inline void SetProfilingFieldsInMessage(Message* message, int32_t processing_time = 0) {
+    message->send_timestamp = GetMonotonicMicroTimestamp();
+    message->processing_time = processing_time;
+}
+
+inline int32_t ComputeMessageDelay(const Message& message) {
+    return gsl::narrow_cast<int32_t>(GetMonotonicMicroTimestamp() - message.send_timestamp);
 }
 
 #define NEW_EMPTY_MESSAGE(var)       \

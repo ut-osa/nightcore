@@ -1,5 +1,7 @@
 #pragma once
 
+#include <linux/limits.h>  // for PIPE_BUF
+
 // Put this in the declarations for a class to be uncopyable.
 #define DISALLOW_COPY(TypeName) \
     TypeName(const TypeName&) = delete
@@ -34,3 +36,11 @@
 #ifndef __FAAS_DIR_CREAT_MODE
 #define __FAAS_DIR_CREAT_MODE 0775
 #endif
+
+#ifndef __FAAS_MESSAGE_SIZE
+#define __FAAS_MESSAGE_SIZE 2048
+#endif
+static_assert(__FAAS_MESSAGE_SIZE <= PIPE_BUF,
+              "__FAAS_MESSAGE_SIZE cannot exceed PIPE_BUF");
+static_assert(__FAAS_MESSAGE_SIZE >= __FAAS_CACHE_LINE_SIZE * 2,
+              "__FAAS_MESSAGE_SIZE is too small");

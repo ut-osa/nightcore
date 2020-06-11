@@ -14,7 +14,7 @@ class Launcher;
 
 class GatewayConnection : public uv::Base {
 public:
-    static constexpr size_t kBufferSize = 64;
+    static constexpr size_t kBufferSize = 4096;
     static_assert(sizeof(protocol::Message) <= kBufferSize,
                   "kBufferSize is too small");
 

@@ -24,10 +24,11 @@ public:
     void OnLauncherDisconnected(MessageConnection* launcher_connection);
     void OnFuncWorkerDisconnected(MessageConnection* worker_connection);
     bool OnNewFuncCall(MessageConnection* caller_connection,
-                       const protocol::FuncCall& func_call);
+                       const protocol::FuncCall& func_call, size_t input_size,
+                       std::span<const char> inline_input, bool shm_input);
     void OnFuncCallCompleted(MessageConnection* worker_connection,
                              const protocol::FuncCall& func_call,
-                             int32_t processing_time = 0);
+                             int32_t processing_time, size_t output_size);
     void OnFuncCallFailed(MessageConnection* worker_connection,
                           const protocol::FuncCall& func_call);
 
@@ -56,11 +57,20 @@ private:
         void WorkerBecomeIdle(MessageConnection* worker_connection);
         MessageConnection* PickIdleWorker();
 
-        void PushPendingFuncCall(const protocol::FuncCall& func_call);
-        bool PopPendingFuncCall(protocol::FuncCall* func_call);
+        void PushPendingFuncCall(const protocol::Message& invoke_func_message);
+        protocol::Message* PeekPendingFuncCall();
+        void PopPendingFuncCall();
 
         stat::Counter* incoming_requests_stat() {
             return &incoming_requests_stat_;
+        }
+
+        stat::StatisticsCollector<uint32_t>* input_size_stat() {
+            return &input_size_stat_;
+        }
+
+        stat::StatisticsCollector<uint32_t>* output_size_stat() {
+            return &output_size_stat_;
         }
 
         stat::StatisticsCollector<int32_t>* queueing_delay_stat() {
@@ -80,9 +90,11 @@ private:
         absl::flat_hash_map</* client_id */ uint16_t, MessageConnection*> workers_;
         absl::flat_hash_map</* client_id */ uint16_t, protocol::FuncCall> running_workers_;
         std::vector<MessageConnection*> idle_workers_;
-        std::queue<protocol::FuncCall> pending_func_calls_;
+        std::queue<protocol::Message> pending_func_calls_;
 
         stat::Counter incoming_requests_stat_;
+        stat::StatisticsCollector<uint32_t> input_size_stat_;
+        stat::StatisticsCollector<uint32_t> output_size_stat_;
         stat::StatisticsCollector<int32_t> queueing_delay_stat_;
         stat::StatisticsCollector<int32_t> processing_delay_stat_;
         stat::StatisticsCollector<int32_t> dispatch_overhead_stat_;
@@ -103,8 +115,10 @@ private:
     void FuncWorkerFinished(PerFuncState* per_func_state,
                             MessageConnection* worker_connection) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
     void RequestNewFuncWorker(MessageConnection* launcher_connection) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
+    bool DispatchPendingFuncCall(MessageConnection* worker_connection,
+                                 PerFuncState* per_func_state) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
     void DispatchFuncCall(MessageConnection* worker_connection,
-                          const protocol::FuncCall& func_call) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
+                          protocol::Message* invoke_func_message) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
 
     DISALLOW_COPY_AND_ASSIGN(Dispatcher);
 };

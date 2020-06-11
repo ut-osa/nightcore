@@ -18,12 +18,14 @@ using protocol::NewFuncCall;
 using protocol::NewFuncCallWithMethod;
 using protocol::Message;
 using protocol::GetFuncCallFromMessage;
+using protocol::GetInlineDataFromMessage;
 using protocol::IsLauncherHandshakeMessage;
 using protocol::IsFuncWorkerHandshakeMessage;
 using protocol::IsInvokeFuncMessage;
 using protocol::IsFuncCallCompleteMessage;
 using protocol::IsFuncCallFailedMessage;
 using protocol::NewHandshakeResponseMessage;
+using protocol::ComputeMessageDelay;
 
 constexpr int Server::kDefaultListenBackLog;
 constexpr int Server::kDefaultNumHttpWorkers;
@@ -331,16 +333,19 @@ public:
           input_region_(nullptr), output_region_(nullptr) {}
 
     FuncCall call() const { return call_; }
-
-    bool PrepareIpcForInputAndOutput() {
-        std::span<const char> body;
+    
+    std::span<const char> GetInput() const {
         if (http_context_ != nullptr) {
-            body = http_context_->body();
+            return http_context_->body();
         } else if (grpc_context_ != nullptr) {
-            body = grpc_context_->request_body();
+            return grpc_context_->request_body();
         } else {
             LOG(FATAL) << "http_context_ and grpc_context_ are both nullptr";
         }
+    }
+
+    bool CreateShmInput() {
+        std::span<const char> body = GetInput();
         input_region_ = ipc::ShmCreate(
             ipc::GetFuncCallInputShmName(call_.full_call_id), body.size());
         if (input_region_ == nullptr) {
@@ -355,7 +360,7 @@ public:
         return true;
     }
 
-    void FinishWithOutput() {
+    void FinishWithShmOutput() {
         output_region_ = ipc::ShmOpen(ipc::GetFuncCallOutputShmName(call_.full_call_id));
         if (output_region_ == nullptr) {
             HLOG(ERROR) << "Failed to open output shm";
@@ -375,17 +380,17 @@ public:
         Finish();
     }
 
-    bool CheckInputNotEmpty() {
-        if (http_context_ != nullptr && http_context_->body().size() == 0) {
-            http_context_->AppendToResponseBody("Request body cannot be empty!\n");
-            http_context_->SetStatus(400);
-            Finish();
-            return false;
+    void FinishWithOutput(std::span<const char> output) {
+        if (output.size() > 0) {
+            if (http_context_ != nullptr) {
+                http_context_->AppendToResponseBody(output);
+            } else if (grpc_context_ != nullptr) {
+                grpc_context_->AppendToResponseBody(output);
+            } else {
+                LOG(FATAL) << "http_context_ and grpc_context_ are both nullptr";
+            }
         }
-        // gRPC allows empty input (when protobuf serialized to empty string)
-        // However, the actual input buffer will not be empty because method name
-        // is appended.
-        return true;
+        Finish();
     }
 
     void FinishWithError() {
@@ -433,13 +438,23 @@ private:
 };
 
 void Server::OnRecvMessage(MessageConnection* connection, const Message& message) {
-#ifdef __FAAS_ENABLE_PROFILING
-    message_delay_stat_.AddSample(gsl::narrow_cast<int32_t>(
-        GetMonotonicMicroTimestamp() - message.send_timestamp));
-#endif
+    message_delay_stat_.AddSample(ComputeMessageDelay(message));
     if (IsInvokeFuncMessage(message)) {
         FuncCall func_call = GetFuncCallFromMessage(message);
-        if (!dispatcher_->OnNewFuncCall(connection, func_call)) {
+        bool success = false;
+        if (message.payload_size < 0) {
+            success = dispatcher_->OnNewFuncCall(
+                connection, func_call,
+                /* input_size= */ gsl::narrow_cast<size_t>(-message.payload_size),
+                std::span<const char>(), /* shm_input= */ true);
+            
+        } else {
+            success = dispatcher_->OnNewFuncCall(
+                connection, func_call,
+                /* input_size= */ gsl::narrow_cast<size_t>(message.payload_size),
+                GetInlineDataFromMessage(message), /* shm_input= */ false);
+        }
+        if (!success) {
             HLOG(ERROR) << "Dispatcher failed for func_id " << func_call.func_id;
         }
     } else if (IsFuncCallCompleteMessage(message) || IsFuncCallFailedMessage(message)) {
@@ -451,30 +466,27 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
             if (external_func_calls_.contains(full_call_id)) {
                 ExternalFuncCallContext* func_call_context = external_func_calls_[full_call_id].get();
                 if (IsFuncCallCompleteMessage(message)) {
-                    func_call_context->FinishWithOutput();
-#ifdef __FAAS_ENABLE_PROFILING
-                    dispatcher_->OnFuncCallCompleted(connection, func_call, message.processing_time);
-#else
-                    dispatcher_->OnFuncCallCompleted(connection, func_call);
-#endif
+                    if (message.payload_size < 0) {
+                        VLOG(1) << "External call finished with shm output";
+                        func_call_context->FinishWithShmOutput();
+                    } else {
+                        VLOG(1) << "External call finished with inline output";
+                        func_call_context->FinishWithOutput(GetInlineDataFromMessage(message));
+                    }
                 } else {
                     func_call_context->FinishWithError();
-                    dispatcher_->OnFuncCallFailed(connection, func_call);
                 }
                 external_func_calls_.erase(full_call_id);
             } else {
                 HLOG(ERROR) << "Cannot find external call " << FuncCallDebugString(func_call);
             }
+        }
+        if (IsFuncCallCompleteMessage(message)) {
+            dispatcher_->OnFuncCallCompleted(
+                connection, func_call, message.processing_time,
+                /* output_size= */ gsl::narrow_cast<size_t>(std::abs(message.payload_size)));
         } else {
-            if (IsFuncCallCompleteMessage(message)) {
-#ifdef __FAAS_ENABLE_PROFILING
-                dispatcher_->OnFuncCallCompleted(connection, func_call, message.processing_time);
-#else
-                dispatcher_->OnFuncCallCompleted(connection, func_call);
-#endif
-            } else {
-                dispatcher_->OnFuncCallFailed(connection, func_call);
-            }
+            dispatcher_->OnFuncCallFailed(connection, func_call);
         }
     } else {
         LOG(ERROR) << "Unknown message type!";
@@ -509,18 +521,26 @@ void Server::OnExternalFuncCall(uint16_t func_id,
 }
 
 void Server::NewExternalFuncCall(std::unique_ptr<ExternalFuncCallContext> func_call_context) {
-    if (!func_call_context->CheckInputNotEmpty()) {
-        return;
-    }
-    if (!func_call_context->PrepareIpcForInputAndOutput()) {
-        return;
+    std::span<const char> input = func_call_context->GetInput();
+    if (input.size() > MESSAGE_INLINE_DATA_SIZE) {
+        if (!func_call_context->CreateShmInput()) {
+            return;
+        }
     }
     FuncCall func_call = func_call_context->call();
     {
         absl::MutexLock lk(&external_func_calls_mu_);
         external_func_calls_[func_call.full_call_id] = std::move(func_call_context);
     }
-    if (!dispatcher_->OnNewFuncCall(nullptr, func_call)) {
+    bool success = false;
+    if (input.size() <= MESSAGE_INLINE_DATA_SIZE) {
+        success = dispatcher_->OnNewFuncCall(nullptr, func_call, input.size(),
+                                             input, /* shm_input= */ false);
+    } else {
+        success = dispatcher_->OnNewFuncCall(nullptr, func_call, input.size(),
+                                             std::span<const char>(), /* shm_input= */ true);
+    }
+    if (!success) {
         absl::MutexLock lk(&external_func_calls_mu_);
         auto func_call_context = external_func_calls_[func_call.full_call_id].get();
         func_call_context->FinishWithDispatcherFailure();

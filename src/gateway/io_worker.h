@@ -46,13 +46,6 @@ public:
     // if it is closed.
     void ScheduleFunction(Connection* owner, std::function<void()> fn);
 
-    stat::StatisticsCollector<uint32_t>* bytes_per_read_stat() {
-        return &bytes_per_read_stat_;
-    }
-    stat::StatisticsCollector<uint32_t>* write_size_stat() {
-        return &write_size_stat_;
-    }
-
 private:
     enum State { kCreated, kRunning, kStopping, kStopped };
 
@@ -82,8 +75,6 @@ private:
         scheduled_functions_ ABSL_GUARDED_BY(scheduled_function_mu_);
     std::atomic<int64_t> async_event_recv_timestamp_;
 
-    stat::StatisticsCollector<uint32_t> bytes_per_read_stat_;
-    stat::StatisticsCollector<uint32_t> write_size_stat_;
     stat::StatisticsCollector<int32_t> uv_async_delay_stat_;
 
     void EventLoopThreadMain();

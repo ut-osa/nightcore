@@ -84,7 +84,6 @@ void MessageConnection::SendPendingMessages() {
     if (write_size == 0) {
         return;
     }
-    // io_worker_->write_size_stat()->AddSample(write_size);
     char* ptr = write_message_buffer_.data();
     while (write_size > 0) {
         uv_buf_t buf;
@@ -236,7 +235,6 @@ UV_READ_CB_FOR_CLASS(MessageConnection, ReadMessage) {
         HLOG(WARNING) << "nread=0, will do nothing";
         return;
     }
-    // io_worker_->bytes_per_read_stat()->AddSample(nread);
     utils::ReadMessages<Message>(
         &message_buffer_, buf->base, nread,
         [this] (Message* message) {
