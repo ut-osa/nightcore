@@ -133,12 +133,23 @@ void MessageConnection::RecvHandshakeMessage() {
         UV_DCHECK_OK(uv_pipe_init(uv_pipe_handle_.loop, &uv_in_fifo_handle_, 0));
         uv_in_fifo_handle_.data = this;
         int in_fifo_fd = ipc::FifoOpenForWrite(ipc::GetFuncWorkerInputFifoName(client_id_));
+        if (in_fifo_fd == -1) {
+            HLOG(ERROR) << "FifoOpenForWrite failed";
+            ScheduleClose();
+            return;
+        }
+        ipc::FifoUnsetNonblocking(in_fifo_fd);
         UV_DCHECK_OK(uv_pipe_open(&uv_in_fifo_handle_, in_fifo_fd));
         handle_scope_.AddHandle(&uv_in_fifo_handle_);
         // Open output FIFO
         UV_DCHECK_OK(uv_pipe_init(uv_pipe_handle_.loop, &uv_out_fifo_handle_, 0));
         uv_out_fifo_handle_.data = this;
         int out_fifo_fd = ipc::FifoOpenForRead(ipc::GetFuncWorkerOutputFifoName(client_id_));
+        if (out_fifo_fd == -1) {
+            HLOG(ERROR) << "FifoOpenForRead failed";
+            ScheduleClose();
+            return;
+        }
         UV_DCHECK_OK(uv_pipe_open(&uv_out_fifo_handle_, out_fifo_fd));
         handle_scope_.AddHandle(&uv_out_fifo_handle_);
         // Use FIFOs for sending and receiving messages
@@ -232,7 +243,6 @@ UV_READ_CB_FOR_CLASS(MessageConnection, ReadMessage) {
         return;
     }
     if (nread == 0) {
-        HLOG(WARNING) << "nread=0, will do nothing";
         return;
     }
     utils::ReadMessages<Message>(

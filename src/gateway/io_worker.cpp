@@ -18,7 +18,7 @@ IOWorker::IOWorker(Server* server, std::string_view worker_name,
       write_buffer_pool_(absl::StrFormat("%s_Write", worker_name), write_buffer_size),
       async_event_recv_timestamp_(0),
       uv_async_delay_stat_(stat::StatisticsCollector<int32_t>::StandardReportCallback(
-          absl::StrFormat("[%s] uv_async_delay", worker_name))) {
+          absl::StrFormat("uv_async_delay[%s]", worker_name))) {
     UV_DCHECK_OK(uv_loop_init(&uv_loop_));
     uv_loop_.data = &event_loop_thread_;
     UV_DCHECK_OK(uv_async_init(&uv_loop_, &stop_event_, &IOWorker::StopCallback));
