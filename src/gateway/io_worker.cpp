@@ -6,8 +6,6 @@
 namespace faas {
 namespace gateway {
 
-constexpr size_t IOWorker::kDefaultBufferSize;
-
 IOWorker::IOWorker(Server* server, std::string_view worker_name,
                    size_t read_buffer_size, size_t write_buffer_size)
     : server_(server), worker_name_(worker_name), state_(kCreated),

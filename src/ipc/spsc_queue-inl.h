@@ -7,9 +7,6 @@ namespace faas {
 namespace ipc {
 
 template<class T>
-constexpr size_t SPSCQueue<T>::kConsumerSleepMask;
-
-template<class T>
 std::unique_ptr<SPSCQueue<T>> SPSCQueue<T>::Create(std::string_view name, size_t queue_size) {
     CHECK_GE(queue_size, 2U) << "Queue size must be at least 2";
     auto region = ShmCreate(fmt::format("SPSCQueue_{}", name), compute_total_bytesize(queue_size));

@@ -19,9 +19,6 @@ using protocol::SetProfilingFieldsInMessage;
 using protocol::NewCreateFuncWorkerMessage;
 using protocol::NewInvokeFuncMessage;
 
-constexpr int Dispatcher::kDefaultMinWorkersPerFunc;
-constexpr int Dispatcher::kMaxClientId;
-
 Dispatcher::Dispatcher(Server* server)
     : server_(server), next_client_id_(1),
       input_use_shm_stat_(stat::Counter::StandardReportCallback("input_use_shm")),

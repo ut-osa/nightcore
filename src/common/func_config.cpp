@@ -9,8 +9,6 @@ using json = nlohmann::json;
 
 namespace faas {
 
-constexpr int FuncConfig::kMaxFuncId;
-
 namespace {
 bool StartsWith(std::string_view s, std::string_view prefix) {
     return s.find(prefix) == 0;

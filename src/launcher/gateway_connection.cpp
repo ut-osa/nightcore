@@ -10,8 +10,6 @@ namespace launcher {
 
 using protocol::Message;
 
-constexpr size_t GatewayConnection::kBufferSize;
-
 GatewayConnection::GatewayConnection(Launcher* launcher)
     : launcher_(launcher), state_(kCreated),
       buffer_pool_("GatewayConnection", kBufferSize) {}

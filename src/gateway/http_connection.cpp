@@ -10,8 +10,6 @@
 namespace faas {
 namespace gateway {
 
-constexpr const char* HttpConnection::kDefaultContentType;
-
 HttpConnection::HttpConnection(Server* server, int connection_id)
     : Connection(Connection::Type::Http, server),
       connection_id_(connection_id), io_worker_(nullptr),

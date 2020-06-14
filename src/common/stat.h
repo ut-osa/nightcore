@@ -147,9 +147,6 @@ private:
     DISALLOW_COPY_AND_ASSIGN(StatisticsCollector);
 };
 
-template<class T>
-constexpr size_t StatisticsCollector<T>::kDefaultMinReportSamples;
-
 #else
 
 template<class T>
@@ -233,9 +230,6 @@ private:
 
     DISALLOW_COPY_AND_ASSIGN(StatisticsCollector);
 };
-
-template<class T>
-constexpr size_t StatisticsCollector<T>::kDefaultMinReportSamples;
 
 #endif
 

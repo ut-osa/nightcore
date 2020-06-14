@@ -20,9 +20,6 @@
 namespace faas {
 namespace gateway {
 
-constexpr size_t GrpcConnection::kH2FrameHeaderByteSize;
-constexpr size_t GrpcConnection::kGrpcLPMPrefixByteSize;
-
 struct GrpcConnection::H2StreamContext {
     enum State {
         kCreated         = 0,

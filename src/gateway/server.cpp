@@ -28,12 +28,6 @@ using protocol::IsFuncCallFailedMessage;
 using protocol::NewHandshakeResponseMessage;
 using protocol::ComputeMessageDelay;
 
-constexpr int Server::kDefaultListenBackLog;
-constexpr int Server::kDefaultNumHttpWorkers;
-constexpr int Server::kDefaultNumIpcWorkers;
-constexpr size_t Server::kHttpConnectionBufferSize;
-constexpr size_t Server::kMessageConnectionBufferSize;
-
 Server::Server()
     : state_(kCreated), http_port_(-1), grpc_port_(-1),
       listen_backlog_(kDefaultListenBackLog), num_http_workers_(kDefaultNumHttpWorkers),

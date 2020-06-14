@@ -19,8 +19,6 @@ using protocol::NewLauncherHandshakeMessage;
 using protocol::SetInlineDataInMessage;
 using protocol::ComputeMessageDelay;
 
-constexpr size_t Launcher::kSubprocessPipeBufferSize;
-
 Launcher::Launcher()
     : state_(kCreated), func_id_(-1), fprocess_multi_worker_mode_(false),
       event_loop_thread_("Launcher/EL",

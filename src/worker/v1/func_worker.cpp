@@ -27,8 +27,6 @@ using protocol::NewFuncCallFailedMessage;
 using protocol::NewInvokeFuncMessage;
 using protocol::ComputeMessageDelay;
 
-constexpr absl::Duration FuncWorker::kDefaultFuncCallTimeout;
-
 FuncWorker::FuncWorker()
     : func_id_(-1), fprocess_id_(-1), client_id_(0), func_call_timeout_(kDefaultFuncCallTimeout),
       gateway_sock_fd_(-1), input_pipe_fd_(-1), output_pipe_fd_(-1),
