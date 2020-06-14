@@ -45,7 +45,7 @@ private:
     DISALLOW_COPY_AND_ASSIGN(ReportTimer);
 };
 
-#ifndef __FAAS_USE_OLD_STATISTICS_COLLECTOR
+#ifndef __FAAS_USE_OLD_STAT_COLLECTOR
 
 template<class T>
 class StatisticsCollector {

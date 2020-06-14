@@ -34,6 +34,7 @@ DLINK_FLAGS =
 # These options can be overridden in config.mk
 ENABLE_PROFILING = 0
 DISABLE_STAT = 0
+USE_OLD_STAT_COLLECTOR = 0
 DEBUG_BUILD = 0
 
 ifneq ("$(wildcard config.mk)","")
@@ -50,6 +51,10 @@ endif
 
 ifeq ($(DISABLE_STAT),1)
     COMPILE_FLAGS += -D__FAAS_DISABLE_STAT
+endif
+
+ifeq ($(USE_OLD_STAT_COLLECTOR),1)
+    COMPILE_FLAGS += -D__FAAS_USE_OLD_STAT_COLLECTOR
 endif
 
 # Function used to check variables. Use on the command line:
