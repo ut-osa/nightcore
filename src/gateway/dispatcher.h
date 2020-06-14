@@ -19,7 +19,8 @@ public:
     ~Dispatcher();
 
     // All must be thread-safe
-    bool OnLauncherConnected(MessageConnection* launcher_connection);
+    bool OnLauncherConnected(MessageConnection* launcher_connection,
+                             std::string_view container_id);
     bool OnFuncWorkerConnected(MessageConnection* worker_connection);
     void OnLauncherDisconnected(MessageConnection* launcher_connection);
     void OnFuncWorkerDisconnected(MessageConnection* worker_connection);
@@ -39,6 +40,8 @@ private:
     absl::Mutex mu_;
     absl::flat_hash_map</* func_id */ uint16_t, MessageConnection*>
         launcher_connections_ ABSL_GUARDED_BY(mu_);
+    absl::flat_hash_map</* func_id */ uint16_t, std::string>
+        func_container_ids_ ABSL_GUARDED_BY(mu_);
 
     class PerFuncState {
     public:

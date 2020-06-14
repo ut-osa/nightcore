@@ -3,6 +3,7 @@
 #include "ipc/base.h"
 #include "common/time.h"
 #include "utils/fs.h"
+#include "utils/docker.h"
 
 #define HLOG(l) LOG(l) << "Launcher: "
 #define HVLOG(l) VLOG(l) << "Launcher: "
@@ -15,6 +16,7 @@ using protocol::Message;
 using protocol::IsHandshakeResponseMessage;
 using protocol::IsCreateFuncWorkerMessage;
 using protocol::NewLauncherHandshakeMessage;
+using protocol::SetInlineDataInMessage;
 using protocol::ComputeMessageDelay;
 
 constexpr size_t Launcher::kSubprocessPipeBufferSize;
@@ -52,8 +54,12 @@ void Launcher::Start() {
     // Connect to gateway via IPC path
     uv_pipe_t* pipe_handle = gateway_connection_.uv_pipe_handle();
     UV_DCHECK_OK(uv_pipe_init(&uv_loop_, pipe_handle, 0));
-    gateway_connection_.Start(ipc::GetGatewayUnixSocketPath(),
-                              NewLauncherHandshakeMessage(func_id_));
+    Message handshake_message = NewLauncherHandshakeMessage(func_id_);
+    std::string self_container_id = docker_utils::GetSelfContainerId();
+    DCHECK_EQ(self_container_id.size(), docker_utils::kContainerIdLength);
+    SetInlineDataInMessage(&handshake_message, std::span<const char>(self_container_id.data(),
+                                                                     self_container_id.size()));
+    gateway_connection_.Start(ipc::GetGatewayUnixSocketPath(), std::move(handshake_message));
     // Start thread for running event loop
     event_loop_thread_.Start();
     state_.store(kRunning);

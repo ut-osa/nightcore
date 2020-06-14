@@ -29,7 +29,8 @@ Dispatcher::Dispatcher(Server* server)
 
 Dispatcher::~Dispatcher() {}
 
-bool Dispatcher::OnLauncherConnected(MessageConnection* launcher_connection) {
+bool Dispatcher::OnLauncherConnected(MessageConnection* launcher_connection,
+                                     std::string_view container_id) {
     uint16_t func_id = launcher_connection->func_id();
     HLOG(INFO) << "Launcher of func_id " << func_id << " connected";
     absl::MutexLock lk(&mu_);
@@ -39,6 +40,7 @@ bool Dispatcher::OnLauncherConnected(MessageConnection* launcher_connection) {
     }
     launcher_connections_[func_id] = launcher_connection;
     per_func_states_[func_id] = std::make_unique<PerFuncState>(func_id);
+    func_container_ids_[func_id] = std::string(container_id);
     const FuncConfig::Entry* func_entry = server_->func_config()->find_by_func_id(func_id);
     DCHECK(func_entry != nullptr);
     int min_workers = func_entry->min_workers;

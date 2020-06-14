@@ -5,6 +5,7 @@
 #include "common/time.h"
 #include "utils/fs.h"
 #include "utils/io.h"
+#include "utils/docker.h"
 
 #define HLOG(l) LOG(l) << "Server: "
 #define HVLOG(l) VLOG(l) << "Server: "
@@ -310,7 +311,13 @@ bool Server::OnNewHandshake(MessageConnection* connection,
     }
     bool success;
     if (IsLauncherHandshakeMessage(handshake_message)) {
-        success = dispatcher_->OnLauncherConnected(connection);
+        std::span<const char> payload = GetInlineDataFromMessage(handshake_message);
+        if (payload.size() != docker_utils::kContainerIdLength) {
+            HLOG(ERROR) << "Launcher handshake does not have container ID in inline data";
+            return false;
+        }
+        std::string container_id(payload.data(), payload.size());
+        success = dispatcher_->OnLauncherConnected(connection, container_id);
     } else {
         success = dispatcher_->OnFuncWorkerConnected(connection);
     }
