@@ -22,7 +22,7 @@ INCLUDES = -I$(SRC_PATH) -I./include -I./deps/out/include \
 ABSL_LIBRARIES = $(shell find deps/out/lib/libabsl_*.a -printf '%f\n' \
                    | sed -e 's/libabsl_\([a-z0-9_]\+\)\.a/-labsl_\1/g')
 LINK_FLAGS = -Ldeps/out/lib \
-    -Wl,-Bstatic -luv_a -lhttp_parser -lnghttp2_static \
+    -Wl,-Bstatic -luv_a -lhttp_parser -lnghttp2 \
     -Wl,--start-group $(ABSL_LIBRARIES) -Wl,--end-group \
     -Wl,-Bdynamic -lpthread -ldl -Wl,--gc-sections
 # Additional release-specific linker settings
