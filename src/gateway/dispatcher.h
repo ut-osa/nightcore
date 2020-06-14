@@ -50,6 +50,19 @@ private:
         size_t running_workers() const { return running_workers_.size(); }
         size_t idle_workers() const { return total_workers() - running_workers(); }
 
+        void inflight_requests_inc() {
+            inflight_requests_++;
+            if (inflight_requests_ >= 0) {
+                inflight_requests_stat_.AddSample(gsl::narrow_cast<uint16_t>(inflight_requests_));
+            } else {
+                LOG(ERROR) << "Negative inflight_requests_";
+            }
+        }
+
+        void inflight_requests_dec() {
+            inflight_requests_--;
+        }
+
         void NewWorker(MessageConnection* worker_connection);
         void RemoveWorker(MessageConnection* worker_connection);
         void WorkerBecomeRunning(MessageConnection* worker_connection,
@@ -60,6 +73,7 @@ private:
         void PushPendingFuncCall(const protocol::Message& invoke_func_message);
         protocol::Message* PeekPendingFuncCall();
         void PopPendingFuncCall();
+        void UpdateWorkerLoadStat();
 
         stat::Counter* incoming_requests_stat() {
             return &incoming_requests_stat_;
@@ -91,6 +105,7 @@ private:
         absl::flat_hash_map</* client_id */ uint16_t, protocol::FuncCall> running_workers_;
         std::vector<MessageConnection*> idle_workers_;
         std::queue<protocol::Message> pending_func_calls_;
+        int inflight_requests_;
 
         stat::Counter incoming_requests_stat_;
         stat::StatisticsCollector<uint32_t> input_size_stat_;
@@ -98,6 +113,9 @@ private:
         stat::StatisticsCollector<int32_t> queueing_delay_stat_;
         stat::StatisticsCollector<int32_t> processing_delay_stat_;
         stat::StatisticsCollector<int32_t> dispatch_overhead_stat_;
+        stat::StatisticsCollector<uint16_t> idle_workers_stat_;
+        stat::StatisticsCollector<uint16_t> running_workers_stat_;
+        stat::StatisticsCollector<uint16_t> inflight_requests_stat_;
 
         DISALLOW_COPY_AND_ASSIGN(PerFuncState);
     };
@@ -111,6 +129,9 @@ private:
     };
     absl::flat_hash_map</* full_call_id */ uint64_t, PerFuncCallState>
         per_func_call_states_ ABSL_GUARDED_BY(mu_);
+    
+    stat::Counter input_use_shm_stat_;
+    stat::Counter output_use_shm_stat_;
 
     void FuncWorkerFinished(PerFuncState* per_func_state,
                             MessageConnection* worker_connection) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);

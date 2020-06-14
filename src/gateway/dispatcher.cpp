@@ -23,7 +23,9 @@ constexpr int Dispatcher::kDefaultMinWorkersPerFunc;
 constexpr int Dispatcher::kMaxClientId;
 
 Dispatcher::Dispatcher(Server* server)
-    : server_(server), next_client_id_(1) {}
+    : server_(server), next_client_id_(1),
+      input_use_shm_stat_(stat::Counter::StandardReportCallback("input_use_shm")),
+      output_use_shm_stat_(stat::Counter::StandardReportCallback("output_use_shm")) {}
 
 Dispatcher::~Dispatcher() {}
 
@@ -107,6 +109,9 @@ bool Dispatcher::OnNewFuncCall(MessageConnection* caller_connection,
     auto per_func_state = per_func_states_[func_id].get();
     per_func_state->incoming_requests_stat()->Tick();
     per_func_state->input_size_stat()->AddSample(gsl::narrow_cast<uint32_t>(input_size));
+    if (input_size > MESSAGE_INLINE_DATA_SIZE) {
+        input_use_shm_stat_.Tick();
+    }
     Message invoke_func_message = NewInvokeFuncMessage(func_call);
     if (shm_input) {
         invoke_func_message.payload_size = -gsl::narrow_cast<int32_t>(input_size);
@@ -121,6 +126,8 @@ bool Dispatcher::OnNewFuncCall(MessageConnection* caller_connection,
         VLOG(1) << "No idle worker at the moment";
         per_func_state->PushPendingFuncCall(invoke_func_message);
     }
+    per_func_state->UpdateWorkerLoadStat();
+    per_func_state->inflight_requests_inc();
     return true;
 }
 
@@ -145,6 +152,10 @@ void Dispatcher::OnFuncCallCompleted(MessageConnection* worker_connection, const
         HLOG(WARNING) << "processing_time is not set";
     }
     per_func_state->output_size_stat()->AddSample(gsl::narrow_cast<uint32_t>(output_size));
+    if (output_size > MESSAGE_INLINE_DATA_SIZE) {
+        output_use_shm_stat_.Tick();
+    }
+    per_func_state->inflight_requests_dec();
     per_func_call_states_.erase(func_call.full_call_id);
 }
 
@@ -158,6 +169,7 @@ void Dispatcher::OnFuncCallFailed(MessageConnection* worker_connection,
     DCHECK(per_func_states_.contains(func_id));
     auto per_func_state = per_func_states_[func_id].get();
     FuncWorkerFinished(per_func_state, worker_connection);
+    per_func_state->inflight_requests_dec();
     per_func_call_states_.erase(func_call.full_call_id);
 }
 
@@ -168,6 +180,7 @@ void Dispatcher::FuncWorkerFinished(PerFuncState* per_func_state,
     VLOG(1) << "func_id " << per_func_state->func_id() << ": "
             << "running_workers=" << per_func_state->running_workers() << ", "
             << "idle_workers=" << per_func_state->idle_workers();
+    per_func_state->UpdateWorkerLoadStat();
 }
 
 void Dispatcher::RequestNewFuncWorker(MessageConnection* launcher_connection) {
@@ -226,7 +239,13 @@ Dispatcher::PerFuncState::PerFuncState(uint16_t func_id)
       processing_delay_stat_(stat::StatisticsCollector<int32_t>::StandardReportCallback(
           fmt::format("processing_delay[{}]", func_id))),
       dispatch_overhead_stat_(stat::StatisticsCollector<int32_t>::StandardReportCallback(
-          fmt::format("dispatch_overhead[{}]", func_id))) {}
+          fmt::format("dispatch_overhead[{}]", func_id))),
+      idle_workers_stat_(stat::StatisticsCollector<uint16_t>::StandardReportCallback(
+          fmt::format("idle_workers[{}]", func_id))),
+      running_workers_stat_(stat::StatisticsCollector<uint16_t>::StandardReportCallback(
+          fmt::format("running_workers[{}]", func_id))),
+      inflight_requests_stat_(stat::StatisticsCollector<uint16_t>::StandardReportCallback(
+          fmt::format("inflight_requests[{}]", func_id))) {}
 
 Dispatcher::PerFuncState::~PerFuncState() {}
 
@@ -288,6 +307,11 @@ void Dispatcher::PerFuncState::PopPendingFuncCall() {
     if (!pending_func_calls_.empty()) {
         pending_func_calls_.pop();
     }
+}
+
+void Dispatcher::PerFuncState::UpdateWorkerLoadStat() {
+    idle_workers_stat_.AddSample(gsl::narrow_cast<uint16_t>(idle_workers()));
+    running_workers_stat_.AddSample(gsl::narrow_cast<uint16_t>(running_workers()));
 }
 
 }  // namespace gateway
