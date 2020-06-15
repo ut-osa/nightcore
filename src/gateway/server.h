@@ -15,6 +15,7 @@
 #include "gateway/message_connection.h"
 #include "gateway/dispatcher.h"
 #include "gateway/worker_manager.h"
+#include "gateway/monitor.h"
 
 namespace faas {
 namespace gateway {
@@ -137,6 +138,7 @@ private:
 
     absl::flat_hash_set<std::unique_ptr<MessageConnection>> message_connections_;
     std::unique_ptr<WorkerManager> worker_manager_;
+    std::unique_ptr<Monitor> monitor_;
 
     absl::Mutex mu_;
 

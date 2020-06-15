@@ -19,8 +19,7 @@ public:
     ~WorkerManager();
 
     // All must be thread-safe
-    bool OnLauncherConnected(MessageConnection* launcher_connection,
-                             std::string_view container_id);
+    bool OnLauncherConnected(MessageConnection* launcher_connection);
     void OnLauncherDisconnected(MessageConnection* launcher_connection);
     bool OnFuncWorkerConnected(MessageConnection* worker_connection);
     void OnFuncWorkerDisconnected(MessageConnection* worker_connection);
@@ -33,8 +32,6 @@ private:
     absl::Mutex mu_;
     absl::flat_hash_map</* func_id */ uint16_t, MessageConnection*>
         launcher_connections_ ABSL_GUARDED_BY(mu_);
-    absl::flat_hash_map</* func_id */ uint16_t, std::string>
-        func_container_ids_ ABSL_GUARDED_BY(mu_);
     absl::flat_hash_map</* client_id */ uint16_t, std::unique_ptr<FuncWorker>>
         func_workers_ ABSL_GUARDED_BY(mu_);
     

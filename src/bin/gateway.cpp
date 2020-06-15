@@ -1,6 +1,8 @@
 #include "base/init.h"
 #include "base/common.h"
 #include "ipc/base.h"
+#include "utils/docker.h"
+#include "utils/env_variables.h"
 #include "gateway/server.h"
 
 #include <signal.h>
@@ -30,6 +32,11 @@ int main(int argc, char* argv[]) {
     signal(SIGINT, SignalHandlerToStopServer);
     faas::base::InitMain(argc, argv);
     faas::ipc::SetRootPathForIpc(absl::GetFlag(FLAGS_root_path_for_ipc), /* create= */ true);
+
+    std::string cgroup_fs_root(faas::utils::GetEnvVariable("FAAS_CGROUP_FS_ROOT", ""));
+    if (cgroup_fs_root.length() > 0) {
+        faas::docker_utils::SetCgroupFsRoot(cgroup_fs_root);
+    }
 
     auto server = std::make_unique<faas::gateway::Server>();
     server->set_address(absl::GetFlag(FLAGS_listen_addr));

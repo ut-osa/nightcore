@@ -35,7 +35,7 @@ Server::Server()
       event_loop_thread_("Server/EL", absl::bind_front(&Server::EventLoopThreadMain, this)),
       next_http_connection_id_(0), next_grpc_connection_id_(0),
       next_http_worker_id_(0), next_ipc_worker_id_(0),
-      worker_manager_(new WorkerManager(this)), next_call_id_(0),
+      worker_manager_(new WorkerManager(this)), monitor_(new Monitor(this)), next_call_id_(0),
       message_delay_stat_(
           stat::StatisticsCollector<int32_t>::StandardReportCallback("message_delay")),
       input_use_shm_stat_(stat::Counter::StandardReportCallback("input_use_shm")),
@@ -158,6 +158,8 @@ void Server::Start() {
     UV_CHECK_OK(uv_listen(
         UV_AS_STREAM(&uv_ipc_handle_), listen_backlog_,
         &Server::MessageConnectionCallback));
+    // Start monitor
+    monitor_->Start();
     // Start thread for running event loop
     event_loop_thread_.Start();
     state_.store(kRunning);
@@ -165,6 +167,7 @@ void Server::Start() {
 
 void Server::ScheduleStop() {
     HLOG(INFO) << "Scheduled to stop";
+    monitor_->ScheduleStop();
     UV_DCHECK_OK(uv_async_send(&stop_event_));
 }
 
@@ -173,6 +176,7 @@ void Server::WaitForFinish() {
     for (const auto& io_worker : io_workers_) {
         io_worker->WaitForFinish();
     }
+    monitor_->WaitForFinish();
     event_loop_thread_.Join();
     DCHECK(state_.load() == kStopped);
     HLOG(INFO) << "Stopped";
@@ -314,7 +318,8 @@ bool Server::OnNewHandshake(MessageConnection* connection,
             return false;
         }
         std::string container_id(payload.data(), payload.size());
-        success = worker_manager_->OnLauncherConnected(connection, container_id);
+        monitor_->OnLauncherConnected(connection, container_id);
+        success = worker_manager_->OnLauncherConnected(connection);
     } else {
         success = worker_manager_->OnFuncWorkerConnected(connection);
     }

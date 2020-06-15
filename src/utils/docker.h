@@ -15,5 +15,8 @@ extern const std::string kInvalidContainerId;
 // Will return kInvalidContainerId if failed
 std::string GetSelfContainerId();
 
+bool ReadCpuAcctUsage(std::string_view container_id, int64_t* value);
+bool ReadCpuAcctStat(std::string_view container_id, int32_t* user, int32_t* system);
+
 }  // namespace docker_utils
 }  // namespace faas
