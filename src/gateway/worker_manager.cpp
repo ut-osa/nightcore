@@ -22,7 +22,8 @@ WorkerManager::~WorkerManager() {}
 bool WorkerManager::OnLauncherConnected(MessageConnection* launcher_connection,
                                         std::string_view container_id) {
     uint16_t func_id = launcher_connection->func_id();
-    HLOG(INFO) << fmt::format("Launcher of func_id {} connected", func_id);
+    HLOG(INFO) << fmt::format("Launcher of func_id {} connected: container_id={}",
+                              func_id, container_id);
     {
         absl::MutexLock lk(&mu_);
         if (launcher_connections_.contains(func_id)) {

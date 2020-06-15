@@ -149,7 +149,9 @@ inline void SetInlineDataInMessage(Message* message, std::span<const char> data)
 }
 
 inline std::span<const char> GetInlineDataFromMessage(const Message& message) {
-    if (IsInvokeFuncMessage(message) || IsFuncCallCompleteMessage(message)) {
+    if (IsInvokeFuncMessage(message)
+          || IsFuncCallCompleteMessage(message)
+          || IsLauncherHandshakeMessage(message)) {
         if (message.payload_size > 0) {
             return std::span<const char>(
                 message.inline_data, gsl::narrow_cast<size_t>(message.payload_size));

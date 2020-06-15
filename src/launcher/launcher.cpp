@@ -57,7 +57,7 @@ void Launcher::Start() {
     DCHECK_EQ(self_container_id.size(), docker_utils::kContainerIdLength);
     SetInlineDataInMessage(&handshake_message, std::span<const char>(self_container_id.data(),
                                                                      self_container_id.size()));
-    gateway_connection_.Start(ipc::GetGatewayUnixSocketPath(), std::move(handshake_message));
+    gateway_connection_.Start(ipc::GetGatewayUnixSocketPath(), handshake_message);
     // Start thread for running event loop
     event_loop_thread_.Start();
     state_.store(kRunning);
