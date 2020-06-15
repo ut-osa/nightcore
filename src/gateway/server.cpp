@@ -35,9 +35,11 @@ Server::Server()
       event_loop_thread_("Server/EL", absl::bind_front(&Server::EventLoopThreadMain, this)),
       next_http_connection_id_(0), next_grpc_connection_id_(0),
       next_http_worker_id_(0), next_ipc_worker_id_(0),
-      dispatcher_(new Dispatcher(this)), next_call_id_(0),
+      worker_manager_(new WorkerManager(this)), next_call_id_(0),
       message_delay_stat_(
-          stat::StatisticsCollector<int32_t>::StandardReportCallback("message_delay")) {
+          stat::StatisticsCollector<int32_t>::StandardReportCallback("message_delay")),
+      input_use_shm_stat_(stat::Counter::StandardReportCallback("input_use_shm")),
+      output_use_shm_stat_(stat::Counter::StandardReportCallback("output_use_shm")) {
     UV_DCHECK_OK(uv_loop_init(&uv_loop_));
     uv_loop_.data = &event_loop_thread_;
     UV_DCHECK_OK(uv_tcp_init(&uv_loop_, &uv_http_handle_));
@@ -138,13 +140,14 @@ void Server::Start() {
         UV_AS_STREAM(&uv_http_handle_), listen_backlog_,
         &Server::HttpConnectionCallback));
     // Listen on address:grpc_port for gRPC requests
-    CHECK_NE(grpc_port_, -1);
-    UV_CHECK_OK(uv_ip4_addr(address_.c_str(), grpc_port_, &bind_addr));
-    UV_CHECK_OK(uv_tcp_bind(&uv_grpc_handle_, (const struct sockaddr *)&bind_addr, 0));
-    HLOG(INFO) << "Listen on " << address_ << ":" << grpc_port_ << " for gRPC requests";
-    UV_CHECK_OK(uv_listen(
-        UV_AS_STREAM(&uv_grpc_handle_), listen_backlog_,
-        &Server::GrpcConnectionCallback));
+    if (grpc_port_ != -1) {
+        UV_CHECK_OK(uv_ip4_addr(address_.c_str(), grpc_port_, &bind_addr));
+        UV_CHECK_OK(uv_tcp_bind(&uv_grpc_handle_, (const struct sockaddr *)&bind_addr, 0));
+        HLOG(INFO) << "Listen on " << address_ << ":" << grpc_port_ << " for gRPC requests";
+        UV_CHECK_OK(uv_listen(
+            UV_AS_STREAM(&uv_grpc_handle_), listen_backlog_,
+            &Server::GrpcConnectionCallback));
+    }
     // Listen on ipc_path
     std::string ipc_path(ipc::GetGatewayUnixSocketPath());
     if (fs_utils::Exists(ipc_path)) {
@@ -277,9 +280,9 @@ void Server::ReturnConnection(Connection* connection) {
         MessageConnection* message_connection = static_cast<MessageConnection*>(connection);
         if (message_connection->handshake_done()) {
             if (message_connection->is_launcher_connection()) {
-                dispatcher_->OnLauncherDisconnected(message_connection);
+                worker_manager_->OnLauncherDisconnected(message_connection);
             } else {
-                dispatcher_->OnFuncWorkerDisconnected(message_connection);
+                worker_manager_->OnFuncWorkerDisconnected(message_connection);
             }
         }
         message_connections_.erase(message_connection);
@@ -311,9 +314,9 @@ bool Server::OnNewHandshake(MessageConnection* connection,
             return false;
         }
         std::string container_id(payload.data(), payload.size());
-        success = dispatcher_->OnLauncherConnected(connection, container_id);
+        success = worker_manager_->OnLauncherConnected(connection, container_id);
     } else {
-        success = dispatcher_->OnFuncWorkerConnected(connection);
+        success = worker_manager_->OnFuncWorkerConnected(connection);
     }
     if (!success) {
         return false;
@@ -439,33 +442,62 @@ private:
 };
 
 void Server::OnRecvMessage(MessageConnection* connection, const Message& message) {
-    message_delay_stat_.AddSample(ComputeMessageDelay(message));
+    int32_t message_delay = ComputeMessageDelay(message);
     if (IsInvokeFuncMessage(message)) {
         FuncCall func_call = GetFuncCallFromMessage(message);
+        Dispatcher* dispatcher = nullptr;
+        {
+            absl::MutexLock lk(&mu_);
+            if (message.payload_size < 0) {
+                input_use_shm_stat_.Tick();
+            }
+            message_delay_stat_.AddSample(message_delay);
+            dispatcher = GetOrCreateDispatcherLocked(func_call.func_id);
+        }
         bool success = false;
-        if (message.payload_size < 0) {
-            success = dispatcher_->OnNewFuncCall(
-                connection, func_call,
-                /* input_size= */ gsl::narrow_cast<size_t>(-message.payload_size),
-                std::span<const char>(), /* shm_input= */ true);
-            
-        } else {
-            success = dispatcher_->OnNewFuncCall(
-                connection, func_call,
-                /* input_size= */ gsl::narrow_cast<size_t>(message.payload_size),
-                GetInlineDataFromMessage(message), /* shm_input= */ false);
+        if (dispatcher != nullptr) {
+            if (message.payload_size < 0) {
+                success = dispatcher->OnNewFuncCall(
+                    func_call, /* input_size= */ gsl::narrow_cast<size_t>(-message.payload_size),
+                    std::span<const char>(), /* shm_input= */ true);
+                
+            } else {
+                success = dispatcher->OnNewFuncCall(
+                    func_call, /* input_size= */ gsl::narrow_cast<size_t>(message.payload_size),
+                    GetInlineDataFromMessage(message), /* shm_input= */ false);
+            }
         }
         if (!success) {
             HLOG(ERROR) << "Dispatcher failed for func_id " << func_call.func_id;
         }
     } else if (IsFuncCallCompleteMessage(message) || IsFuncCallFailedMessage(message)) {
         FuncCall func_call = GetFuncCallFromMessage(message);
-        uint16_t client_id = func_call.client_id;
-        if (client_id == 0) {
-            absl::MutexLock lk(&external_func_calls_mu_);
+        Dispatcher* dispatcher = nullptr;
+        std::unique_ptr<ExternalFuncCallContext> func_call_context;
+        {
+            absl::MutexLock lk(&mu_);
+            message_delay_stat_.AddSample(message_delay);
+            if (IsFuncCallCompleteMessage(message) && message.payload_size < 0) {
+                output_use_shm_stat_.Tick();
+            }
             uint64_t full_call_id = func_call.full_call_id;
-            if (external_func_calls_.contains(full_call_id)) {
-                ExternalFuncCallContext* func_call_context = external_func_calls_[full_call_id].get();
+            if (func_call.client_id == 0 && external_func_calls_.contains(full_call_id)) {
+                func_call_context = std::move(external_func_calls_[full_call_id]);
+                external_func_calls_.erase(full_call_id);
+            }
+            dispatcher = GetOrCreateDispatcherLocked(func_call.func_id);
+        }
+        if (dispatcher != nullptr) {
+            if (IsFuncCallCompleteMessage(message)) {
+                dispatcher->OnFuncCallCompleted(
+                    func_call, message.processing_time,
+                    /* output_size= */ gsl::narrow_cast<size_t>(std::abs(message.payload_size)));
+            } else {
+                dispatcher->OnFuncCallFailed(func_call);
+            }
+        }
+        if (func_call.client_id == 0) {
+            if (func_call_context != nullptr) {
                 if (IsFuncCallCompleteMessage(message)) {
                     if (message.payload_size < 0) {
                         VLOG(1) << "External call finished with shm output";
@@ -477,17 +509,9 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
                 } else {
                     func_call_context->FinishWithError();
                 }
-                external_func_calls_.erase(full_call_id);
             } else {
                 HLOG(ERROR) << "Cannot find external call " << FuncCallDebugString(func_call);
             }
-        }
-        if (IsFuncCallCompleteMessage(message)) {
-            dispatcher_->OnFuncCallCompleted(
-                connection, func_call, message.processing_time,
-                /* output_size= */ gsl::narrow_cast<size_t>(std::abs(message.payload_size)));
-        } else {
-            dispatcher_->OnFuncCallFailed(connection, func_call);
         }
     } else {
         LOG(ERROR) << "Unknown message type!";
@@ -529,23 +553,50 @@ void Server::NewExternalFuncCall(std::unique_ptr<ExternalFuncCallContext> func_c
         }
     }
     FuncCall func_call = func_call_context->call();
+    Dispatcher* dispatcher = nullptr;
     {
-        absl::MutexLock lk(&external_func_calls_mu_);
+        absl::MutexLock lk(&mu_);
+        if (input.size() > MESSAGE_INLINE_DATA_SIZE) {
+            input_use_shm_stat_.Tick();
+        }
+        dispatcher = GetOrCreateDispatcherLocked(func_call.func_id);
+        if (dispatcher == nullptr) {
+            func_call_context->FinishWithDispatcherFailure();
+            return;
+        }
         external_func_calls_[func_call.full_call_id] = std::move(func_call_context);
     }
     bool success = false;
     if (input.size() <= MESSAGE_INLINE_DATA_SIZE) {
-        success = dispatcher_->OnNewFuncCall(nullptr, func_call, input.size(),
-                                             input, /* shm_input= */ false);
+        success = dispatcher->OnNewFuncCall(
+            func_call, input.size(), input, /* shm_input= */ false);
     } else {
-        success = dispatcher_->OnNewFuncCall(nullptr, func_call, input.size(),
-                                             std::span<const char>(), /* shm_input= */ true);
+        success = dispatcher->OnNewFuncCall(
+            func_call, input.size(), std::span<const char>(), /* shm_input= */ true);
     }
     if (!success) {
-        absl::MutexLock lk(&external_func_calls_mu_);
+        absl::MutexLock lk(&mu_);
         auto func_call_context = external_func_calls_[func_call.full_call_id].get();
         func_call_context->FinishWithDispatcherFailure();
         external_func_calls_.erase(func_call.full_call_id);
+    }
+}
+
+Dispatcher* Server::GetOrCreateDispatcher(uint16_t func_id) {
+    absl::MutexLock lk(&mu_);
+    Dispatcher* dispatcher = GetOrCreateDispatcherLocked(func_id);
+    return dispatcher;
+}
+
+Dispatcher* Server::GetOrCreateDispatcherLocked(uint16_t func_id) {
+    if (dispatchers_.contains(func_id)) {
+        return dispatchers_[func_id].get();
+    }
+    if (func_config_.find_by_func_id(func_id) != nullptr) {
+        dispatchers_[func_id] = std::make_unique<Dispatcher>(this, func_id);
+        return dispatchers_[func_id].get();
+    } else {
+        return nullptr;
     }
 }
 

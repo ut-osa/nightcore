@@ -14,6 +14,7 @@
 #include "gateway/grpc_connection.h"
 #include "gateway/message_connection.h"
 #include "gateway/dispatcher.h"
+#include "gateway/worker_manager.h"
 
 namespace faas {
 namespace gateway {
@@ -40,7 +41,7 @@ public:
         func_config_file_ = std::string(path);
     }
     FuncConfig* func_config() { return &func_config_; }
-    Dispatcher* dispatcher() { return dispatcher_.get(); }
+    WorkerManager* worker_manager() { return worker_manager_.get(); }
 
     void Start();
     void ScheduleStop();
@@ -95,6 +96,7 @@ public:
                         std::span<const char>* response_payload);
     void OnRecvMessage(MessageConnection* connection, const protocol::Message& message);
     void OnNewGrpcCall(std::shared_ptr<GrpcCallContext> call_context);
+    Dispatcher* GetOrCreateDispatcher(uint16_t func_id);
 
 private:
     class ExternalFuncCallContext;
@@ -134,16 +136,21 @@ private:
     std::vector<std::unique_ptr<RequestHandler>> request_handlers_;
 
     absl::flat_hash_set<std::unique_ptr<MessageConnection>> message_connections_;
-    std::unique_ptr<Dispatcher> dispatcher_;
+    std::unique_ptr<WorkerManager> worker_manager_;
+
+    absl::Mutex mu_;
 
     std::string func_config_json_;
     FuncConfig func_config_;
     std::atomic<uint32_t> next_call_id_;
-    absl::Mutex external_func_calls_mu_;
     absl::flat_hash_map</* full_call_id */ uint64_t, std::unique_ptr<ExternalFuncCallContext>>
-        external_func_calls_ ABSL_GUARDED_BY(external_func_calls_mu_);
+        external_func_calls_ ABSL_GUARDED_BY(mu_);
+    absl::flat_hash_map</* func_id */ uint16_t, std::unique_ptr<Dispatcher>>
+        dispatchers_ ABSL_GUARDED_BY(mu_);
 
-    stat::StatisticsCollector<int32_t> message_delay_stat_;
+    stat::StatisticsCollector<int32_t> message_delay_stat_ ABSL_GUARDED_BY(mu_);
+    stat::Counter input_use_shm_stat_ ABSL_GUARDED_BY(mu_);
+    stat::Counter output_use_shm_stat_ ABSL_GUARDED_BY(mu_);
 
     void InitAndStartIOWorker(IOWorker* io_worker);
     std::unique_ptr<uv_pipe_t> CreatePipeToWorker(int* pipe_fd_for_worker);
@@ -159,6 +166,8 @@ private:
     void EventLoopThreadMain();
     IOWorker* PickHttpWorker();
     IOWorker* PickIpcWorker();
+
+    Dispatcher* GetOrCreateDispatcherLocked(uint16_t func_id) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
 
     DECLARE_UV_ASYNC_CB_FOR_CLASS(Stop);
     DECLARE_UV_CONNECTION_CB_FOR_CLASS(HttpConnection);

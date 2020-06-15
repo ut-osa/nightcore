@@ -8,7 +8,7 @@
 
 ABSL_FLAG(std::string, listen_addr, "0.0.0.0", "Address to listen");
 ABSL_FLAG(int, http_port, 8080, "Port to listen");
-ABSL_FLAG(int, grpc_port, 50051, "Port for gRPC services");
+ABSL_FLAG(int, grpc_port, -1, "Port for gRPC services");
 ABSL_FLAG(int, num_http_workers, 1, "Number of HTTP workers");
 ABSL_FLAG(int, num_ipc_workers, 1, "Number of IPC workers");
 ABSL_FLAG(int, num_io_workers, -1,
