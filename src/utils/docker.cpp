@@ -13,7 +13,7 @@ void SetCgroupFsRoot(std::string_view path) {
     cgroupfs_root = std::string(path);
 }
 
-const char* kInvalidContainerId = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+const std::string kInvalidContainerId(kContainerIdLength, '0');
 
 std::string GetSelfContainerId() {
     std::string contents;
@@ -22,11 +22,12 @@ std::string GetSelfContainerId() {
         return kInvalidContainerId;
     }
     size_t pos = contents.find("/docker/");
-    if (pos == std::string::npos || pos + kContainerIdLength >= contents.length()) {
+    if (pos == std::string::npos
+          || pos + strlen("/docker/") + kContainerIdLength >= contents.length()) {
         LOG(ERROR) << "Cannot find docker's cgroup in /proc/self/cgroup";
         return kInvalidContainerId;
     }
-    return contents.substr(pos, pos + kContainerIdLength);
+    return contents.substr(pos + strlen("/docker/"), kContainerIdLength);
 }
 
 }  // namespace docker_utils

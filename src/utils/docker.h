@@ -9,7 +9,7 @@ namespace docker_utils {
 void SetCgroupFsRoot(std::string_view path);
 
 constexpr size_t kContainerIdLength = 64;
-extern const char* kInvalidContainerId;
+extern const std::string kInvalidContainerId;
 
 // Get container ID of the running process
 // Will return kInvalidContainerId if failed

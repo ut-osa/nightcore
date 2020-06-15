@@ -65,17 +65,21 @@ bool RemoveDirectoryRecursively(std::string_view path) {
 bool ReadContents(std::string_view path, std::string* contents) {
     FILE* fin = fopen(std::string(path).c_str(), "rb");
     if (fin == nullptr) {
+        LOG(ERROR) << "Failed to open file: " << path;
         return false;
     }
     auto close_file = gsl::finally([fin] { fclose(fin); });
-    struct stat statbuf;
-    if (!Stat(path, &statbuf)) {
-        return false;
+    char buffer[128];
+    contents->clear();
+    while (feof(fin) == 0) {
+        size_t nread = fread(buffer, 1, sizeof(buffer), fin);
+        if (nread > 0) {
+            contents->append(buffer, nread);
+        } else {
+            break;
+        }
     }
-    size_t size = gsl::narrow_cast<size_t>(statbuf.st_size);
-    contents->resize(size);
-    size_t nread = fread(const_cast<char*>(contents->data()), 1, size, fin);
-    return nread == size;
+    return true;
 }
 
 std::string JoinPath(std::string_view path1, std::string_view path2) {

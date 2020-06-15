@@ -89,7 +89,7 @@ public:
                 p_.push_back(atof(pnorms.substr(start).c_str()));
                 break;
             } else {
-                p_.push_back(atof(pnorms.substr(start, end).c_str()));
+                p_.push_back(atof(pnorms.substr(start, end - start).c_str()));
                 start = end + 1;
             }
         }
