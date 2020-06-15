@@ -75,14 +75,16 @@ ifeq ($(V),1)
     CMD_PREFIX :=
 endif
 
+COMPILE_FLAGS += $(INCLUDES)
+
 ifeq ($(DEBUG_BUILD),1)
-    BUILD_NAME := debug
-    CXXFLAGS   := $(CXXFLAGS) $(COMPILE_FLAGS) $(DCOMPILE_FLAGS)
-    LDFLAGS    := $(LDFLAGS) $(LINK_FLAGS) $(DLINK_FLAGS)
+    BUILD_NAME     = debug
+    COMPILE_FLAGS += $(DCOMPILE_FLAGS)
+    LINK_FLAGS    += $(DLINK_FLAGS)
 else
-    BUILD_NAME := release
-    CXXFLAGS   := $(CXXFLAGS) $(COMPILE_FLAGS) $(RCOMPILE_FLAGS)
-    LDFLAGS    := $(LDFLAGS) $(LINK_FLAGS) $(RLINK_FLAGS)
+    BUILD_NAME     = release
+    COMPILE_FLAGS += $(RCOMPILE_FLAGS)
+    LINK_FLAGS    += $(RLINK_FLAGS)
 endif
 
 BUILD_PATH := build/$(BUILD_NAME)
@@ -139,7 +141,7 @@ binary: $(BIN_OUTPUTS)
 # Link the executable
 $(BIN_PATH)/%: $(BUILD_PATH)/bin/%.o $(NON_BIN_OBJECTS)
 	@echo "Linking: $@"
-	$(CMD_PREFIX)$(CXX) $(NON_BIN_OBJECTS) $< $(LDFLAGS) -o $@
+	$(CMD_PREFIX)$(CXX) $(NON_BIN_OBJECTS) $< $(LDFLAGS) $(LINK_FLAGS) -o $@
 
 .SECONDARY: $(OBJECTS)
 
@@ -151,4 +153,4 @@ $(BIN_PATH)/%: $(BUILD_PATH)/bin/%.o $(NON_BIN_OBJECTS)
 # dependency files to provide header dependencies
 $(BUILD_PATH)/%.o: $(SRC_PATH)/%.$(SRC_EXT)
 	@echo "Compiling: $< -> $@"
-	$(CMD_PREFIX)$(CXX) $(CXXFLAGS) $(INCLUDES) -MP -MMD -c $< -o $@
+	$(CMD_PREFIX)$(CXX) $(CXXFLAGS) $(COMPILE_FLAGS) -MP -MMD -c $< -o $@
