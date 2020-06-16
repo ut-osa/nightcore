@@ -150,6 +150,10 @@ private:
     absl::flat_hash_map</* func_id */ uint16_t, std::unique_ptr<Dispatcher>>
         dispatchers_ ABSL_GUARDED_BY(mu_);
 
+    int64_t last_external_request_timestamp_ ABSL_GUARDED_BY(mu_);
+    stat::Counter incoming_external_requests_stat_ ABSL_GUARDED_BY(mu_);
+    stat::StatisticsCollector<int32_t> external_arrival_interval_stat_ ABSL_GUARDED_BY(mu_);
+
     stat::StatisticsCollector<int32_t> message_delay_stat_ ABSL_GUARDED_BY(mu_);
     stat::Counter input_use_shm_stat_ ABSL_GUARDED_BY(mu_);
     stat::Counter output_use_shm_stat_ ABSL_GUARDED_BY(mu_);

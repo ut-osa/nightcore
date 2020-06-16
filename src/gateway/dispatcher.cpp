@@ -22,10 +22,13 @@ using protocol::NewInvokeFuncMessage;
 Dispatcher::Dispatcher(Server* server, uint16_t func_id)
     : server_(server), func_id_(func_id),
       log_header_(fmt::format("Dispatcher[{}]: ", func_id)),
+      last_request_timestamp_(-1),
       incoming_requests_stat_(stat::Counter::StandardReportCallback(
           fmt::format("incoming_requests[{}]", func_id))),
       failed_requests_stat_(stat::Counter::StandardReportCallback(
           fmt::format("failed_requests[{}]", func_id))),
+      arrival_interval_stat_(stat::StatisticsCollector<int32_t>::StandardReportCallback(
+          fmt::format("arrival_interval[{}]", func_id))),
       input_size_stat_(stat::StatisticsCollector<uint32_t>::StandardReportCallback(
           fmt::format("input_size[{}]", func_id))),
       output_size_stat_(stat::StatisticsCollector<uint32_t>::StandardReportCallback(
@@ -77,8 +80,14 @@ bool Dispatcher::OnNewFuncCall(const protocol::FuncCall& func_call, size_t input
         SetInlineDataInMessage(&invoke_func_message, inline_input);
     }
     absl::MutexLock lk(&mu_);
+    int64_t current_timestamp = GetMonotonicMicroTimestamp();
+    if (last_request_timestamp_ != -1) {
+        arrival_interval_stat_.AddSample(gsl::narrow_cast<int32_t>(
+            current_timestamp - last_request_timestamp_));
+    }
+    last_request_timestamp_ = current_timestamp;
     func_call_states_[func_call.full_call_id] = {
-        .recv_timestamp = GetMonotonicMicroTimestamp(),
+        .recv_timestamp = current_timestamp,
         .dispatch_timestamp = 0,
         .assigned_worker = nullptr
     };

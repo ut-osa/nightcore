@@ -48,8 +48,11 @@ private:
     absl::flat_hash_map</* full_call_id */ uint64_t, FuncCallState>
         func_call_states_ ABSL_GUARDED_BY(mu_);
 
+    int64_t last_request_timestamp_ ABSL_GUARDED_BY(mu_);
+
     stat::Counter incoming_requests_stat_ ABSL_GUARDED_BY(mu_);
     stat::Counter failed_requests_stat_ ABSL_GUARDED_BY(mu_);
+    stat::StatisticsCollector<int32_t> arrival_interval_stat_ ABSL_GUARDED_BY(mu_);
     stat::StatisticsCollector<uint32_t> input_size_stat_ ABSL_GUARDED_BY(mu_);
     stat::StatisticsCollector<uint32_t> output_size_stat_ ABSL_GUARDED_BY(mu_);
     stat::StatisticsCollector<int32_t> queueing_delay_stat_ ABSL_GUARDED_BY(mu_);

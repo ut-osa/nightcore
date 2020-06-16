@@ -36,6 +36,11 @@ Server::Server()
       next_http_connection_id_(0), next_grpc_connection_id_(0),
       next_http_worker_id_(0), next_ipc_worker_id_(0),
       worker_manager_(new WorkerManager(this)), monitor_(new Monitor(this)), next_call_id_(0),
+      last_external_request_timestamp_(-1),
+      incoming_external_requests_stat_(
+          stat::Counter::StandardReportCallback("incoming_external_requests")),
+      external_arrival_interval_stat_(
+          stat::StatisticsCollector<int32_t>::StandardReportCallback("external_arrival_interval")),
       message_delay_stat_(
           stat::StatisticsCollector<int32_t>::StandardReportCallback("message_delay")),
       input_use_shm_stat_(stat::Counter::StandardReportCallback("input_use_shm")),
@@ -561,6 +566,13 @@ void Server::NewExternalFuncCall(std::unique_ptr<ExternalFuncCallContext> func_c
     Dispatcher* dispatcher = nullptr;
     {
         absl::MutexLock lk(&mu_);
+        incoming_external_requests_stat_.Tick();
+        int64_t current_timestamp = GetMonotonicMicroTimestamp();
+        if (last_external_request_timestamp_ != -1) {
+            external_arrival_interval_stat_.AddSample(gsl::narrow_cast<int32_t>(
+                current_timestamp - last_external_request_timestamp_));
+        }
+        last_external_request_timestamp_ = current_timestamp;
         if (input.size() > MESSAGE_INLINE_DATA_SIZE) {
             input_use_shm_stat_.Tick();
         }
