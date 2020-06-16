@@ -114,9 +114,10 @@ void Monitor::BackgroundThreadMain() {
             }
         }
 
-        float total_load = 0;
-        float total_user_load = 0;
-        float total_sys_load = 0;
+        float total_user_load_usage = 0;
+        float total_sys_load_usage = 0;
+        float total_user_load_stat = 0;
+        float total_sys_load_stat = 0;
         for (const auto& entry : container_ids) {
             const std::string& container_id = entry.second;
             ContainerStat stat;
@@ -129,29 +130,36 @@ void Monitor::BackgroundThreadMain() {
                 continue;
             }
             ContainerStat last_stat = container_stats_[container_id];
-            float load = compute_load(
-                last_stat.timestamp, last_stat.cpuacct_usage,
-                stat.timestamp, stat.cpuacct_usage);
-            float user_load = compute_load(
-                last_stat.timestamp, tick_to_ns(last_stat.cpuacct_usertick),
-                stat.timestamp, tick_to_ns(stat.cpuacct_usertick));
-            float sys_load = compute_load(
-                last_stat.timestamp, tick_to_ns(last_stat.cpuacct_systick),
-                stat.timestamp, tick_to_ns(stat.cpuacct_systick));
+            float user_load_usage = compute_load(
+                last_stat.timestamp, last_stat.cpu_usage_user,
+                stat.timestamp, stat.cpu_usage_user);
+            float sys_load_usage = compute_load(
+                last_stat.timestamp, last_stat.cpu_usage_sys,
+                stat.timestamp, stat.cpu_usage_sys);
+            float user_load_stat = compute_load(
+                last_stat.timestamp, tick_to_ns(last_stat.cpu_stat_user),
+                stat.timestamp, tick_to_ns(stat.cpu_stat_user));
+            float sys_load_stat = compute_load(
+                last_stat.timestamp, tick_to_ns(last_stat.cpu_stat_sys),
+                stat.timestamp, tick_to_ns(stat.cpu_stat_sys));
             if (entry.first == -1) {
-                HLOG(INFO) << fmt::format("Gateway load: load={}, user={}, sys={}",
-                                          load, user_load, sys_load);
+                HLOG(INFO) << fmt::format(
+                    "Gateway load: user_usage={}, sys_usage={}, user_stat={}, sys_stat={}",
+                    user_load_usage, sys_load_usage, user_load_stat, sys_load_stat);
             } else {
-                HLOG(INFO) << fmt::format("FuncContainer[{}] load: load={}, user={}, sys={}",
-                                          entry.first, load, user_load, sys_load);
+                HLOG(INFO) << fmt::format(
+                    "FuncContainer[{}] load: user_usage={}, sys_usage={}, user_stat={}, sys_stat={}",
+                    entry.first, user_load_usage, sys_load_usage, user_load_stat, sys_load_stat);
             }
-            total_load += load;
-            total_user_load += user_load;
-            total_sys_load += sys_load;
+            total_user_load_usage += user_load_usage;
+            total_sys_load_usage += sys_load_usage;
+            total_user_load_stat += user_load_stat;
+            total_sys_load_stat += sys_load_stat;
             container_stats_[container_id] = std::move(stat);
         }
-        HLOG(INFO) << fmt::format("Total load: load = {}, user={}, sys={}",
-                                  total_load, total_user_load, total_sys_load);
+        HLOG(INFO) << fmt::format(
+            "Total load: user_usage={}, sys_usage={}, user_stat={}, sys_stat={}",
+            total_user_load_usage, total_sys_load_usage, total_user_load_stat, total_sys_load_stat);
     }
 
     state_.store(kStopped);
@@ -159,11 +167,13 @@ void Monitor::BackgroundThreadMain() {
 
 bool Monitor::ReadContainerStat(std::string_view container_id, ContainerStat* stat) {
     stat->timestamp = GetMonotonicNanoTimestamp();
-    if (!docker_utils::ReadCpuAcctUsage(container_id, &stat->cpuacct_usage)) {
+    if (!docker_utils::ReadCpuAcctUsageUser(container_id, &stat->cpu_usage_user)) {
         return false;
     }
-    if (!docker_utils::ReadCpuAcctStat(container_id,
-                                       &stat->cpuacct_usertick, &stat->cpuacct_systick)) {
+    if (!docker_utils::ReadCpuAcctUsageSys(container_id, &stat->cpu_usage_sys)) {
+        return false;
+    }
+    if (!docker_utils::ReadCpuAcctStat(container_id, &stat->cpu_stat_user, &stat->cpu_stat_sys)) {
         return false;
     }
     return true;
