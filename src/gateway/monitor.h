@@ -39,10 +39,9 @@ private:
 
     struct ContainerStat {
         int64_t timestamp;
-        int64_t cpu_usage_user;  // in ns, from cpuacct.usage_user
-        int64_t cpu_usage_sys;   // in ns, from cpuacct.usage_sys
-        int32_t cpu_stat_user;   // in tick, from cpuacct.stat
-        int32_t cpu_stat_sys;    // in tick, from cpuacct.stat
+        int64_t cpu_usage;      // in ns, from cpuacct.usage
+        int32_t cpu_stat_user;  // in tick, from cpuacct.stat
+        int32_t cpu_stat_sys;   // in tick, from cpuacct.stat
     };
 
     void BackgroundThreadMain();
