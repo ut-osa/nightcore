@@ -139,6 +139,7 @@ private:
     absl::flat_hash_set<std::unique_ptr<MessageConnection>> message_connections_;
     std::unique_ptr<WorkerManager> worker_manager_;
     std::unique_ptr<Monitor> monitor_;
+    int max_running_external_requests_;
 
     absl::Mutex mu_;
 
@@ -146,13 +147,19 @@ private:
     FuncConfig func_config_;
     std::atomic<uint32_t> next_call_id_;
     absl::flat_hash_map</* full_call_id */ uint64_t, std::unique_ptr<ExternalFuncCallContext>>
-        external_func_calls_ ABSL_GUARDED_BY(mu_);
+        running_external_func_calls_ ABSL_GUARDED_BY(mu_);
     absl::flat_hash_map</* func_id */ uint16_t, std::unique_ptr<Dispatcher>>
         dispatchers_ ABSL_GUARDED_BY(mu_);
+    std::queue<std::unique_ptr<ExternalFuncCallContext>>
+        pending_external_func_calls_ ABSL_GUARDED_BY(mu_);
 
     int64_t last_external_request_timestamp_ ABSL_GUARDED_BY(mu_);
+    int inflight_external_requests_ ABSL_GUARDED_BY(mu_);
+    int running_external_requests_ ABSL_GUARDED_BY(mu_);
     stat::Counter incoming_external_requests_stat_ ABSL_GUARDED_BY(mu_);
     stat::StatisticsCollector<int32_t> external_arrival_interval_stat_ ABSL_GUARDED_BY(mu_);
+    stat::StatisticsCollector<uint16_t> inflight_external_requests_stat_ ABSL_GUARDED_BY(mu_);
+    stat::StatisticsCollector<uint16_t> pending_external_requests_stat_ ABSL_GUARDED_BY(mu_);
 
     stat::StatisticsCollector<int32_t> message_delay_stat_ ABSL_GUARDED_BY(mu_);
     stat::Counter input_use_shm_stat_ ABSL_GUARDED_BY(mu_);
@@ -174,6 +181,7 @@ private:
     IOWorker* PickIpcWorker();
 
     Dispatcher* GetOrCreateDispatcherLocked(uint16_t func_id) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
+    bool DispatchExternalFuncCall(std::unique_ptr<ExternalFuncCallContext> func_call_context);
 
     DECLARE_UV_ASYNC_CB_FOR_CLASS(Stop);
     DECLARE_UV_CONNECTION_CB_FOR_CLASS(HttpConnection);
