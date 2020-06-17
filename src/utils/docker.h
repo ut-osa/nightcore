@@ -15,10 +15,14 @@ extern const std::string kInvalidContainerId;
 // Will return kInvalidContainerId if failed
 std::string GetSelfContainerId();
 
-bool ReadCpuAcctUsage(std::string_view container_id, int64_t* value);
-bool ReadCpuAcctUsageUser(std::string_view container_id, int64_t* value);
-bool ReadCpuAcctUsageSys(std::string_view container_id, int64_t* value);
-bool ReadCpuAcctStat(std::string_view container_id, int32_t* user, int32_t* system);
+struct ContainerStat {
+    int64_t timestamp;      // in ns
+    int64_t cpu_usage;      // in ns, from cpuacct.usage
+    int32_t cpu_stat_user;  // in tick, from cpuacct.stat
+    int32_t cpu_stat_sys;   // in tick, from cpuacct.stat
+};
+
+bool ReadContainerStat(std::string_view container_id, ContainerStat* stat);
 
 }  // namespace docker_utils
 }  // namespace faas

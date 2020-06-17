@@ -1,5 +1,8 @@
 #include "gateway/io_worker.h"
 
+#include "gateway/monitor.h"
+#include "gateway/server.h"
+
 #define HLOG(l) LOG(l) << log_header_
 #define HVLOG(l) VLOG(l) << log_header_
 
@@ -135,6 +138,10 @@ void IOWorker::OnConnectionClose(Connection* connection) {
 }
 
 void IOWorker::EventLoopThreadMain() {
+    Monitor* monitor = server_->monitor();
+    if (monitor != nullptr) {
+        monitor->OnIOWorkerCreated(worker_name_, base::Thread::current()->tid());
+    }
     base::Thread::current()->MarkThreadCategory("IO");
     HLOG(INFO) << "Event loop starts";
     int ret = uv_run(&uv_loop_, UV_RUN_DEFAULT);

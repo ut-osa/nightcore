@@ -22,6 +22,7 @@ public:
     void ScheduleStop();
     void WaitForFinish();
 
+    void OnIOWorkerCreated(std::string_view worker_name, int event_loop_thread_tid);
     void OnLauncherConnected(MessageConnection* launcher_connection,
                              std::string_view container_id);
 
@@ -34,18 +35,12 @@ private:
 
     absl::Mutex mu_;
     std::string self_container_id_;
+    absl::flat_hash_map</* tid */ int, /* worker_name */ std::string>
+        io_workers_ ABSL_GUARDED_BY(mu_);
     absl::flat_hash_map</* func_id */ uint16_t, std::string>
         func_container_ids_ ABSL_GUARDED_BY(mu_);
 
-    struct ContainerStat {
-        int64_t timestamp;
-        int64_t cpu_usage;      // in ns, from cpuacct.usage
-        int32_t cpu_stat_user;  // in tick, from cpuacct.stat
-        int32_t cpu_stat_sys;   // in tick, from cpuacct.stat
-    };
-
     void BackgroundThreadMain();
-    bool ReadContainerStat(std::string_view container_id, ContainerStat* stat);
 
     DISALLOW_COPY_AND_ASSIGN(Monitor);
 };

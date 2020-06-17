@@ -43,6 +43,7 @@ public:
     }
     FuncConfig* func_config() { return &func_config_; }
     WorkerManager* worker_manager() { return worker_manager_.get(); }
+    Monitor* monitor() { return monitor_.get(); }
 
     void Start();
     void ScheduleStop();
