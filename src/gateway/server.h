@@ -25,8 +25,8 @@ public:
     static constexpr int kDefaultListenBackLog = 32;
     static constexpr int kDefaultNumHttpWorkers = 1;
     static constexpr int kDefaultNumIpcWorkers = 1;
-    static constexpr size_t kHttpConnectionBufferSize = 4096;
-    static constexpr size_t kMessageConnectionBufferSize = 256;
+    static constexpr size_t kHttpConnectionBufferSize = 65536;
+    static constexpr size_t kMessageConnectionBufferSize = __FAAS_MESSAGE_SIZE * 2;
 
     Server();
     ~Server();

@@ -10,6 +10,7 @@
 #include <absl/flags/flag.h>
 
 ABSL_FLAG(int, max_running_external_requests, 16, "");
+ABSL_FLAG(bool, disable_monitor, false, "");
 
 #define HLOG(l) LOG(l) << "Server: "
 #define HVLOG(l) VLOG(l) << "Server: "
@@ -39,7 +40,8 @@ Server::Server()
       event_loop_thread_("Server/EL", absl::bind_front(&Server::EventLoopThreadMain, this)),
       next_http_connection_id_(0), next_grpc_connection_id_(0),
       next_http_worker_id_(0), next_ipc_worker_id_(0),
-      worker_manager_(new WorkerManager(this)), monitor_(new Monitor(this)),
+      worker_manager_(new WorkerManager(this)),
+      monitor_(absl::GetFlag(FLAGS_disable_monitor) ? nullptr : new Monitor(this)),
       max_running_external_requests_(absl::GetFlag(FLAGS_max_running_external_requests)),
       next_call_id_(0),
       last_external_request_timestamp_(-1),
@@ -176,7 +178,9 @@ void Server::Start() {
         UV_AS_STREAM(&uv_ipc_handle_), listen_backlog_,
         &Server::MessageConnectionCallback));
     // Start monitor
-    monitor_->Start();
+    if (monitor_ != nullptr) {
+        monitor_->Start();
+    }
     // Start thread for running event loop
     event_loop_thread_.Start();
     state_.store(kRunning);
@@ -184,7 +188,9 @@ void Server::Start() {
 
 void Server::ScheduleStop() {
     HLOG(INFO) << "Scheduled to stop";
-    monitor_->ScheduleStop();
+    if (monitor_ != nullptr) {
+        monitor_->ScheduleStop();
+    }
     UV_DCHECK_OK(uv_async_send(&stop_event_));
 }
 
@@ -193,7 +199,9 @@ void Server::WaitForFinish() {
     for (const auto& io_worker : io_workers_) {
         io_worker->WaitForFinish();
     }
-    monitor_->WaitForFinish();
+    if (monitor_ != nullptr) {
+        monitor_->WaitForFinish();
+    }
     event_loop_thread_.Join();
     DCHECK(state_.load() == kStopped);
     HLOG(INFO) << "Stopped";
@@ -335,7 +343,9 @@ bool Server::OnNewHandshake(MessageConnection* connection,
             return false;
         }
         std::string container_id(payload.data(), payload.size());
-        monitor_->OnLauncherConnected(connection, container_id);
+        if (monitor_ != nullptr) {
+            monitor_->OnLauncherConnected(connection, container_id);
+        }
         success = worker_manager_->OnLauncherConnected(connection);
     } else {
         success = worker_manager_->OnFuncWorkerConnected(connection);
