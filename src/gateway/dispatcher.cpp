@@ -7,6 +7,8 @@
 #define HLOG(l) LOG(l) << log_header_
 #define HVLOG(l) VLOG(l) << log_header_
 
+ABSL_FLAG(int, estimated_concurrency_report_interval, 300000, "");
+
 namespace faas {
 namespace gateway {
 
@@ -88,7 +90,8 @@ bool Dispatcher::OnNewFuncCall(const protocol::FuncCall& func_call, size_t input
     }
     last_request_timestamp_ = current_timestamp;
     total_incoming_requests_++;
-    if (total_incoming_requests_ % 500000 == 0) {
+    int report_interval = absl::GetFlag(FLAGS_estimated_concurrency_report_interval);
+    if (total_incoming_requests_ % report_interval == 0) {
         double estimated_rps = estimated_rps_.GetValue();
         double estimated_processing_delay = estimated_processing_delay_.GetValue();
         double estimated_concurrency = estimated_rps * estimated_processing_delay / 1e6;
