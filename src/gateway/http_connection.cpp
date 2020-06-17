@@ -14,8 +14,7 @@ HttpConnection::HttpConnection(Server* server, int connection_id)
     : Connection(Connection::Type::Http, server),
       connection_id_(connection_id), io_worker_(nullptr),
       state_(kCreated), log_header_(absl::StrFormat("HttpConnection[%d]: ", connection_id)),
-      within_async_request_(false),
-      finished_event_recv_timestamp_(0) {
+      within_async_request_(false) {
     http_parser_init(&http_parser_, HTTP_REQUEST);
     http_parser_.data = this;
     http_parser_settings_init(&http_parser_settings_);

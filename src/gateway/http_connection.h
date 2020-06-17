@@ -58,7 +58,6 @@ private:
     uv_write_t response_write_req_;
     bool within_async_request_;
     std::shared_ptr<HttpAsyncRequestContext> async_request_context_;
-    std::atomic<uint64_t> finished_event_recv_timestamp_;
 
     friend class HttpAsyncRequestContext;
 
