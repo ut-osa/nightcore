@@ -90,7 +90,7 @@ UV_READ_CB_FOR_CLASS(HttpConnection, RecvData) {
     });
     if (nread < 0) {
         if (nread == UV_EOF || nread == UV_ECONNRESET) {
-            HLOG(INFO) << "HttpConnection closed by client";
+            VLOG(1) << "HttpConnection closed by client";
         } else {
             HLOG(WARNING) << "Read error, will close the connection: "
                           << uv_strerror(nread);

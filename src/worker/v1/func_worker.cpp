@@ -15,12 +15,11 @@ using protocol::FuncCall;
 using protocol::NewFuncCall;
 using protocol::FuncCallDebugString;
 using protocol::Message;
-using protocol::SetProfilingFieldsInMessage;
 using protocol::GetFuncCallFromMessage;
 using protocol::GetInlineDataFromMessage;
 using protocol::SetInlineDataInMessage;
 using protocol::IsHandshakeResponseMessage;
-using protocol::IsInvokeFuncMessage;
+using protocol::IsDispatchFuncCallMessage;
 using protocol::NewFuncWorkerHandshakeMessage;
 using protocol::NewFuncCallCompleteMessage;
 using protocol::NewFuncCallFailedMessage;
@@ -30,7 +29,8 @@ using protocol::ComputeMessageDelay;
 FuncWorker::FuncWorker()
     : func_id_(-1), fprocess_id_(-1), client_id_(0), func_call_timeout_(kDefaultFuncCallTimeout),
       gateway_sock_fd_(-1), input_pipe_fd_(-1), output_pipe_fd_(-1),
-      buffer_pool_for_pipes_("Pipes", __FAAS_MESSAGE_SIZE), next_call_id_(0),
+      buffer_pool_for_pipes_("Pipes", __FAAS_MESSAGE_SIZE),
+      next_call_id_(0), current_func_call_id_(0),
       gateway_message_delay_stat_(
           stat::StatisticsCollector<int32_t>::StandardReportCallback("gateway_message_delay")),
       processing_delay_stat_(
@@ -80,7 +80,7 @@ void FuncWorker::MainServingLoop() {
         CHECK(io_utils::RecvMessage(input_pipe_fd_, &message, nullptr))
             << "Failed to receive message from gateway";
         gateway_message_delay_stat_.AddSample(ComputeMessageDelay(message));
-        if (IsInvokeFuncMessage(message)) {
+        if (IsDispatchFuncCallMessage(message)) {
             ExecuteFunc(func_worker, message);
         } else {
             LOG(FATAL) << "Unknown message type";
@@ -118,7 +118,7 @@ void FuncWorker::ExecuteFunc(void* worker_handle, const Message& invoke_func_mes
         input_region = ipc::ShmOpen(ipc::GetFuncCallInputShmName(func_call.full_call_id));
         if (input_region == nullptr) {
             Message response = NewFuncCallFailedMessage(func_call);
-            SetProfilingFieldsInMessage(&response);
+            response.send_timestamp = GetMonotonicMicroTimestamp();
             PCHECK(io_utils::SendMessage(output_pipe_fd_, response));
             return;
         }
@@ -128,6 +128,7 @@ void FuncWorker::ExecuteFunc(void* worker_handle, const Message& invoke_func_mes
         input = GetInlineDataFromMessage(invoke_func_message);
     }
     func_output_buffer_.Reset();
+    current_func_call_id_.store(func_call.full_call_id);
     int64_t start_timestamp = GetMonotonicMicroTimestamp();
     int ret = func_call_fn_(worker_handle, input.data(), input.size());
     int32_t processing_time = gsl::narrow_cast<int32_t>(
@@ -135,7 +136,7 @@ void FuncWorker::ExecuteFunc(void* worker_handle, const Message& invoke_func_mes
     processing_delay_stat_.AddSample(processing_time);
     ReclaimInvokeFuncResources();
     VLOG(1) << "Finish executing func_call " << FuncCallDebugString(func_call);
-    Message response = (ret == 0) ? NewFuncCallCompleteMessage(func_call)
+    Message response = (ret == 0) ? NewFuncCallCompleteMessage(func_call, processing_time)
                                   : NewFuncCallFailedMessage(func_call);
     if (func_call.client_id == 0) {
         // FuncCall from gateway, will use message's inline data if possible
@@ -159,7 +160,7 @@ void FuncWorker::ExecuteFunc(void* worker_handle, const Message& invoke_func_mes
         }
     }
     VLOG(1) << "Send response to gateway";
-    SetProfilingFieldsInMessage(&response, processing_time);
+    response.send_timestamp = GetMonotonicMicroTimestamp();
     PCHECK(io_utils::SendMessage(output_pipe_fd_, response));
 }
 
@@ -175,7 +176,7 @@ bool FuncWorker::InvokeFunc(const char* func_name, const char* input_data, size_
         gsl::narrow_cast<uint16_t>(func_entry->func_id),
         client_id_, next_call_id_.fetch_add(1));
     VLOG(1) << "Invoke func_call " << FuncCallDebugString(func_call);
-    Message message = NewInvokeFuncMessage(func_call);
+    Message message = NewInvokeFuncMessage(func_call, current_func_call_id_.load());
     std::unique_ptr<ipc::ShmRegion> input_region;
     if (input_length <= MESSAGE_INLINE_DATA_SIZE) {
         SetInlineDataInMessage(&message, std::span<const char>(input_data, input_length));
@@ -211,9 +212,9 @@ bool FuncWorker::InvokeFunc(const char* func_name, const char* input_data, size_
         PCHECK(close(output_fifo) == 0) << "close failed";
     });
     // Send message to gateway (dispatcher)
-    SetProfilingFieldsInMessage(&message);
     {
         absl::MutexLock lk(&mu_);
+        message.send_timestamp = GetMonotonicMicroTimestamp();
         PCHECK(io_utils::SendMessage(output_pipe_fd_, message));
     }
     VLOG(1) << "InvokeFuncMessage sent to gateway";

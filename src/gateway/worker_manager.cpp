@@ -11,7 +11,6 @@ namespace faas {
 namespace gateway {
 
 using protocol::Message;
-using protocol::SetProfilingFieldsInMessage;
 using protocol::NewCreateFuncWorkerMessage;
 
 WorkerManager::WorkerManager(Server* server)
@@ -124,7 +123,6 @@ bool WorkerManager::RequestNewFuncWorkerInternal(MessageConnection* launcher_con
     CHECK(ipc::FifoCreate(ipc::GetFuncWorkerOutputFifoName(client_id)))
         << "FifoCreate failed";
     Message message = NewCreateFuncWorkerMessage(client_id);
-    SetProfilingFieldsInMessage(&message);
     launcher_connection->WriteMessage(message);
     return true;
 }
@@ -136,9 +134,8 @@ FuncWorker::FuncWorker(MessageConnection* message_connection)
 
 FuncWorker::~FuncWorker() {}
 
-void FuncWorker::DispatchFuncCall(Message* invoke_func_message) {
-    SetProfilingFieldsInMessage(invoke_func_message);
-    connection_->WriteMessage(*invoke_func_message);
+void FuncWorker::DispatchFuncCall(Message* dispatch_func_call_message) {
+    connection_->WriteMessage(*dispatch_func_call_message);
 }
 
 }  // namespace gateway

@@ -3,6 +3,7 @@
 #include "base/common.h"
 #include "common/stat.h"
 #include "common/protocol.h"
+#include "utils/exp_moving_avg.h"
 
 namespace faas {
 namespace gateway {
@@ -49,6 +50,7 @@ private:
         func_call_states_ ABSL_GUARDED_BY(mu_);
 
     int64_t last_request_timestamp_ ABSL_GUARDED_BY(mu_);
+    int total_incoming_requests_ ABSL_GUARDED_BY(mu_);
 
     stat::Counter incoming_requests_stat_ ABSL_GUARDED_BY(mu_);
     stat::Counter failed_requests_stat_ ABSL_GUARDED_BY(mu_);
@@ -62,8 +64,11 @@ private:
     stat::StatisticsCollector<uint16_t> running_workers_stat_ ABSL_GUARDED_BY(mu_);
     stat::StatisticsCollector<uint16_t> inflight_requests_stat_ ABSL_GUARDED_BY(mu_);
 
+    utils::ExpMovingAvg estimated_rps_ ABSL_GUARDED_BY(mu_);
+    utils::ExpMovingAvg estimated_processing_delay_ ABSL_GUARDED_BY(mu_);
+
     void FuncWorkerFinished(FuncWorker* func_worker) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
-    void DispatchFuncCall(FuncWorker* func_worker, protocol::Message* invoke_func_message)
+    void DispatchFuncCall(FuncWorker* func_worker, protocol::Message* dispatch_func_call_message)
         ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
     bool DispatchPendingFuncCall(FuncWorker* idle_func_worker) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
     FuncWorker* PickIdleWorker() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);

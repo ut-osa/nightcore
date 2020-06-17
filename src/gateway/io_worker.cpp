@@ -126,7 +126,6 @@ void IOWorker::OnConnectionClose(Connection* connection) {
     DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
     DCHECK(pipe_to_server_.loop == &uv_loop_);
     DCHECK(connections_.contains(connection));
-    HLOG(INFO) << "An associated connection closed";
     uv_write_t* write_req = connection->uv_write_req_for_back_transfer();
     size_t buf_len = sizeof(void*);
     char* buf = connection->pipe_write_buf_for_transfer();

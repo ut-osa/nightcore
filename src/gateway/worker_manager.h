@@ -49,7 +49,7 @@ public:
     uint16_t client_id() const { return client_id_; }
 
     // Must be thread-safe
-    void DispatchFuncCall(protocol::Message* invoke_func_message);
+    void DispatchFuncCall(protocol::Message* dispatch_func_call_message);
 
 private:
     uint16_t func_id_;

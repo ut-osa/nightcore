@@ -64,33 +64,33 @@ enum class MessageType : uint16_t {
     HANDSHAKE_RESPONSE    = 3,
     CREATE_FUNC_WORKER    = 4,
     INVOKE_FUNC           = 5,
-    FUNC_CALL_COMPLETE    = 6,
-    FUNC_CALL_FAILED      = 7
+    DISPATCH_FUNC_CALL    = 6,
+    FUNC_CALL_COMPLETE    = 7,
+    FUNC_CALL_FAILED      = 8
 };
 
 struct Message {
-    // Start profiling fields
+    struct {
+        uint16_t message_type : 4;
+        uint16_t func_id      : 8;
+        uint16_t method_id    : 6;
+        uint16_t client_id    : 14;
+        uint32_t call_id;
+    }  __attribute__ ((packed));
+    union {
+        uint64_t parent_call_id;  // Used in INVOKE_FUNC, saved as full_call_id
+        int32_t processing_time;  // Used in FUNC_CALL_COMPLETE
+    };
     int64_t send_timestamp;
-    int32_t processing_time;
-    // End profiling fields
+    int32_t payload_size;  // Used in HANDSHAKE_RESPONSE, INVOKE_FUNC, FUNC_CALL_COMPLETE
 
-    uint16_t message_type : 4;
-    uint16_t func_id      : 8;
-    uint16_t method_id    : 6;
-    uint16_t client_id    : 14;
-    uint32_t call_id;
-    int32_t payload_size;
-
+    char padding[__FAAS_CACHE_LINE_SIZE - 28];
     char inline_data[__FAAS_MESSAGE_SIZE - __FAAS_CACHE_LINE_SIZE]
         __attribute__ ((aligned (__FAAS_CACHE_LINE_SIZE)));
 };
 
 #define MESSAGE_INLINE_DATA_SIZE (__FAAS_MESSAGE_SIZE - __FAAS_CACHE_LINE_SIZE)
 static_assert(sizeof(Message) == __FAAS_MESSAGE_SIZE, "Unexpected Message size");
-
-inline bool IsInvalidMessage(const Message& message) {
-    return static_cast<MessageType>(message.message_type) == MessageType::INVALID;
-}
 
 inline bool IsLauncherHandshakeMessage(const Message& message) {
     return static_cast<MessageType>(message.message_type) == MessageType::LAUNCHER_HANDSHAKE;
@@ -112,6 +112,10 @@ inline bool IsInvokeFuncMessage(const Message& message) {
     return static_cast<MessageType>(message.message_type) == MessageType::INVOKE_FUNC;
 }
 
+inline bool IsDispatchFuncCallMessage(const Message& message) {
+    return static_cast<MessageType>(message.message_type) == MessageType::DISPATCH_FUNC_CALL;
+}
+
 inline bool IsFuncCallCompleteMessage(const Message& message) {
     return static_cast<MessageType>(message.message_type) == MessageType::FUNC_CALL_COMPLETE;
 }
@@ -129,6 +133,7 @@ inline void SetFuncCallInMessage(Message* message, const FuncCall& func_call) {
 
 inline FuncCall GetFuncCallFromMessage(const Message& message) {
     DCHECK(IsInvokeFuncMessage(message)
+             || IsDispatchFuncCallMessage(message)
              || IsFuncCallCompleteMessage(message)
              || IsFuncCallFailedMessage(message));
     FuncCall func_call;
@@ -150,6 +155,7 @@ inline void SetInlineDataInMessage(Message* message, std::span<const char> data)
 
 inline std::span<const char> GetInlineDataFromMessage(const Message& message) {
     if (IsInvokeFuncMessage(message)
+          || IsDispatchFuncCallMessage(message)
           || IsFuncCallCompleteMessage(message)
           || IsLauncherHandshakeMessage(message)) {
         if (message.payload_size > 0) {
@@ -160,13 +166,12 @@ inline std::span<const char> GetInlineDataFromMessage(const Message& message) {
     return std::span<const char>();
 }
 
-inline void SetProfilingFieldsInMessage(Message* message, int32_t processing_time = 0) {
-    message->send_timestamp = GetMonotonicMicroTimestamp();
-    message->processing_time = processing_time;
-}
-
 inline int32_t ComputeMessageDelay(const Message& message) {
-    return gsl::narrow_cast<int32_t>(GetMonotonicMicroTimestamp() - message.send_timestamp);
+    if (message.send_timestamp > 0) {
+        return gsl::narrow_cast<int32_t>(GetMonotonicMicroTimestamp() - message.send_timestamp);
+    } else {
+        return -1;
+    }
 }
 
 #define NEW_EMPTY_MESSAGE(var)       \
@@ -202,17 +207,26 @@ inline Message NewCreateFuncWorkerMessage(uint16_t client_id) {
     return message;
 }
 
-inline Message NewInvokeFuncMessage(const FuncCall& func_call) {
+inline Message NewInvokeFuncMessage(const FuncCall& func_call, uint64_t parent_call_id) {
     NEW_EMPTY_MESSAGE(message);
     message.message_type = static_cast<uint16_t>(MessageType::INVOKE_FUNC);
+    SetFuncCallInMessage(&message, func_call);
+    message.parent_call_id = parent_call_id;
+    return message;
+}
+
+inline Message NewDispatchFuncCallMessage(const FuncCall& func_call) {
+    NEW_EMPTY_MESSAGE(message);
+    message.message_type = static_cast<uint16_t>(MessageType::DISPATCH_FUNC_CALL);
     SetFuncCallInMessage(&message, func_call);
     return message;
 }
 
-inline Message NewFuncCallCompleteMessage(const FuncCall& func_call) {
+inline Message NewFuncCallCompleteMessage(const FuncCall& func_call, int32_t processing_time) {
     NEW_EMPTY_MESSAGE(message);
     message.message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_COMPLETE);
     SetFuncCallInMessage(&message, func_call);
+    message.processing_time = processing_time;
     return message;
 }
 

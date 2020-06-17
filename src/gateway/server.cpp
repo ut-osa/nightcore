@@ -483,7 +483,9 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
             if (message.payload_size < 0) {
                 input_use_shm_stat_.Tick();
             }
-            message_delay_stat_.AddSample(message_delay);
+            if (message_delay >= 0) {
+                message_delay_stat_.AddSample(message_delay);
+            }
             dispatcher = GetOrCreateDispatcherLocked(func_call.func_id);
         }
         bool success = false;
@@ -509,7 +511,9 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
         std::unique_ptr<ExternalFuncCallContext> pending_external_func_call;
         {
             absl::MutexLock lk(&mu_);
-            message_delay_stat_.AddSample(message_delay);
+            if (message_delay >= 0) {
+                message_delay_stat_.AddSample(message_delay);
+            }
             if (IsFuncCallCompleteMessage(message) && message.payload_size < 0) {
                 output_use_shm_stat_.Tick();
             }

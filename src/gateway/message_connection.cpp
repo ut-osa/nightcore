@@ -178,6 +178,7 @@ void MessageConnection::WriteMessage(const Message& message) {
     {
         absl::MutexLock lk(&write_message_mu_);
         pending_messages_.push_back(message);
+        pending_messages_.back().send_timestamp = GetMonotonicMicroTimestamp();
     }
     io_worker_->ScheduleFunction(
         this, absl::bind_front(&MessageConnection::SendPendingMessages, this));

@@ -15,14 +15,13 @@ using protocol::FuncCallDebugString;
 using protocol::Message;
 using protocol::SetInlineDataInMessage;
 using protocol::GetFuncCallFromMessage;
-using protocol::SetProfilingFieldsInMessage;
 using protocol::NewCreateFuncWorkerMessage;
-using protocol::NewInvokeFuncMessage;
+using protocol::NewDispatchFuncCallMessage;
 
 Dispatcher::Dispatcher(Server* server, uint16_t func_id)
     : server_(server), func_id_(func_id),
       log_header_(fmt::format("Dispatcher[{}]: ", func_id)),
-      last_request_timestamp_(-1),
+      last_request_timestamp_(-1), total_incoming_requests_(0),
       incoming_requests_stat_(stat::Counter::StandardReportCallback(
           fmt::format("incoming_requests[{}]", func_id))),
       failed_requests_stat_(stat::Counter::StandardReportCallback(
@@ -73,19 +72,30 @@ bool Dispatcher::OnNewFuncCall(const protocol::FuncCall& func_call, size_t input
                                std::span<const char> inline_input, bool shm_input) {
     VLOG(1) << "OnNewFuncCall " << FuncCallDebugString(func_call);
     DCHECK_EQ(func_id_, func_call.func_id);
-    Message invoke_func_message = NewInvokeFuncMessage(func_call);
+    Message dispatch_func_call_message = NewDispatchFuncCallMessage(func_call);
     if (shm_input) {
-        invoke_func_message.payload_size = -gsl::narrow_cast<int32_t>(input_size);
+        dispatch_func_call_message.payload_size = -gsl::narrow_cast<int32_t>(input_size);
     } else {
-        SetInlineDataInMessage(&invoke_func_message, inline_input);
+        SetInlineDataInMessage(&dispatch_func_call_message, inline_input);
     }
     absl::MutexLock lk(&mu_);
     int64_t current_timestamp = GetMonotonicMicroTimestamp();
     if (last_request_timestamp_ != -1) {
-        instant_rps_stat_.AddSample(gsl::narrow_cast<double>(
-            1e6 / (current_timestamp - last_request_timestamp_)));
+        double instant_rps = gsl::narrow_cast<double>(
+            1e6 / (current_timestamp - last_request_timestamp_));
+        instant_rps_stat_.AddSample(instant_rps);
+        estimated_rps_.AddSample(instant_rps);
     }
     last_request_timestamp_ = current_timestamp;
+    total_incoming_requests_++;
+    if (total_incoming_requests_ % 500000 == 0) {
+        double estimated_rps = estimated_rps_.GetValue();
+        double estimated_processing_delay = estimated_processing_delay_.GetValue();
+        double estimated_concurrency = estimated_rps * estimated_processing_delay / 1e6;
+        HLOG(INFO) << fmt::format("Func[{}]: estimated_concurrency={}, estimated_rps={}, estimated_processing_delay={}",
+                                  func_id_, estimated_concurrency,
+                                  estimated_rps, estimated_processing_delay);
+    }
     func_call_states_[func_call.full_call_id] = {
         .recv_timestamp = current_timestamp,
         .dispatch_timestamp = 0,
@@ -96,10 +106,10 @@ bool Dispatcher::OnNewFuncCall(const protocol::FuncCall& func_call, size_t input
     input_size_stat_.AddSample(gsl::narrow_cast<uint32_t>(input_size));
     FuncWorker* idle_worker = PickIdleWorker();
     if (idle_worker) {
-        DispatchFuncCall(idle_worker, &invoke_func_message);
+        DispatchFuncCall(idle_worker, &dispatch_func_call_message);
     } else {
         VLOG(1) << "No idle worker at the moment";
-        pending_func_calls_.push(invoke_func_message);
+        pending_func_calls_.push(dispatch_func_call_message);
     }
     return true;
 }
@@ -115,8 +125,10 @@ void Dispatcher::OnFuncCallCompleted(const FuncCall& func_call,
     }
     FuncCallState* func_call_state = &func_call_states_[func_call.full_call_id];
     int64_t current_timestamp = GetMonotonicMicroTimestamp();
-    processing_delay_stat_.AddSample(gsl::narrow_cast<int32_t>(
-        current_timestamp - func_call_state->dispatch_timestamp));
+    int32_t processing_delay = gsl::narrow_cast<int32_t>(
+        current_timestamp - func_call_state->dispatch_timestamp);
+    processing_delay_stat_.AddSample(processing_delay);
+    estimated_processing_delay_.AddSample(processing_delay);
     if (processing_time > 0) {
         dispatch_overhead_stat_.AddSample(gsl::narrow_cast<int32_t>(
             current_timestamp - func_call_state->dispatch_timestamp - processing_time));
@@ -169,19 +181,19 @@ bool Dispatcher::DispatchPendingFuncCall(FuncWorker* func_worker) {
     if (pending_func_calls_.empty()) {
         return false;
     }
-    Message* invoke_func_message = &pending_func_calls_.front();
-    FuncCall func_call = GetFuncCallFromMessage(*invoke_func_message);
+    Message* dispatch_func_call_message = &pending_func_calls_.front();
+    FuncCall func_call = GetFuncCallFromMessage(*dispatch_func_call_message);
     HVLOG(1) << "Found pending func_call " << FuncCallDebugString(func_call);
-    DispatchFuncCall(func_worker, invoke_func_message);
+    DispatchFuncCall(func_worker, dispatch_func_call_message);
     pending_func_calls_.pop();
     return true;
 }
 
-void Dispatcher::DispatchFuncCall(FuncWorker* func_worker, Message* invoke_func_message) {
+void Dispatcher::DispatchFuncCall(FuncWorker* func_worker, Message* dispatch_func_call_message) {
     uint16_t client_id = func_worker->client_id();
     DCHECK(workers_.contains(client_id));
     DCHECK(!running_workers_.contains(client_id));
-    FuncCall func_call = GetFuncCallFromMessage(*invoke_func_message);
+    FuncCall func_call = GetFuncCallFromMessage(*dispatch_func_call_message);
     running_workers_[client_id] = func_call;
     int64_t current_timestamp = GetMonotonicMicroTimestamp();
     DCHECK(func_call_states_.contains(func_call.full_call_id));
@@ -190,7 +202,7 @@ void Dispatcher::DispatchFuncCall(FuncWorker* func_worker, Message* invoke_func_
     func_call_state->assigned_worker = func_worker;
     queueing_delay_stat_.AddSample(gsl::narrow_cast<int32_t>(
         current_timestamp - func_call_state->recv_timestamp));
-    func_worker->DispatchFuncCall(invoke_func_message);
+    func_worker->DispatchFuncCall(dispatch_func_call_message);
 }
 
 FuncWorker* Dispatcher::PickIdleWorker() {
