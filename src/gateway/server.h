@@ -158,7 +158,7 @@ private:
     int inflight_external_requests_ ABSL_GUARDED_BY(mu_);
     int running_external_requests_ ABSL_GUARDED_BY(mu_);
     stat::Counter incoming_external_requests_stat_ ABSL_GUARDED_BY(mu_);
-    stat::StatisticsCollector<int32_t> external_arrival_interval_stat_ ABSL_GUARDED_BY(mu_);
+    stat::StatisticsCollector<float> external_requests_instant_rps_stat_ ABSL_GUARDED_BY(mu_);
     stat::StatisticsCollector<uint16_t> inflight_external_requests_stat_ ABSL_GUARDED_BY(mu_);
     stat::StatisticsCollector<uint16_t> pending_external_requests_stat_ ABSL_GUARDED_BY(mu_);
 

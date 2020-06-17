@@ -52,7 +52,7 @@ private:
 
     stat::Counter incoming_requests_stat_ ABSL_GUARDED_BY(mu_);
     stat::Counter failed_requests_stat_ ABSL_GUARDED_BY(mu_);
-    stat::StatisticsCollector<int32_t> arrival_interval_stat_ ABSL_GUARDED_BY(mu_);
+    stat::StatisticsCollector<float> instant_rps_stat_ ABSL_GUARDED_BY(mu_);
     stat::StatisticsCollector<uint32_t> input_size_stat_ ABSL_GUARDED_BY(mu_);
     stat::StatisticsCollector<uint32_t> output_size_stat_ ABSL_GUARDED_BY(mu_);
     stat::StatisticsCollector<int32_t> queueing_delay_stat_ ABSL_GUARDED_BY(mu_);

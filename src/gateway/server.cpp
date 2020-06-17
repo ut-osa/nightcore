@@ -49,8 +49,8 @@ Server::Server()
       running_external_requests_(0),
       incoming_external_requests_stat_(
           stat::Counter::StandardReportCallback("incoming_external_requests")),
-      external_arrival_interval_stat_(
-          stat::StatisticsCollector<int32_t>::StandardReportCallback("external_arrival_interval")),
+      external_requests_instant_rps_stat_(
+          stat::StatisticsCollector<float>::StandardReportCallback("external_requests_instant_rps")),
       inflight_external_requests_stat_(
           stat::StatisticsCollector<uint16_t>::StandardReportCallback("inflight_external_requests")),
       pending_external_requests_stat_(
@@ -644,8 +644,8 @@ void Server::NewExternalFuncCall(std::unique_ptr<ExternalFuncCallContext> func_c
         incoming_external_requests_stat_.Tick();
         int64_t current_timestamp = GetMonotonicMicroTimestamp();
         if (last_external_request_timestamp_ != -1) {
-            external_arrival_interval_stat_.AddSample(gsl::narrow_cast<int32_t>(
-                current_timestamp - last_external_request_timestamp_));
+            external_requests_instant_rps_stat_.AddSample(gsl::narrow_cast<double>(
+                1e6 / (current_timestamp - last_external_request_timestamp_)));
         }
         last_external_request_timestamp_ = current_timestamp;
         inflight_external_requests_++;
