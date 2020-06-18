@@ -40,33 +40,11 @@ private:
         running_workers_ ABSL_GUARDED_BY(mu_);
     std::vector</* client_id */ uint16_t> idle_workers_ ABSL_GUARDED_BY(mu_);
     std::queue<protocol::Message> pending_func_calls_ ABSL_GUARDED_BY(mu_);
+    absl::flat_hash_map</* full_call_id */ uint64_t, FuncWorker*>
+        assigned_workers_ ABSL_GUARDED_BY(mu_);
 
-    struct FuncCallState {
-        int64_t recv_timestamp;
-        int64_t dispatch_timestamp;
-        FuncWorker* assigned_worker;
-    };
-
-    absl::flat_hash_map</* full_call_id */ uint64_t, FuncCallState>
-        func_call_states_ ABSL_GUARDED_BY(mu_);
-
-    int64_t last_request_timestamp_ ABSL_GUARDED_BY(mu_);
-    int total_incoming_requests_ ABSL_GUARDED_BY(mu_);
-
-    stat::Counter incoming_requests_stat_ ABSL_GUARDED_BY(mu_);
-    stat::Counter failed_requests_stat_ ABSL_GUARDED_BY(mu_);
-    stat::StatisticsCollector<float> instant_rps_stat_ ABSL_GUARDED_BY(mu_);
-    stat::StatisticsCollector<uint32_t> input_size_stat_ ABSL_GUARDED_BY(mu_);
-    stat::StatisticsCollector<uint32_t> output_size_stat_ ABSL_GUARDED_BY(mu_);
-    stat::StatisticsCollector<int32_t> queueing_delay_stat_ ABSL_GUARDED_BY(mu_);
-    stat::StatisticsCollector<int32_t> processing_delay_stat_ ABSL_GUARDED_BY(mu_);
-    stat::StatisticsCollector<int32_t> dispatch_overhead_stat_ ABSL_GUARDED_BY(mu_);
     stat::StatisticsCollector<uint16_t> idle_workers_stat_ ABSL_GUARDED_BY(mu_);
     stat::StatisticsCollector<uint16_t> running_workers_stat_ ABSL_GUARDED_BY(mu_);
-    stat::StatisticsCollector<uint16_t> inflight_requests_stat_ ABSL_GUARDED_BY(mu_);
-
-    utils::ExpMovingAvg estimated_rps_ ABSL_GUARDED_BY(mu_);
-    utils::ExpMovingAvg estimated_processing_delay_ ABSL_GUARDED_BY(mu_);
 
     void FuncWorkerFinished(FuncWorker* func_worker) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
     void DispatchFuncCall(FuncWorker* func_worker, protocol::Message* dispatch_func_call_message)

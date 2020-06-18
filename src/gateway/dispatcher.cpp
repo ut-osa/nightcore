@@ -8,8 +8,6 @@
 #define HLOG(l) LOG(l) << log_header_
 #define HVLOG(l) VLOG(l) << log_header_
 
-ABSL_FLAG(int, estimated_concurrency_report_interval, 300000, "");
-
 namespace faas {
 namespace gateway {
 
@@ -24,29 +22,10 @@ using protocol::NewDispatchFuncCallMessage;
 Dispatcher::Dispatcher(Server* server, uint16_t func_id)
     : server_(server), func_id_(func_id),
       log_header_(fmt::format("Dispatcher[{}]: ", func_id)),
-      last_request_timestamp_(-1), total_incoming_requests_(0),
-      incoming_requests_stat_(stat::Counter::StandardReportCallback(
-          fmt::format("incoming_requests[{}]", func_id))),
-      failed_requests_stat_(stat::Counter::StandardReportCallback(
-          fmt::format("failed_requests[{}]", func_id))),
-      instant_rps_stat_(stat::StatisticsCollector<float>::StandardReportCallback(
-          fmt::format("instant_rps[{}]", func_id))),
-      input_size_stat_(stat::StatisticsCollector<uint32_t>::StandardReportCallback(
-          fmt::format("input_size[{}]", func_id))),
-      output_size_stat_(stat::StatisticsCollector<uint32_t>::StandardReportCallback(
-          fmt::format("output_size[{}]", func_id))),
-      queueing_delay_stat_(stat::StatisticsCollector<int32_t>::StandardReportCallback(
-          fmt::format("queueing_delay[{}]", func_id))),
-      processing_delay_stat_(stat::StatisticsCollector<int32_t>::StandardReportCallback(
-          fmt::format("processing_delay[{}]", func_id))),
-      dispatch_overhead_stat_(stat::StatisticsCollector<int32_t>::StandardReportCallback(
-          fmt::format("dispatch_overhead[{}]", func_id))),
       idle_workers_stat_(stat::StatisticsCollector<uint16_t>::StandardReportCallback(
           fmt::format("idle_workers[{}]", func_id))),
       running_workers_stat_(stat::StatisticsCollector<uint16_t>::StandardReportCallback(
-          fmt::format("running_workers[{}]", func_id))),
-      inflight_requests_stat_(stat::StatisticsCollector<uint16_t>::StandardReportCallback(
-          fmt::format("inflight_requests[{}]", func_id))) {}
+          fmt::format("running_workers[{}]", func_id))) {}
 
 Dispatcher::~Dispatcher() {}
 
@@ -84,32 +63,7 @@ bool Dispatcher::OnNewFuncCall(const protocol::FuncCall& func_call,
         SetInlineDataInMessage(&dispatch_func_call_message, inline_input);
     }
     absl::MutexLock lk(&mu_);
-    int64_t current_timestamp = GetMonotonicMicroTimestamp();
-    if (last_request_timestamp_ != -1) {
-        double instant_rps = gsl::narrow_cast<double>(
-            1e6 / (current_timestamp - last_request_timestamp_));
-        instant_rps_stat_.AddSample(instant_rps);
-        estimated_rps_.AddSample(instant_rps);
-    }
-    last_request_timestamp_ = current_timestamp;
-    total_incoming_requests_++;
-    int report_interval = absl::GetFlag(FLAGS_estimated_concurrency_report_interval);
-    if (total_incoming_requests_ % report_interval == 0) {
-        double estimated_rps = estimated_rps_.GetValue();
-        double estimated_processing_delay = estimated_processing_delay_.GetValue();
-        double estimated_concurrency = estimated_rps * estimated_processing_delay / 1e6;
-        HLOG(INFO) << fmt::format("Func[{}]: estimated_concurrency={}, estimated_rps={}, estimated_processing_delay={}",
-                                  func_id_, estimated_concurrency,
-                                  estimated_rps, estimated_processing_delay);
-    }
-    func_call_states_[func_call.full_call_id] = {
-        .recv_timestamp = current_timestamp,
-        .dispatch_timestamp = 0,
-        .assigned_worker = nullptr
-    };
-    inflight_requests_stat_.AddSample(gsl::narrow_cast<uint16_t>(func_call_states_.size()));
-    incoming_requests_stat_.Tick();
-    input_size_stat_.AddSample(gsl::narrow_cast<uint32_t>(input_size));
+    server_->tracer()->OnNewFuncCall(func_call, parent_func_call, input_size);
     FuncWorker* idle_worker = PickIdleWorker();
     if (idle_worker) {
         DispatchFuncCall(idle_worker, &dispatch_func_call_message);
@@ -125,51 +79,27 @@ void Dispatcher::OnFuncCallCompleted(const FuncCall& func_call,
     VLOG(1) << "OnFuncCallCompleted " << FuncCallDebugString(func_call);
     DCHECK_EQ(func_id_, func_call.func_id);
     absl::MutexLock lk(&mu_);
-    if (!func_call_states_.contains(func_call.full_call_id)) {
-        HLOG(ERROR) << "Cannot find FuncCallState for full_call_id " << func_call.full_call_id;
+    server_->tracer()->OnFuncCallCompleted(func_call, processing_time, output_size);
+    if (!assigned_workers_.contains(func_call.full_call_id)) {
+        HLOG(ERROR) << "Cannot find assigned worker for full_call_id " << func_call.full_call_id;
         return;
     }
-    FuncCallState* func_call_state = &func_call_states_[func_call.full_call_id];
-    int64_t current_timestamp = GetMonotonicMicroTimestamp();
-    int32_t processing_delay = gsl::narrow_cast<int32_t>(
-        current_timestamp - func_call_state->dispatch_timestamp);
-    processing_delay_stat_.AddSample(processing_delay);
-    estimated_processing_delay_.AddSample(processing_delay);
-    if (processing_time > 0) {
-        dispatch_overhead_stat_.AddSample(gsl::narrow_cast<int32_t>(
-            current_timestamp - func_call_state->dispatch_timestamp - processing_time));
-    } else {
-        HLOG(WARNING) << "processing_time is not set";
-    }
-    output_size_stat_.AddSample(gsl::narrow_cast<uint32_t>(output_size));
-    FuncWorker* func_worker = func_call_state->assigned_worker;
-    if (func_worker != nullptr) {
-        FuncWorkerFinished(func_worker);
-    } else {
-        HLOG(ERROR) << "There is no assigned FuncWorker for full_call_id "
-                    << func_call.full_call_id;
-    }
-    func_call_states_.erase(func_call.full_call_id);
+    FuncWorker* func_worker = assigned_workers_[func_call.full_call_id];
+    FuncWorkerFinished(func_worker);
+    assigned_workers_.erase(func_call.full_call_id);
 }
 
 void Dispatcher::OnFuncCallFailed(const FuncCall& func_call) {
     VLOG(1) << "OnFuncCallFailed " << FuncCallDebugString(func_call);
     DCHECK_EQ(func_id_, func_call.func_id);
     absl::MutexLock lk(&mu_);
-    if (!func_call_states_.contains(func_call.full_call_id)) {
-        HLOG(ERROR) << "Cannot find FuncCallState for full_call_id " << func_call.full_call_id;
+    server_->tracer()->OnFuncCallFailed(func_call);
+    if (!assigned_workers_.contains(func_call.full_call_id)) {
         return;
     }
-    failed_requests_stat_.Tick();
-    FuncCallState* func_call_state = &func_call_states_[func_call.full_call_id];
-    FuncWorker* func_worker = func_call_state->assigned_worker;
-    if (func_worker != nullptr) {
-        FuncWorkerFinished(func_worker);
-    } else {
-        HLOG(ERROR) << "There is no assigned FuncWorker for full_call_id "
-                    << func_call.full_call_id;
-    }
-    func_call_states_.erase(func_call.full_call_id);
+    FuncWorker* func_worker = assigned_workers_[func_call.full_call_id];
+    FuncWorkerFinished(func_worker);
+    assigned_workers_.erase(func_call.full_call_id);
 }
 
 void Dispatcher::FuncWorkerFinished(FuncWorker* func_worker) {
@@ -200,14 +130,9 @@ void Dispatcher::DispatchFuncCall(FuncWorker* func_worker, Message* dispatch_fun
     DCHECK(workers_.contains(client_id));
     DCHECK(!running_workers_.contains(client_id));
     FuncCall func_call = GetFuncCallFromMessage(*dispatch_func_call_message);
+    server_->tracer()->OnFuncCallDispatched(func_call, func_worker);
+    assigned_workers_[func_call.full_call_id] = func_worker;
     running_workers_[client_id] = func_call;
-    int64_t current_timestamp = GetMonotonicMicroTimestamp();
-    DCHECK(func_call_states_.contains(func_call.full_call_id));
-    FuncCallState* func_call_state = &func_call_states_[func_call.full_call_id];
-    func_call_state->dispatch_timestamp = current_timestamp;
-    func_call_state->assigned_worker = func_worker;
-    queueing_delay_stat_.AddSample(gsl::narrow_cast<int32_t>(
-        current_timestamp - func_call_state->recv_timestamp));
     func_worker->DispatchFuncCall(dispatch_func_call_message);
 }
 

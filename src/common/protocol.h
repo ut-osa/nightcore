@@ -10,6 +10,10 @@ constexpr int kFuncIdBits   = 8;
 constexpr int kMethodIdBits = 6;
 constexpr int kClientIdBits = 14;
 
+constexpr int kMaxFuncId   = (1 << kFuncIdBits) - 1;
+constexpr int kMaxMethodId = (1 << kMethodIdBits) - 1;
+constexpr int kMaxClientId = (1 << kClientIdBits) - 1;
+
 union FuncCall {
     struct {
         uint16_t func_id   : 8;

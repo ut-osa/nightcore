@@ -115,7 +115,7 @@ bool WorkerManager::RequestNewFuncWorker(uint16_t func_id) {
 
 bool WorkerManager::RequestNewFuncWorkerInternal(MessageConnection* launcher_connection) {
     uint16_t client_id = next_client_id_.fetch_add(1);
-    CHECK_LE(client_id, kMaxClientId) << "Reach maximum number of clients!";
+    CHECK_LE(client_id, protocol::kMaxClientId) << "Reach maximum number of clients!";
     HLOG(INFO) << fmt::format("Request new FuncWorker for func_id {} with client_id {}",
                               launcher_connection->func_id(), client_id);
     CHECK(ipc::FifoCreate(ipc::GetFuncWorkerInputFifoName(client_id)))

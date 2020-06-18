@@ -13,7 +13,6 @@ class FuncWorker;
 class WorkerManager {
 public:
     static constexpr int kDefaultMinWorkersPerFunc = 4;
-    static constexpr int kMaxClientId = (1 << protocol::kClientIdBits) - 1;
 
     explicit WorkerManager(Server* server);
     ~WorkerManager();

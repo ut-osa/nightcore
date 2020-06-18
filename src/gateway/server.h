@@ -16,6 +16,7 @@
 #include "gateway/dispatcher.h"
 #include "gateway/worker_manager.h"
 #include "gateway/monitor.h"
+#include "gateway/tracer.h"
 
 namespace faas {
 namespace gateway {
@@ -44,6 +45,7 @@ public:
     FuncConfig* func_config() { return &func_config_; }
     WorkerManager* worker_manager() { return worker_manager_.get(); }
     Monitor* monitor() { return monitor_.get(); }
+    Tracer* tracer() { return tracer_.get(); }
 
     void Start();
     void ScheduleStop();
@@ -140,6 +142,7 @@ private:
     absl::flat_hash_set<std::unique_ptr<MessageConnection>> message_connections_;
     std::unique_ptr<WorkerManager> worker_manager_;
     std::unique_ptr<Monitor> monitor_;
+    std::unique_ptr<Tracer> tracer_;
     int max_running_external_requests_;
 
     absl::Mutex mu_;

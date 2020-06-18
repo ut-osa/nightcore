@@ -42,6 +42,7 @@ Server::Server()
       next_http_worker_id_(0), next_ipc_worker_id_(0),
       worker_manager_(new WorkerManager(this)),
       monitor_(absl::GetFlag(FLAGS_disable_monitor) ? nullptr : new Monitor(this)),
+      tracer_(new Tracer(this)),
       max_running_external_requests_(absl::GetFlag(FLAGS_max_running_external_requests)),
       next_call_id_(1),
       last_external_request_timestamp_(-1),
@@ -181,6 +182,8 @@ void Server::Start() {
     if (monitor_ != nullptr) {
         monitor_->Start();
     }
+    // Initialize tracer
+    tracer_->Init();
     // Start thread for running event loop
     event_loop_thread_.Start();
     state_.store(kRunning);
