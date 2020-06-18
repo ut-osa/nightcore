@@ -33,7 +33,7 @@ private:
 
     enum FuncCallState { kInvalid, kReceived, kDispatched, kCompleted, kFailed };
 
-    struct FunCallInfo {
+    struct FuncCallInfo {
         FuncCallState      state;
         protocol::FuncCall func_call;
         protocol::FuncCall parent_func_call;
@@ -44,6 +44,9 @@ private:
         int64_t            finish_timestamp;
         FuncWorker*        assigned_worker;
         int32_t            processing_time;
+
+        // Used by FuncCallInfoGuard
+        std::atomic<int> in_use;
 
         void reset() {
             state              = kInvalid;
@@ -56,11 +59,14 @@ private:
             finish_timestamp   = 0;
             assigned_worker    = nullptr;
             processing_time    = 0;
+            in_use.store(0);
         }
     };
-    utils::SimpleObjectPool<FunCallInfo> func_call_info_pool_ ABSL_GUARDED_BY(mu_);
-    absl::flat_hash_map</* full_call_id */ uint64_t, FunCallInfo*>
+    utils::SimpleObjectPool<FuncCallInfo> func_call_info_pool_ ABSL_GUARDED_BY(mu_);
+    absl::flat_hash_map</* full_call_id */ uint64_t, FuncCallInfo*>
         func_call_infos_ ABSL_GUARDED_BY(mu_);
+
+    stat::StatisticsCollector<int32_t> dispatch_overhead_stat_ ABSL_GUARDED_BY(mu_);
 
     struct PerFuncState {
         uint16_t func_id;
@@ -81,11 +87,31 @@ private:
         utils::ExpMovingAvg running_delay_ema;
         utils::ExpMovingAvg processing_time_ema;
 
+        // Used by PerFuncStateGuard
+        std::atomic<int> in_use;
+
         explicit PerFuncState(uint16_t func_id);
     };
-    PerFuncState* per_func_state_[protocol::kMaxFuncId];
 
-    stat::StatisticsCollector<int32_t> dispatch_overhead_stat_ ABSL_GUARDED_BY(mu_);
+    PerFuncState* per_func_states_[protocol::kMaxFuncId];
+
+    class FuncCallInfoGuard {
+        explicit FuncCallInfoGuard(FuncCallInfo* func_call_info);
+        ~FuncCallInfoGuard();
+    private:
+        FuncCallInfo* func_call_info_;
+        friend class Tracer;
+        DISALLOW_COPY_AND_ASSIGN(FuncCallInfoGuard);
+    };
+
+    class PerFuncStateGuard {
+        explicit PerFuncStateGuard(PerFuncState* per_func_state);
+        ~PerFuncStateGuard();
+    private:
+        PerFuncState* per_func_state_;
+        friend class Tracer;
+        DISALLOW_COPY_AND_ASSIGN(PerFuncStateGuard);
+    };
 
     DISALLOW_COPY_AND_ASSIGN(Tracer);
 };
