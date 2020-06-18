@@ -68,9 +68,6 @@ private:
     std::atomic<uint32_t> next_call_id_;
     std::atomic<uint64_t> current_func_call_id_;
 
-    stat::StatisticsCollector<int32_t> gateway_message_delay_stat_;
-    stat::StatisticsCollector<int32_t> processing_delay_stat_;
-
     void MainServingLoop();
     void HandshakeWithGateway();
 

@@ -30,11 +30,7 @@ FuncWorker::FuncWorker()
     : func_id_(-1), fprocess_id_(-1), client_id_(0), func_call_timeout_(kDefaultFuncCallTimeout),
       gateway_sock_fd_(-1), input_pipe_fd_(-1), output_pipe_fd_(-1),
       buffer_pool_for_pipes_("Pipes", __FAAS_MESSAGE_SIZE),
-      next_call_id_(0), current_func_call_id_(0),
-      gateway_message_delay_stat_(
-          stat::StatisticsCollector<int32_t>::StandardReportCallback("gateway_message_delay")),
-      processing_delay_stat_(
-          stat::StatisticsCollector<int32_t>::StandardReportCallback("processing_delay")) {}
+      next_call_id_(0), current_func_call_id_(0) {}
 
 FuncWorker::~FuncWorker() {
     close(gateway_sock_fd_);
@@ -79,7 +75,6 @@ void FuncWorker::MainServingLoop() {
         Message message;
         CHECK(io_utils::RecvMessage(input_pipe_fd_, &message, nullptr))
             << "Failed to receive message from gateway";
-        gateway_message_delay_stat_.AddSample(ComputeMessageDelay(message));
         if (IsDispatchFuncCallMessage(message)) {
             ExecuteFunc(func_worker, message);
         } else {
@@ -133,7 +128,6 @@ void FuncWorker::ExecuteFunc(void* worker_handle, const Message& invoke_func_mes
     int ret = func_call_fn_(worker_handle, input.data(), input.size());
     int32_t processing_time = gsl::narrow_cast<int32_t>(
         GetMonotonicMicroTimestamp() - start_timestamp);
-    processing_delay_stat_.AddSample(processing_time);
     ReclaimInvokeFuncResources();
     VLOG(1) << "Finish executing func_call " << FuncCallDebugString(func_call);
     Message response = (ret == 0) ? NewFuncCallCompleteMessage(func_call, processing_time)
@@ -202,10 +196,10 @@ bool FuncWorker::InvokeFunc(const char* func_name, const char* input_data, size_
     auto remove_output_fifo = gsl::finally([func_call] {
         ipc::FifoRemove(ipc::GetFuncCallOutputFifoName(func_call.full_call_id));
     });
-    int output_fifo = ipc::FifoOpenForRead(
+    int output_fifo = ipc::FifoOpenForReadWrite(
         ipc::GetFuncCallOutputFifoName(func_call.full_call_id), /* nonblocking= */ true);
     if (output_fifo == -1) {
-        LOG(ERROR) << "FifoOpenForRead failed";
+        LOG(ERROR) << "FifoOpenForReadWrite failed";
         return false;
     }
     auto close_output_fifo = gsl::finally([output_fifo] {

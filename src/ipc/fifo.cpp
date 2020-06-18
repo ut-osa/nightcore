@@ -54,6 +54,19 @@ int FifoOpenForWrite(std::string_view name, bool nonblocking) {
     return fd;
 }
 
+int FifoOpenForReadWrite(std::string_view name, bool nonblocking) {
+    std::string full_path = fs_utils::JoinPath(GetRootPathForFifo(), name);
+    int flags = O_RDWR | O_CLOEXEC;
+    if (nonblocking) {
+        flags |= O_NONBLOCK;
+    }
+    int fd = open(full_path.c_str(), flags);
+    if (fd == -1) {
+        PLOG(ERROR) << "open " << full_path << " failed";
+    }
+    return fd;
+}
+
 void FifoUnsetNonblocking(int fd) {
     int flags = fcntl(fd, F_GETFL, 0);
     PCHECK(flags != -1) << "fcntl F_GETFL failed";
