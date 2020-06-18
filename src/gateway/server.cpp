@@ -43,7 +43,7 @@ Server::Server()
       worker_manager_(new WorkerManager(this)),
       monitor_(absl::GetFlag(FLAGS_disable_monitor) ? nullptr : new Monitor(this)),
       max_running_external_requests_(absl::GetFlag(FLAGS_max_running_external_requests)),
-      next_call_id_(0),
+      next_call_id_(1),
       last_external_request_timestamp_(-1),
       inflight_external_requests_(0),
       running_external_requests_(0),
@@ -477,6 +477,8 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
     int32_t message_delay = ComputeMessageDelay(message);
     if (IsInvokeFuncMessage(message)) {
         FuncCall func_call = GetFuncCallFromMessage(message);
+        FuncCall parent_func_call;
+        parent_func_call.full_call_id = message.parent_call_id;
         Dispatcher* dispatcher = nullptr;
         {
             absl::MutexLock lk(&mu_);
@@ -492,12 +494,14 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
         if (dispatcher != nullptr) {
             if (message.payload_size < 0) {
                 success = dispatcher->OnNewFuncCall(
-                    func_call, /* input_size= */ gsl::narrow_cast<size_t>(-message.payload_size),
+                    func_call, parent_func_call,
+                    /* input_size= */ gsl::narrow_cast<size_t>(-message.payload_size),
                     std::span<const char>(), /* shm_input= */ true);
                 
             } else {
                 success = dispatcher->OnNewFuncCall(
-                    func_call, /* input_size= */ gsl::narrow_cast<size_t>(message.payload_size),
+                    func_call, parent_func_call,
+                    /* input_size= */ gsl::narrow_cast<size_t>(message.payload_size),
                     GetInlineDataFromMessage(message), /* shm_input= */ false);
             }
         }
@@ -627,11 +631,12 @@ bool Server::DispatchExternalFuncCall(std::unique_ptr<ExternalFuncCallContext> f
     bool success = false;
     if (input.size() <= MESSAGE_INLINE_DATA_SIZE) {
         success = dispatcher->OnNewFuncCall(
-            func_call, input.size(), /* inline_input= */ input, /* shm_input= */ false);
+            func_call, protocol::kInvalidFuncCall,
+            input.size(), /* inline_input= */ input, /* shm_input= */ false);
     } else {
         success = dispatcher->OnNewFuncCall(
-            func_call, input.size(), /* inline_input= */ std::span<const char>(),
-            /* shm_input= */ true);
+            func_call, protocol::kInvalidFuncCall,
+            input.size(), /* inline_input= */ std::span<const char>(), /* shm_input= */ true);
     }
     if (!success) {
         absl::MutexLock lk(&mu_);

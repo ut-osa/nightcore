@@ -22,6 +22,8 @@ union FuncCall {
 };
 static_assert(sizeof(FuncCall) == 8, "Unexpected FuncCall size");
 
+constexpr FuncCall kInvalidFuncCall = { .full_call_id = 0 };
+
 #define NEW_EMPTY_FUNC_CALL(var)      \
     FuncCall var;                     \
     memset(&var, 0, sizeof(FuncCall))

@@ -21,8 +21,9 @@ public:
     // All must be thread-safe
     bool OnFuncWorkerConnected(FuncWorker* func_worker);
     void OnFuncWorkerDisconnected(FuncWorker* func_worker);
-    bool OnNewFuncCall(const protocol::FuncCall& func_call, size_t input_size,
-                       std::span<const char> inline_input, bool shm_input);
+    bool OnNewFuncCall(const protocol::FuncCall& func_call,
+                       const protocol::FuncCall& parent_func_call,
+                       size_t input_size, std::span<const char> inline_input, bool shm_input);
     void OnFuncCallCompleted(const protocol::FuncCall& func_call,
                              int32_t processing_time, size_t output_size);
     void OnFuncCallFailed(const protocol::FuncCall& func_call);

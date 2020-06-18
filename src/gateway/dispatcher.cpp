@@ -1,8 +1,9 @@
 #include "gateway/dispatcher.h"
 
 #include "ipc/base.h"
-#include "ipc/fifo.h"
 #include "gateway/server.h"
+
+#include <absl/flags/flag.h>
 
 #define HLOG(l) LOG(l) << log_header_
 #define HVLOG(l) VLOG(l) << log_header_
@@ -70,8 +71,10 @@ void Dispatcher::OnFuncWorkerDisconnected(FuncWorker* func_worker) {
     workers_.erase(client_id);
 }
 
-bool Dispatcher::OnNewFuncCall(const protocol::FuncCall& func_call, size_t input_size,
-                               std::span<const char> inline_input, bool shm_input) {
+bool Dispatcher::OnNewFuncCall(const protocol::FuncCall& func_call,
+                               const protocol::FuncCall& parent_func_call,
+                               size_t input_size, std::span<const char> inline_input,
+                               bool shm_input) {
     VLOG(1) << "OnNewFuncCall " << FuncCallDebugString(func_call);
     DCHECK_EQ(func_id_, func_call.func_id);
     Message dispatch_func_call_message = NewDispatchFuncCallMessage(func_call);
