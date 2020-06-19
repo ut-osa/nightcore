@@ -226,7 +226,7 @@ private:
         if (idx >= size) {
             idx = size - 1;
         }
-        T value;
+        T value = 0;
         if (!ranking_bst_.GetKthElement(idx, &value)) {
             LOG(ERROR) << "Failed to get " << idx << "-th element from RankingBST";
         }

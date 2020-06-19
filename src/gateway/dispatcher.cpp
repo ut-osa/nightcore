@@ -8,7 +8,7 @@
 #define HLOG(l) LOG(l) << log_header_
 #define HVLOG(l) VLOG(l) << log_header_
 
-ABSL_FLAG(float, max_relative_queueing_delay, 0.5, "");
+ABSL_FLAG(double, max_relative_queueing_delay, 0.0, "");
 
 namespace faas {
 namespace gateway {
@@ -127,7 +127,7 @@ bool Dispatcher::DispatchPendingFuncCall(FuncWorker* func_worker) {
         return false;
     }
     double average_processing_time = server_->tracer()->GetAverageProcessingTime(func_id_);
-    float max_relative_queueing_delay = absl::GetFlag(FLAGS_max_relative_queueing_delay);
+    double max_relative_queueing_delay = absl::GetFlag(FLAGS_max_relative_queueing_delay);
     int64_t current_timestamp = GetMonotonicMicroTimestamp();
     while (!pending_func_calls_.empty()) {
         PendingFuncCall pending_func_call = pending_func_calls_.front();
@@ -138,13 +138,14 @@ bool Dispatcher::DispatchPendingFuncCall(FuncWorker* func_worker) {
             absl::ReaderMutexLock lk(&func_call_info->mu);
             queueing_delay = current_timestamp - func_call_info->recv_timestamp;
         }
-        if (queueing_delay <= max_relative_queueing_delay * average_processing_time) {
-            Message* dispatch_func_call_message = pending_func_call.dispatch_func_call_message;
+        Message* dispatch_func_call_message = pending_func_call.dispatch_func_call_message;
+        FuncCall func_call = GetFuncCallFromMessage(*dispatch_func_call_message);
+        if (func_call.client_id == 0
+                || max_relative_queueing_delay == 0.0
+                || queueing_delay <= max_relative_queueing_delay * average_processing_time) {
             DispatchFuncCall(func_worker, dispatch_func_call_message);
             return true;
         } else {
-            Message* dispatch_func_call_message = pending_func_call.dispatch_func_call_message;
-            FuncCall func_call = GetFuncCallFromMessage(*dispatch_func_call_message);
             message_pool_.Return(dispatch_func_call_message);
             server_->DiscardFuncCall(func_call);
             server_->tracer()->DiscardFuncCallInfo(func_call);

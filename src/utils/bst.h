@@ -148,7 +148,7 @@ T RankingBST<T>::GetKthElementInternal(Node* current_node, size_t kth) {
     } else if (kth == left_size) {
         return current_node->value;
     } else {
-        return GetKthElementInternal(current_node->right_child, kth);
+        return GetKthElementInternal(current_node->right_child, kth - (left_size + 1));
     }
 }
 

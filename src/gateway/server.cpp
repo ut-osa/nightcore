@@ -740,17 +740,21 @@ void Server::ProcessDiscardedFuncCallIfNecessary() {
         }
     }
 
-    for (auto& external_func_call : discarded_external_func_calls) {
-        external_func_call->FinishWithDispatchFailure();
+    if (!discarded_external_func_calls.empty()) {
+        for (auto& external_func_call : discarded_external_func_calls) {
+            external_func_call->FinishWithDispatchFailure();
+        }
+        discarded_external_func_calls.clear();
     }
-    discarded_external_func_calls.clear();
 
-    char pipe_buf[PIPE_BUF];
-    Message dummy_message;
-    for (const FuncCall& func_call : discarded_internal_func_calls) {
-        worker_lib::FuncCallFinished(
-            func_call, /* success= */ false, /* output= */ std::span<const char>(),
-            /* processing_time= */ 0, pipe_buf, &dummy_message);
+    if (!discarded_internal_func_calls.empty()) {
+        char pipe_buf[PIPE_BUF];
+        Message dummy_message;
+        for (const FuncCall& func_call : discarded_internal_func_calls) {
+            worker_lib::FuncCallFinished(
+                func_call, /* success= */ false, /* output= */ std::span<const char>(),
+                /* processing_time= */ 0, pipe_buf, &dummy_message);
+        }
     }
 
     for (ExternalFuncCallContext* func_call_for_dispatch : func_calls_for_dispatch) {
