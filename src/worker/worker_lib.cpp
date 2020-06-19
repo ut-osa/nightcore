@@ -190,6 +190,7 @@ bool GetFuncCallOutput(const FuncCall& func_call,
             LOG(ERROR) << "ShmOpen failed";
             return false;
         }
+        output_region->EnableRemoveOnDestruction();
         if (output_region->size() != output_size) {
             LOG(ERROR) << "Output size mismatch";
             return false;

@@ -101,6 +101,7 @@ public:
     void OnRecvMessage(MessageConnection* connection, const protocol::Message& message);
     void OnNewGrpcCall(std::shared_ptr<GrpcCallContext> call_context);
     Dispatcher* GetOrCreateDispatcher(uint16_t func_id);
+    void DiscardFuncCall(const protocol::FuncCall& func_call);
 
 private:
     class ExternalFuncCallContext;
@@ -143,7 +144,7 @@ private:
     std::unique_ptr<WorkerManager> worker_manager_;
     std::unique_ptr<Monitor> monitor_;
     std::unique_ptr<Tracer> tracer_;
-    int max_running_external_requests_;
+    size_t max_running_external_requests_;
 
     absl::Mutex mu_;
 
@@ -156,10 +157,11 @@ private:
         dispatchers_ ABSL_GUARDED_BY(mu_);
     std::queue<std::unique_ptr<ExternalFuncCallContext>>
         pending_external_func_calls_ ABSL_GUARDED_BY(mu_);
+    std::vector<protocol::FuncCall> discarded_func_calls_ ABSL_GUARDED_BY(mu_);
+
+    std::atomic<int> inflight_external_requests_;
 
     int64_t last_external_request_timestamp_ ABSL_GUARDED_BY(mu_);
-    int inflight_external_requests_ ABSL_GUARDED_BY(mu_);
-    int running_external_requests_ ABSL_GUARDED_BY(mu_);
     stat::Counter incoming_external_requests_stat_ ABSL_GUARDED_BY(mu_);
     stat::StatisticsCollector<float> external_requests_instant_rps_stat_ ABSL_GUARDED_BY(mu_);
     stat::StatisticsCollector<uint16_t> inflight_external_requests_stat_ ABSL_GUARDED_BY(mu_);
@@ -168,6 +170,7 @@ private:
     stat::StatisticsCollector<int32_t> message_delay_stat_ ABSL_GUARDED_BY(mu_);
     stat::Counter input_use_shm_stat_ ABSL_GUARDED_BY(mu_);
     stat::Counter output_use_shm_stat_ ABSL_GUARDED_BY(mu_);
+    stat::Counter discarded_func_call_stat_ ABSL_GUARDED_BY(mu_);
 
     void InitAndStartIOWorker(IOWorker* io_worker);
     std::unique_ptr<uv_pipe_t> CreatePipeToWorker(int* pipe_fd_for_worker);
@@ -185,7 +188,8 @@ private:
     IOWorker* PickIpcWorker();
 
     Dispatcher* GetOrCreateDispatcherLocked(uint16_t func_id) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
-    bool DispatchExternalFuncCall(std::unique_ptr<ExternalFuncCallContext> func_call_context);
+    bool DispatchExternalFuncCall(ExternalFuncCallContext* func_call_context);
+    void ProcessDiscardedFuncCallIfNecessary();
 
     DECLARE_UV_ASYNC_CB_FOR_CLASS(Stop);
     DECLARE_UV_CONNECTION_CB_FOR_CLASS(HttpConnection);

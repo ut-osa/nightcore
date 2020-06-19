@@ -8,6 +8,8 @@
 #define HLOG(l) LOG(l) << log_header_
 #define HVLOG(l) VLOG(l) << log_header_
 
+ABSL_FLAG(float, max_relative_queueing_delay, 0.5, "");
+
 namespace faas {
 namespace gateway {
 
@@ -50,14 +52,14 @@ void Dispatcher::OnFuncWorkerDisconnected(FuncWorker* func_worker) {
     workers_.erase(client_id);
 }
 
-bool Dispatcher::OnNewFuncCall(const protocol::FuncCall& func_call,
-                               const protocol::FuncCall& parent_func_call,
+bool Dispatcher::OnNewFuncCall(const FuncCall& func_call, const FuncCall& parent_func_call,
                                size_t input_size, std::span<const char> inline_input,
                                bool shm_input) {
     VLOG(1) << "OnNewFuncCall " << FuncCallDebugString(func_call);
     DCHECK_EQ(func_id_, func_call.func_id);
     absl::MutexLock lk(&mu_);
     Message* dispatch_func_call_message = message_pool_.Get();
+    *dispatch_func_call_message = NewDispatchFuncCallMessage(func_call);
     if (shm_input) {
         dispatch_func_call_message->payload_size = -gsl::narrow_cast<int32_t>(input_size);
     } else {
@@ -124,13 +126,31 @@ bool Dispatcher::DispatchPendingFuncCall(FuncWorker* func_worker) {
     if (pending_func_calls_.empty()) {
         return false;
     }
-    PendingFuncCall pending_func_call = pending_func_calls_.front();
-    pending_func_calls_.pop();
-    Message* dispatch_func_call_message = pending_func_call.dispatch_func_call_message;
-    FuncCall func_call = GetFuncCallFromMessage(*dispatch_func_call_message);
-    HVLOG(1) << "Found pending func_call " << FuncCallDebugString(func_call);
-    DispatchFuncCall(func_worker, dispatch_func_call_message);
-    return true;
+    double average_processing_time = server_->tracer()->GetAverageProcessingTime(func_id_);
+    float max_relative_queueing_delay = absl::GetFlag(FLAGS_max_relative_queueing_delay);
+    int64_t current_timestamp = GetMonotonicMicroTimestamp();
+    while (!pending_func_calls_.empty()) {
+        PendingFuncCall pending_func_call = pending_func_calls_.front();
+        pending_func_calls_.pop();
+        Tracer::FuncCallInfo* func_call_info = pending_func_call.func_call_info;
+        int64_t queueing_delay;
+        {
+            absl::ReaderMutexLock lk(&func_call_info->mu);
+            queueing_delay = current_timestamp - func_call_info->recv_timestamp;
+        }
+        if (queueing_delay <= max_relative_queueing_delay * average_processing_time) {
+            Message* dispatch_func_call_message = pending_func_call.dispatch_func_call_message;
+            DispatchFuncCall(func_worker, dispatch_func_call_message);
+            return true;
+        } else {
+            Message* dispatch_func_call_message = pending_func_call.dispatch_func_call_message;
+            FuncCall func_call = GetFuncCallFromMessage(*dispatch_func_call_message);
+            message_pool_.Return(dispatch_func_call_message);
+            server_->DiscardFuncCall(func_call);
+            server_->tracer()->DiscardFuncCallInfo(func_call);
+        }
+    }
+    return false;
 }
 
 void Dispatcher::DispatchFuncCall(FuncWorker* func_worker, Message* dispatch_func_call_message) {

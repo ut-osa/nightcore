@@ -6,10 +6,11 @@
 #include "utils/fs.h"
 #include "utils/io.h"
 #include "utils/docker.h"
+#include "worker/worker_lib.h"
 
 #include <absl/flags/flag.h>
 
-ABSL_FLAG(int, max_running_external_requests, 16, "");
+ABSL_FLAG(size_t, max_running_external_requests, 16, "");
 ABSL_FLAG(bool, disable_monitor, false, "");
 
 #define HLOG(l) LOG(l) << "Server: "
@@ -45,9 +46,8 @@ Server::Server()
       tracer_(new Tracer(this)),
       max_running_external_requests_(absl::GetFlag(FLAGS_max_running_external_requests)),
       next_call_id_(1),
-      last_external_request_timestamp_(-1),
       inflight_external_requests_(0),
-      running_external_requests_(0),
+      last_external_request_timestamp_(-1),
       incoming_external_requests_stat_(
           stat::Counter::StandardReportCallback("incoming_external_requests")),
       external_requests_instant_rps_stat_(
@@ -59,7 +59,8 @@ Server::Server()
       message_delay_stat_(
           stat::StatisticsCollector<int32_t>::StandardReportCallback("message_delay")),
       input_use_shm_stat_(stat::Counter::StandardReportCallback("input_use_shm")),
-      output_use_shm_stat_(stat::Counter::StandardReportCallback("output_use_shm")) {
+      output_use_shm_stat_(stat::Counter::StandardReportCallback("output_use_shm")),
+      discarded_func_call_stat_(stat::Counter::StandardReportCallback("discarded_func_call")) {
     UV_DCHECK_OK(uv_loop_init(&uv_loop_));
     uv_loop_.data = &event_loop_thread_;
     UV_DCHECK_OK(uv_tcp_init(&uv_loop_, &uv_http_handle_));
@@ -352,6 +353,7 @@ bool Server::OnNewHandshake(MessageConnection* connection,
         success = worker_manager_->OnLauncherConnected(connection);
     } else {
         success = worker_manager_->OnFuncWorkerConnected(connection);
+        ProcessDiscardedFuncCallIfNecessary();
     }
     if (!success) {
         return false;
@@ -363,16 +365,26 @@ bool Server::OnNewHandshake(MessageConnection* connection,
 
 class Server::ExternalFuncCallContext {
 public:
-    ExternalFuncCallContext(FuncCall call, std::shared_ptr<HttpAsyncRequestContext> http_context)
-        : call_(call), http_context_(http_context), grpc_context_(nullptr),
-          input_region_(nullptr), output_region_(nullptr) {}
+    ExternalFuncCallContext(Server* server, FuncCall call,
+                            std::shared_ptr<HttpAsyncRequestContext> http_context)
+        : server_(server), call_(call), http_context_(http_context), grpc_context_(nullptr),
+          input_region_(nullptr), output_region_(nullptr) {
+        server_->inflight_external_requests_.fetch_add(1);
+    }
     
-    ExternalFuncCallContext(FuncCall call, std::shared_ptr<GrpcCallContext> grpc_context)
-        : call_(call), http_context_(nullptr), grpc_context_(grpc_context),
-          input_region_(nullptr), output_region_(nullptr) {}
+    ExternalFuncCallContext(Server* server, FuncCall call,
+                            std::shared_ptr<GrpcCallContext> grpc_context)
+        : server_(server), call_(call), http_context_(nullptr), grpc_context_(grpc_context),
+          input_region_(nullptr), output_region_(nullptr) {
+        server_->inflight_external_requests_.fetch_add(1);
+    }
+
+    ~ExternalFuncCallContext() {
+        server_->inflight_external_requests_.fetch_add(-1);
+    }
 
     FuncCall call() const { return call_; }
-    
+
     std::span<const char> GetInput() const {
         if (http_context_ != nullptr) {
             return http_context_->body();
@@ -468,6 +480,7 @@ public:
     }
 
 private:
+    Server* server_;
     FuncCall call_;
     std::shared_ptr<HttpAsyncRequestContext> http_context_;
     std::shared_ptr<GrpcCallContext> grpc_context_;
@@ -515,7 +528,7 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
         FuncCall func_call = GetFuncCallFromMessage(message);
         Dispatcher* dispatcher = nullptr;
         std::unique_ptr<ExternalFuncCallContext> func_call_context;
-        std::unique_ptr<ExternalFuncCallContext> pending_external_func_call;
+        ExternalFuncCallContext* func_call_for_dispatch = nullptr;
         {
             absl::MutexLock lk(&mu_);
             if (message_delay >= 0) {
@@ -532,20 +545,13 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
             if (func_call.client_id == 0 && running_external_func_calls_.contains(full_call_id)) {
                 func_call_context = std::move(running_external_func_calls_[full_call_id]);
                 running_external_func_calls_.erase(full_call_id);
-                inflight_external_requests_--;
-                if (inflight_external_requests_ < 0) {
-                    inflight_external_requests_ = 0;
-                    HLOG(ERROR) << "Negative inflight_external_requests_";
-                }
-                running_external_requests_--;
-                if (running_external_requests_ < 0) {
-                    running_external_requests_ = 0;
-                    HLOG(ERROR) << "Negative running_external_requests_";
-                }
-                if (!pending_external_func_calls_.empty()) {
-                    pending_external_func_call = std::move(pending_external_func_calls_.front());
+                if (!pending_external_func_calls_.empty()
+                        && running_external_func_calls_.size() < max_running_external_requests_) {
+                    auto func_call_context = std::move(pending_external_func_calls_.front());
                     pending_external_func_calls_.pop();
-                    running_external_requests_++;
+                    uint64_t full_call_id = func_call_context->call().full_call_id;
+                    func_call_for_dispatch = func_call_context.get();
+                    running_external_func_calls_[full_call_id] = std::move(func_call_context);
                 }
             }
             dispatcher = GetOrCreateDispatcherLocked(func_call.func_id);
@@ -576,15 +582,17 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
                 HLOG(ERROR) << "Cannot find external call " << FuncCallDebugString(func_call);
             }
         }
-        if (pending_external_func_call != nullptr) {
-            if (!DispatchExternalFuncCall(std::move(pending_external_func_call))) {
-                HLOG(ERROR) << fmt::format("Dispatch func_call ({}) failed",
-                                           FuncCallDebugString(pending_external_func_call->call()));
-            }
+        if (func_call_for_dispatch != nullptr && !DispatchExternalFuncCall(func_call_for_dispatch)) {
+            FuncCall func_call = func_call_for_dispatch->call();
+            HLOG(ERROR) << fmt::format("Dispatch func_call ({}) failed",
+                                       FuncCallDebugString(func_call));
+            absl::MutexLock lk(&mu_);
+            running_external_func_calls_.erase(func_call.full_call_id);
         }
     } else {
         LOG(ERROR) << "Unknown message type!";
     }
+    ProcessDiscardedFuncCallIfNecessary();
 }
 
 void Server::OnNewGrpcCall(std::shared_ptr<GrpcCallContext> call_context) {
@@ -599,10 +607,9 @@ void Server::OnNewGrpcCall(std::shared_ptr<GrpcCallContext> call_context) {
     }
     NewExternalFuncCall(std::unique_ptr<ExternalFuncCallContext>(
         new ExternalFuncCallContext(
-                NewFuncCallWithMethod(func_entry->func_id,
-                                      func_entry->grpc_method_ids.at(method_name),
-                                      /* client_id= */ 0,
-                                      next_call_id_.fetch_add(1)),
+                this, NewFuncCallWithMethod(func_entry->func_id,
+                                            func_entry->grpc_method_ids.at(method_name),
+                                            /* client_id= */ 0, next_call_id_.fetch_add(1)),
                 std::move(call_context))));
 }
 
@@ -610,11 +617,11 @@ void Server::OnExternalFuncCall(uint16_t func_id,
                                 std::shared_ptr<HttpAsyncRequestContext> http_context) {
     NewExternalFuncCall(std::unique_ptr<ExternalFuncCallContext>(
         new ExternalFuncCallContext(
-                NewFuncCall(func_id, /* client_id= */ 0, next_call_id_.fetch_add(1)),
+                this, NewFuncCall(func_id, /* client_id= */ 0, next_call_id_.fetch_add(1)),
                 std::move(http_context))));
 }
 
-bool Server::DispatchExternalFuncCall(std::unique_ptr<ExternalFuncCallContext> func_call_context) {
+bool Server::DispatchExternalFuncCall(ExternalFuncCallContext* func_call_context) {
     FuncCall func_call = func_call_context->call();
     std::span<const char> input = func_call_context->GetInput();
     if (input.size() > MESSAGE_INLINE_DATA_SIZE) {
@@ -629,11 +636,10 @@ bool Server::DispatchExternalFuncCall(std::unique_ptr<ExternalFuncCallContext> f
             input_use_shm_stat_.Tick();
         }
         dispatcher = GetOrCreateDispatcherLocked(func_call.func_id);
-        if (dispatcher == nullptr) {
-            func_call_context->FinishWithDispatchFailure();
-            return false;
-        }
-        running_external_func_calls_[func_call.full_call_id] = std::move(func_call_context);
+    }
+    if (dispatcher == nullptr) {
+        func_call_context->FinishWithDispatchFailure();
+        return false;
     }
     bool success = false;
     if (input.size() <= MESSAGE_INLINE_DATA_SIZE) {
@@ -646,15 +652,13 @@ bool Server::DispatchExternalFuncCall(std::unique_ptr<ExternalFuncCallContext> f
             input.size(), /* inline_input= */ std::span<const char>(), /* shm_input= */ true);
     }
     if (!success) {
-        absl::MutexLock lk(&mu_);
-        auto func_call_context = running_external_func_calls_[func_call.full_call_id].get();
         func_call_context->FinishWithDispatchFailure();
-        running_external_func_calls_.erase(func_call.full_call_id);
     }
     return success;
 }
 
 void Server::NewExternalFuncCall(std::unique_ptr<ExternalFuncCallContext> func_call_context) {
+    ExternalFuncCallContext* func_call_for_dispatch = nullptr;
     {
         absl::MutexLock lk(&mu_);
         incoming_external_requests_stat_.Tick();
@@ -664,20 +668,23 @@ void Server::NewExternalFuncCall(std::unique_ptr<ExternalFuncCallContext> func_c
                 1e6 / (current_timestamp - last_external_request_timestamp_)));
         }
         last_external_request_timestamp_ = current_timestamp;
-        inflight_external_requests_++;
         inflight_external_requests_stat_.AddSample(
-            gsl::narrow_cast<uint16_t>(inflight_external_requests_));
-        if (running_external_requests_ >= max_running_external_requests_) {
+            gsl::narrow_cast<uint16_t>(inflight_external_requests_.load()));
+        if (running_external_func_calls_.size() < max_running_external_requests_) {
+            func_call_for_dispatch = func_call_context.get();
+            uint64_t full_call_id = func_call_context->call().full_call_id;
+            running_external_func_calls_[full_call_id] = std::move(func_call_context);
+        } else {
             pending_external_func_calls_.push(std::move(func_call_context));
             pending_external_requests_stat_.AddSample(
                 gsl::narrow_cast<uint16_t>(pending_external_func_calls_.size()));
-            return;
         }
-        running_external_requests_++;
     }
-    if (!DispatchExternalFuncCall(std::move(func_call_context))) {
-        HLOG(ERROR) << fmt::format("Dispatch func_call ({}) failed",
-                                   FuncCallDebugString(func_call_context->call()));
+    if (func_call_for_dispatch != nullptr && !DispatchExternalFuncCall(func_call_for_dispatch)) {
+        FuncCall func_call = func_call_for_dispatch->call();
+        HLOG(ERROR) << fmt::format("Dispatch func_call ({}) failed", FuncCallDebugString(func_call));
+        absl::MutexLock lk(&mu_);
+        running_external_func_calls_.erase(func_call.full_call_id);
     }
 }
 
@@ -696,6 +703,64 @@ Dispatcher* Server::GetOrCreateDispatcherLocked(uint16_t func_id) {
         return dispatchers_[func_id].get();
     } else {
         return nullptr;
+    }
+}
+
+void Server::DiscardFuncCall(const protocol::FuncCall& func_call) {
+    absl::MutexLock lk(&mu_);
+    discarded_func_calls_.push_back(func_call);
+    discarded_func_call_stat_.Tick();
+}
+
+void Server::ProcessDiscardedFuncCallIfNecessary() {
+    std::vector<std::unique_ptr<ExternalFuncCallContext>> discarded_external_func_calls;
+    std::vector<FuncCall> discarded_internal_func_calls;
+    std::vector<ExternalFuncCallContext*> func_calls_for_dispatch;
+    {
+        absl::MutexLock lk(&mu_);
+        for (const FuncCall& func_call : discarded_func_calls_) {
+            if (func_call.client_id == 0) {
+                if (running_external_func_calls_.contains(func_call.full_call_id)) {
+                    discarded_external_func_calls.push_back(
+                        std::move(running_external_func_calls_[func_call.full_call_id]));
+                    running_external_func_calls_.erase(func_call.full_call_id);
+                }
+            } else {
+                discarded_internal_func_calls.push_back(func_call);
+            }
+        }
+        discarded_func_calls_.clear();
+        while (!pending_external_func_calls_.empty()
+                   && running_external_func_calls_.size() < max_running_external_requests_) {
+            auto func_call_context = std::move(pending_external_func_calls_.front());
+            pending_external_func_calls_.pop();
+            uint64_t full_call_id = func_call_context->call().full_call_id;
+            func_calls_for_dispatch.push_back(func_call_context.get());
+            running_external_func_calls_[full_call_id] = std::move(func_call_context);
+        }
+    }
+
+    for (auto& external_func_call : discarded_external_func_calls) {
+        external_func_call->FinishWithDispatchFailure();
+    }
+    discarded_external_func_calls.clear();
+
+    char pipe_buf[PIPE_BUF];
+    Message dummy_message;
+    for (const FuncCall& func_call : discarded_internal_func_calls) {
+        worker_lib::FuncCallFinished(
+            func_call, /* success= */ false, /* output= */ std::span<const char>(),
+            /* processing_time= */ 0, pipe_buf, &dummy_message);
+    }
+
+    for (ExternalFuncCallContext* func_call_for_dispatch : func_calls_for_dispatch) {
+        if (!DispatchExternalFuncCall(func_call_for_dispatch)) {
+            FuncCall func_call = func_call_for_dispatch->call();
+            HLOG(ERROR) << fmt::format("Dispatch func_call ({}) failed",
+                                       FuncCallDebugString(func_call));
+            absl::MutexLock lk(&mu_);
+            running_external_func_calls_.erase(func_call.full_call_id);
+        }
     }
 }
 
