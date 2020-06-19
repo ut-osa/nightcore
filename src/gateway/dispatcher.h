@@ -3,7 +3,8 @@
 #include "base/common.h"
 #include "common/stat.h"
 #include "common/protocol.h"
-#include "utils/exp_moving_avg.h"
+#include "utils/object_pool.h"
+#include "gateway/tracer.h"
 
 namespace faas {
 namespace gateway {
@@ -39,7 +40,14 @@ private:
     absl::flat_hash_map</* client_id */ uint16_t, protocol::FuncCall>
         running_workers_ ABSL_GUARDED_BY(mu_);
     std::vector</* client_id */ uint16_t> idle_workers_ ABSL_GUARDED_BY(mu_);
-    std::queue<protocol::Message> pending_func_calls_ ABSL_GUARDED_BY(mu_);
+    utils::SimpleObjectPool<protocol::Message> message_pool_ ABSL_GUARDED_BY(mu_);
+
+    struct PendingFuncCall {
+        protocol::Message*    dispatch_func_call_message;
+        Tracer::FuncCallInfo* func_call_info;
+    };
+
+    std::queue<PendingFuncCall> pending_func_calls_ ABSL_GUARDED_BY(mu_);
     absl::flat_hash_map</* full_call_id */ uint64_t, FuncWorker*>
         assigned_workers_ ABSL_GUARDED_BY(mu_);
 

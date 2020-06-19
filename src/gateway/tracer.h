@@ -19,99 +19,76 @@ public:
 
     void Init();
 
-    void OnNewFuncCall(const protocol::FuncCall& func_call,
-                       const protocol::FuncCall& parent_func_call,
-                       size_t input_size);
-    void OnFuncCallDispatched(const protocol::FuncCall& func_call, FuncWorker* func_worker);
-    void OnFuncCallCompleted(const protocol::FuncCall& func_call,
-                             int32_t processing_time, size_t output_size);
-    void OnFuncCallFailed(const protocol::FuncCall& func_call);
+    enum class FuncCallState {
+        kInvalid,
+        kReceived,
+        kDispatched,
+        kCompleted,
+        kFailed
+    };
+
+    struct FuncCallInfo {
+        absl::Mutex        mu;
+        FuncCallState      state              ABSL_GUARDED_BY(mu);
+        protocol::FuncCall func_call          ABSL_GUARDED_BY(mu);
+        protocol::FuncCall parent_func_call   ABSL_GUARDED_BY(mu);
+        size_t             input_size         ABSL_GUARDED_BY(mu);
+        size_t             output_size        ABSL_GUARDED_BY(mu);
+        int64_t            recv_timestamp     ABSL_GUARDED_BY(mu);
+        int64_t            dispatch_timestamp ABSL_GUARDED_BY(mu);
+        int64_t            finish_timestamp   ABSL_GUARDED_BY(mu);
+        FuncWorker*        assigned_worker    ABSL_GUARDED_BY(mu);
+        int32_t            processing_time    ABSL_GUARDED_BY(mu);
+    };
+
+    FuncCallInfo* OnNewFuncCall(const protocol::FuncCall& func_call,
+                                const protocol::FuncCall& parent_func_call,
+                                size_t input_size);
+    FuncCallInfo* OnFuncCallDispatched(const protocol::FuncCall& func_call,
+                                       FuncWorker* func_worker);
+    FuncCallInfo* OnFuncCallCompleted(const protocol::FuncCall& func_call,
+                                      int32_t processing_time, size_t output_size);
+    FuncCallInfo* OnFuncCallFailed(const protocol::FuncCall& func_call);
+
+    void DiscardFuncCallInfo(const protocol::FuncCall& func_call);
+
+    double GetAverageInstantRps(uint16_t func_id);
+    double GetAverageRunningDelay(uint16_t func_id);
+    double GetAverageProcessingTime(uint16_t func_id);
 
 private:
     Server* server_;
     absl::Mutex mu_;
 
-    enum FuncCallState { kInvalid, kReceived, kDispatched, kCompleted, kFailed };
-
-    struct FuncCallInfo {
-        FuncCallState      state;
-        protocol::FuncCall func_call;
-        protocol::FuncCall parent_func_call;
-        size_t             input_size;
-        size_t             output_size;
-        int64_t            recv_timestamp;
-        int64_t            dispatch_timestamp;
-        int64_t            finish_timestamp;
-        FuncWorker*        assigned_worker;
-        int32_t            processing_time;
-
-        // Used by FuncCallInfoGuard
-        std::atomic<int> in_use;
-
-        void reset() {
-            state              = kInvalid;
-            func_call          = protocol::kInvalidFuncCall;
-            parent_func_call   = protocol::kInvalidFuncCall;
-            input_size         = 0;
-            output_size        = 0;
-            recv_timestamp     = 0;
-            dispatch_timestamp = 0;
-            finish_timestamp   = 0;
-            assigned_worker    = nullptr;
-            processing_time    = 0;
-            in_use.store(0);
-        }
-    };
     utils::SimpleObjectPool<FuncCallInfo> func_call_info_pool_ ABSL_GUARDED_BY(mu_);
     absl::flat_hash_map</* full_call_id */ uint64_t, FuncCallInfo*>
         func_call_infos_ ABSL_GUARDED_BY(mu_);
 
     stat::StatisticsCollector<int32_t> dispatch_overhead_stat_ ABSL_GUARDED_BY(mu_);
 
-    struct PerFuncState {
-        uint16_t func_id;
-        int      inflight_requests;
-        int64_t  last_request_timestamp;
+    struct PerFuncStatistics {
+        absl::Mutex mu;
+        uint16_t    func_id;
 
-        // per function statistics
-        stat::Counter                       incoming_requests_stat;
-        stat::Counter                       failed_requests_stat;
-        stat::StatisticsCollector<float>    instant_rps_stat;
-        stat::StatisticsCollector<uint32_t> input_size_stat;
-        stat::StatisticsCollector<uint32_t> output_size_stat;
-        stat::StatisticsCollector<int32_t>  queueing_delay_stat;
-        stat::StatisticsCollector<int32_t>  running_delay_stat;
-        stat::StatisticsCollector<uint16_t> inflight_requests_stat;
+        int      inflight_requests      ABSL_GUARDED_BY(mu);
+        int64_t  last_request_timestamp ABSL_GUARDED_BY(mu);
 
-        utils::ExpMovingAvg rps_ema;
-        utils::ExpMovingAvg running_delay_ema;
-        utils::ExpMovingAvg processing_time_ema;
+        stat::Counter                       incoming_requests_stat ABSL_GUARDED_BY(mu);
+        stat::Counter                       failed_requests_stat   ABSL_GUARDED_BY(mu);
+        stat::StatisticsCollector<float>    instant_rps_stat       ABSL_GUARDED_BY(mu);
+        stat::StatisticsCollector<uint32_t> input_size_stat        ABSL_GUARDED_BY(mu);
+        stat::StatisticsCollector<uint32_t> output_size_stat       ABSL_GUARDED_BY(mu);
+        stat::StatisticsCollector<int32_t>  queueing_delay_stat    ABSL_GUARDED_BY(mu);
+        stat::StatisticsCollector<int32_t>  running_delay_stat     ABSL_GUARDED_BY(mu);
+        stat::StatisticsCollector<uint16_t> inflight_requests_stat ABSL_GUARDED_BY(mu);
 
-        // Used by PerFuncStateGuard
-        std::atomic<int> in_use;
+        utils::ExpMovingAvg instant_rps_ema     ABSL_GUARDED_BY(mu);
+        utils::ExpMovingAvg running_delay_ema   ABSL_GUARDED_BY(mu);
+        utils::ExpMovingAvg processing_time_ema ABSL_GUARDED_BY(mu);
 
-        explicit PerFuncState(uint16_t func_id);
+        explicit PerFuncStatistics(uint16_t func_id);
     };
-
-    PerFuncState* per_func_states_[protocol::kMaxFuncId];
-
-    class FuncCallInfoGuard {
-        explicit FuncCallInfoGuard(FuncCallInfo* func_call_info);
-        ~FuncCallInfoGuard();
-    private:
-        FuncCallInfo* func_call_info_;
-        friend class Tracer;
-        DISALLOW_COPY_AND_ASSIGN(FuncCallInfoGuard);
-    };
-
-    class PerFuncStateGuard {
-        explicit PerFuncStateGuard(PerFuncState* per_func_state);
-        ~PerFuncStateGuard();
-    private:
-        PerFuncState* per_func_state_;
-        friend class Tracer;
-        DISALLOW_COPY_AND_ASSIGN(PerFuncStateGuard);
-    };
+    PerFuncStatistics* per_func_stats_[protocol::kMaxFuncId];
 
     DISALLOW_COPY_AND_ASSIGN(Tracer);
 };

@@ -17,14 +17,14 @@ Tracer::Tracer(Server* server)
       dispatch_overhead_stat_(
           stat::StatisticsCollector<int32_t>::StandardReportCallback("dispatch_overhead")) {
     for (int i = 0; i < protocol::kMaxFuncId; i++) {
-        per_func_states_[i] = nullptr;
+        per_func_stats_[i] = nullptr;
     }
 }
 
 Tracer::~Tracer() {
     for (int i = 0; i < protocol::kMaxFuncId; i++) {
-        if (per_func_states_[i] != nullptr) {
-            delete per_func_states_[i];
+        if (per_func_stats_[i] != nullptr) {
+            delete per_func_stats_[i];
         }
     }
 }
@@ -32,13 +32,13 @@ Tracer::~Tracer() {
 void Tracer::Init() {
     for (int i = 0; i < protocol::kMaxFuncId; i++) {
         if (server_->func_config()->find_by_func_id(i) != nullptr) {
-            per_func_states_[i] = new PerFuncState(i);
+            per_func_stats_[i] = new PerFuncStatistics(i);
         }
     }
 }
 
-void Tracer::OnNewFuncCall(const FuncCall& func_call, const FuncCall& parent_func_call,
-                           size_t input_size) {
+Tracer::FuncCallInfo* Tracer::OnNewFuncCall(const FuncCall& func_call,
+                                            const FuncCall& parent_func_call, size_t input_size) {
     int64_t current_timestamp = GetMonotonicMicroTimestamp();
     FuncCallInfo* info;
 
@@ -46,43 +46,51 @@ void Tracer::OnNewFuncCall(const FuncCall& func_call, const FuncCall& parent_fun
         absl::MutexLock lk(&mu_);
         if (func_call_infos_.contains(func_call.full_call_id)) {
             HLOG(WARNING) << "FuncCall already exists: " << FuncCallDebugString(func_call);
-            return;
+            return nullptr;
         }
         info = func_call_info_pool_.Get();
-        info->reset();
         func_call_infos_[func_call.full_call_id] = info;
     }
 
     {
-        FuncCallInfoGuard guard1(info);
-        info->state = kReceived;
+        absl::MutexLock lk(&info->mu);
+        info->state = FuncCallState::kReceived;
         info->func_call = func_call;
         info->parent_func_call = parent_func_call;
         info->input_size = input_size;
+        info->output_size = 0;
         info->recv_timestamp = current_timestamp;
-
-        uint16_t func_id = func_call.func_id;
-        DCHECK_LT(func_id, protocol::kMaxFuncId);
-        DCHECK(per_func_states_[func_id] != nullptr);
-        PerFuncState* per_func_state = per_func_states_[func_id];
-        PerFuncStateGuard guard2(per_func_state);
-
-        if (per_func_state->last_request_timestamp != -1) {
-            double instant_rps = gsl::narrow_cast<double>(
-                1e6 / (current_timestamp - per_func_state->last_request_timestamp));
-            per_func_state->instant_rps_stat.AddSample(instant_rps);
-            per_func_state->rps_ema.AddSample(instant_rps);
-        }
-        per_func_state->last_request_timestamp = current_timestamp;
-        per_func_state->inflight_requests++;
-        per_func_state->inflight_requests_stat.AddSample(
-            gsl::narrow_cast<uint16_t>(per_func_state->inflight_requests));
-        per_func_state->incoming_requests_stat.Tick();
-        per_func_state->input_size_stat.AddSample(gsl::narrow_cast<uint32_t>(input_size));
+        info->dispatch_timestamp = 0;
+        info->finish_timestamp = 0;
+        info->assigned_worker = nullptr;
+        info->processing_time = 0;
     }
+
+    uint16_t func_id = func_call.func_id;
+    DCHECK_LT(func_id, protocol::kMaxFuncId);
+    DCHECK(per_func_stats_[func_id] != nullptr);
+    PerFuncStatistics* per_func_stat = per_func_stats_[func_id];
+    {
+        absl::MutexLock lk(&per_func_stat->mu);
+        if (per_func_stat->last_request_timestamp != -1) {
+            double instant_rps = gsl::narrow_cast<double>(
+                1e6 / (current_timestamp - per_func_stat->last_request_timestamp));
+            per_func_stat->instant_rps_stat.AddSample(instant_rps);
+            per_func_stat->instant_rps_ema.AddSample(instant_rps);
+        }
+        per_func_stat->last_request_timestamp = current_timestamp;
+        per_func_stat->inflight_requests++;
+        per_func_stat->inflight_requests_stat.AddSample(
+            gsl::narrow_cast<uint16_t>(per_func_stat->inflight_requests));
+        per_func_stat->incoming_requests_stat.Tick();
+        per_func_stat->input_size_stat.AddSample(gsl::narrow_cast<uint32_t>(input_size));
+    }
+
+    return info;
 }
 
-void Tracer::OnFuncCallDispatched(const protocol::FuncCall& func_call, FuncWorker* func_worker) {
+Tracer::FuncCallInfo* Tracer::OnFuncCallDispatched(const protocol::FuncCall& func_call,
+                                                   FuncWorker* func_worker) {
     int64_t current_timestamp = GetMonotonicMicroTimestamp();
     FuncCallInfo* info;
 
@@ -90,26 +98,31 @@ void Tracer::OnFuncCallDispatched(const protocol::FuncCall& func_call, FuncWorke
         absl::MutexLock lk(&mu_);
         if (!func_call_infos_.contains(func_call.full_call_id)) {
             HLOG(WARNING) << "Cannot find FuncCall: " << FuncCallDebugString(func_call);
-            return;
+            return nullptr;
         }
         info = func_call_infos_[func_call.full_call_id];
     }
 
     {
-        FuncCallInfoGuard guard1(info);
-        info->state = kDispatched;
+        absl::MutexLock lk(&info->mu);
+        info->state = FuncCallState::kDispatched;
         info->dispatch_timestamp = current_timestamp;
         info->assigned_worker = func_worker;
+    }
 
-        PerFuncState* per_func_state = per_func_states_[func_call.func_id];
-        PerFuncStateGuard guard2(per_func_state);
-        per_func_state->queueing_delay_stat.AddSample(
+    PerFuncStatistics* per_func_stat = per_func_stats_[func_call.func_id];
+    {
+        absl::MutexLock lk(&per_func_stat->mu);
+        absl::ReaderMutexLock info_lk(&info->mu);
+        per_func_stat->queueing_delay_stat.AddSample(
             gsl::narrow_cast<int32_t>(current_timestamp - info->recv_timestamp));
     }
+
+    return info;
 }
 
-void Tracer::OnFuncCallCompleted(const FuncCall& func_call, int32_t processing_time,
-                                 size_t output_size) {
+Tracer::FuncCallInfo* Tracer::OnFuncCallCompleted(const FuncCall& func_call,
+                                                  int32_t processing_time, size_t output_size) {
     int64_t current_timestamp = GetMonotonicMicroTimestamp();
     FuncCallInfo* info;
 
@@ -117,43 +130,43 @@ void Tracer::OnFuncCallCompleted(const FuncCall& func_call, int32_t processing_t
         absl::MutexLock lk(&mu_);
         if (!func_call_infos_.contains(func_call.full_call_id)) {
             HLOG(WARNING) << "Cannot find FuncCall: " << FuncCallDebugString(func_call);
-            return;
+            return nullptr;
         }
         info = func_call_infos_[func_call.full_call_id];
+        absl::ReaderMutexLock info_lk(&info->mu);
         dispatch_overhead_stat_.AddSample(gsl::narrow_cast<int32_t>(
             current_timestamp - info->dispatch_timestamp - processing_time));
     }
 
     {
-        FuncCallInfoGuard guard1(info);
-        info->state = kCompleted;
+        absl::MutexLock lk(&info->mu);
+        info->state = FuncCallState::kCompleted;
         info->output_size = output_size;
         info->finish_timestamp = current_timestamp;
         info->processing_time = processing_time;
-
-        PerFuncState* per_func_state = per_func_states_[func_call.func_id];
-        PerFuncStateGuard guard2(per_func_state);
-
-        int32_t running_delay = gsl::narrow_cast<int32_t>(current_timestamp - info->dispatch_timestamp);
-        per_func_state->running_delay_stat.AddSample(running_delay);
-        per_func_state->inflight_requests--;
-        if (per_func_state->inflight_requests < 0) {
-            HLOG(ERROR) << "Negative inflight_requests for func_id " << per_func_state->func_id;
-            per_func_state->inflight_requests = 0;
-        }
-        per_func_state->output_size_stat.AddSample(gsl::narrow_cast<uint32_t>(output_size));
-        per_func_state->running_delay_ema.AddSample(running_delay);
-        per_func_state->processing_time_ema.AddSample(processing_time);
     }
 
+    PerFuncStatistics* per_func_stat = per_func_stats_[func_call.func_id];
     {
-        absl::MutexLock lk(&mu_);
-        func_call_infos_.erase(func_call.full_call_id);
-        func_call_info_pool_.Return(info);
+        absl::MutexLock lk(&per_func_stat->mu);
+        absl::ReaderMutexLock info_lk(&info->mu);
+        int32_t running_delay = gsl::narrow_cast<int32_t>(
+            current_timestamp - info->dispatch_timestamp);
+        per_func_stat->running_delay_stat.AddSample(running_delay);
+        per_func_stat->inflight_requests--;
+        if (per_func_stat->inflight_requests < 0) {
+            HLOG(ERROR) << "Negative inflight_requests for func_id " << per_func_stat->func_id;
+            per_func_stat->inflight_requests = 0;
+        }
+        per_func_stat->output_size_stat.AddSample(gsl::narrow_cast<uint32_t>(output_size));
+        per_func_stat->running_delay_ema.AddSample(running_delay);
+        per_func_stat->processing_time_ema.AddSample(processing_time);
     }
+
+    return info;
 }
 
-void Tracer::OnFuncCallFailed(const FuncCall& func_call) {
+Tracer::FuncCallInfo* Tracer::OnFuncCallFailed(const FuncCall& func_call) {
     int64_t current_timestamp = GetMonotonicMicroTimestamp();
     FuncCallInfo* info;
 
@@ -161,35 +174,71 @@ void Tracer::OnFuncCallFailed(const FuncCall& func_call) {
         absl::MutexLock lk(&mu_);
         if (!func_call_infos_.contains(func_call.full_call_id)) {
             HLOG(WARNING) << "Cannot find FuncCall: " << FuncCallDebugString(func_call);
-            return;
+            return nullptr;
         }
         info = func_call_infos_[func_call.full_call_id];
     }
 
     {
-        FuncCallInfoGuard guard1(info);
-        info->state = kFailed;
+        absl::MutexLock lk(&info->mu);
+        info->state = FuncCallState::kFailed;
         info->finish_timestamp = current_timestamp;
+    }
 
-        PerFuncState* per_func_state = per_func_states_[func_call.func_id];
-        PerFuncStateGuard guard2(per_func_state);
-
-        per_func_state->failed_requests_stat.Tick();
-        per_func_state->inflight_requests--;
-        if (per_func_state->inflight_requests < 0) {
-            HLOG(ERROR) << "Negative inflight_requests for func_id " << per_func_state->func_id;
-            per_func_state->inflight_requests = 0;
+    PerFuncStatistics* per_func_stat = per_func_stats_[func_call.func_id];
+    {
+        absl::MutexLock lk(&per_func_stat->mu);
+        per_func_stat->failed_requests_stat.Tick();
+        per_func_stat->inflight_requests--;
+        if (per_func_stat->inflight_requests < 0) {
+            HLOG(ERROR) << "Negative inflight_requests for func_id " << per_func_stat->func_id;
+            per_func_stat->inflight_requests = 0;
         }
     }
 
+    return info;
+}
+
+void Tracer::DiscardFuncCallInfo(const protocol::FuncCall& func_call) {
+    absl::MutexLock lk(&mu_);
+    if (!func_call_infos_.contains(func_call.full_call_id)) {
+        HLOG(WARNING) << "Cannot find FuncCall: " << FuncCallDebugString(func_call);
+        return;
+    }
+    func_call_infos_.erase(func_call.full_call_id);
+}
+
+double Tracer::GetAverageInstantRps(uint16_t func_id) {
+    DCHECK_LT(func_id, protocol::kMaxFuncId);
+    DCHECK(per_func_stats_[func_id] != nullptr);
+    PerFuncStatistics* per_func_stat = per_func_stats_[func_id];
     {
-        absl::MutexLock lk(&mu_);
-        func_call_infos_.erase(func_call.full_call_id);
-        func_call_info_pool_.Return(info);
+        absl::MutexLock lk(&per_func_stat->mu);
+        return per_func_stat->instant_rps_ema.GetValue();
     }
 }
 
-Tracer::PerFuncState::PerFuncState(uint16_t func_id)
+double Tracer::GetAverageRunningDelay(uint16_t func_id) {
+    DCHECK_LT(func_id, protocol::kMaxFuncId);
+    DCHECK(per_func_stats_[func_id] != nullptr);
+    PerFuncStatistics* per_func_stat = per_func_stats_[func_id];
+    {
+        absl::MutexLock lk(&per_func_stat->mu);
+        return per_func_stat->running_delay_ema.GetValue();
+    }
+}
+
+double Tracer::GetAverageProcessingTime(uint16_t func_id) {
+    DCHECK_LT(func_id, protocol::kMaxFuncId);
+    DCHECK(per_func_stats_[func_id] != nullptr);
+    PerFuncStatistics* per_func_stat = per_func_stats_[func_id];
+    {
+        absl::MutexLock lk(&per_func_stat->mu);
+        return per_func_stat->processing_time_ema.GetValue();
+    }
+}
+
+Tracer::PerFuncStatistics::PerFuncStatistics(uint16_t func_id)
     : func_id(func_id),
       inflight_requests(0),
       last_request_timestamp(-1),
@@ -209,45 +258,9 @@ Tracer::PerFuncState::PerFuncState(uint16_t func_id)
           fmt::format("running_delay[{}]", func_id))),
       inflight_requests_stat(stat::StatisticsCollector<uint16_t>::StandardReportCallback(
           fmt::format("inflight_requests[{}]", func_id))),
-      rps_ema(/* alpha= */ 0.999, /* p= */ 1.0),
+      instant_rps_ema(/* alpha= */ 0.999, /* p= */ 1.0),
       running_delay_ema(/* alpha= */ 0.999, /* p= */ 1.0),
-      processing_time_ema(/* alpha= */ 0.999, /* p= */ 1.0),
-      in_use(0) {}
-
-Tracer::FuncCallInfoGuard::FuncCallInfoGuard(FuncCallInfo* func_call_info)
-    : func_call_info_(func_call_info) {
-#if DCHECK_IS_ON()
-    int zero = 0;
-    if (!func_call_info_->in_use.compare_exchange_strong(zero, 1)) {
-        HLOG(FATAL) << fmt::format("FuncCallInfo of {} is in use",
-                                   FuncCallDebugString(func_call_info->func_call));
-    }
-#endif
-}
-
-Tracer::FuncCallInfoGuard::~FuncCallInfoGuard() {
-#if DCHECK_IS_ON()
-    int one = 1;
-    CHECK(func_call_info_->in_use.compare_exchange_strong(one, 0));
-#endif
-}
-
-Tracer::PerFuncStateGuard::PerFuncStateGuard(PerFuncState* per_func_state)
-    : per_func_state_(per_func_state) {
-#if DCHECK_IS_ON()
-    int zero = 0;
-    if (!per_func_state_->in_use.compare_exchange_strong(zero, 1)) {
-        HLOG(FATAL) << fmt::format("PerFuncState of func_id {} is in use", per_func_state_->func_id);
-    }
-#endif
-}
-
-Tracer::PerFuncStateGuard::~PerFuncStateGuard() {
-#if DCHECK_IS_ON()
-    int one = 1;
-    CHECK(per_func_state_->in_use.compare_exchange_strong(one, 0));
-#endif
-}
+      processing_time_ema(/* alpha= */ 0.999, /* p= */ 1.0) {}
 
 }  // namespace gateway
 }  // namespace faas

@@ -56,20 +56,25 @@ bool Dispatcher::OnNewFuncCall(const protocol::FuncCall& func_call,
                                bool shm_input) {
     VLOG(1) << "OnNewFuncCall " << FuncCallDebugString(func_call);
     DCHECK_EQ(func_id_, func_call.func_id);
-    Message dispatch_func_call_message = NewDispatchFuncCallMessage(func_call);
-    if (shm_input) {
-        dispatch_func_call_message.payload_size = -gsl::narrow_cast<int32_t>(input_size);
-    } else {
-        SetInlineDataInMessage(&dispatch_func_call_message, inline_input);
-    }
     absl::MutexLock lk(&mu_);
-    server_->tracer()->OnNewFuncCall(func_call, parent_func_call, input_size);
+    Message* dispatch_func_call_message = message_pool_.Get();
+    if (shm_input) {
+        dispatch_func_call_message->payload_size = -gsl::narrow_cast<int32_t>(input_size);
+    } else {
+        SetInlineDataInMessage(dispatch_func_call_message, inline_input);
+    }
+
+    Tracer::FuncCallInfo* func_call_info = server_->tracer()->OnNewFuncCall(
+        func_call, parent_func_call, input_size);
     FuncWorker* idle_worker = PickIdleWorker();
     if (idle_worker) {
-        DispatchFuncCall(idle_worker, &dispatch_func_call_message);
+        DispatchFuncCall(idle_worker, dispatch_func_call_message);
     } else {
         VLOG(1) << "No idle worker at the moment";
-        pending_func_calls_.push(dispatch_func_call_message);
+        pending_func_calls_.push({
+            .dispatch_func_call_message = dispatch_func_call_message,
+            .func_call_info = func_call_info
+        });
     }
     return true;
 }
@@ -80,6 +85,7 @@ void Dispatcher::OnFuncCallCompleted(const FuncCall& func_call,
     DCHECK_EQ(func_id_, func_call.func_id);
     absl::MutexLock lk(&mu_);
     server_->tracer()->OnFuncCallCompleted(func_call, processing_time, output_size);
+    server_->tracer()->DiscardFuncCallInfo(func_call);
     if (!assigned_workers_.contains(func_call.full_call_id)) {
         HLOG(ERROR) << "Cannot find assigned worker for full_call_id " << func_call.full_call_id;
         return;
@@ -94,6 +100,7 @@ void Dispatcher::OnFuncCallFailed(const FuncCall& func_call) {
     DCHECK_EQ(func_id_, func_call.func_id);
     absl::MutexLock lk(&mu_);
     server_->tracer()->OnFuncCallFailed(func_call);
+    server_->tracer()->DiscardFuncCallInfo(func_call);
     if (!assigned_workers_.contains(func_call.full_call_id)) {
         return;
     }
@@ -117,11 +124,12 @@ bool Dispatcher::DispatchPendingFuncCall(FuncWorker* func_worker) {
     if (pending_func_calls_.empty()) {
         return false;
     }
-    Message* dispatch_func_call_message = &pending_func_calls_.front();
+    PendingFuncCall pending_func_call = pending_func_calls_.front();
+    pending_func_calls_.pop();
+    Message* dispatch_func_call_message = pending_func_call.dispatch_func_call_message;
     FuncCall func_call = GetFuncCallFromMessage(*dispatch_func_call_message);
     HVLOG(1) << "Found pending func_call " << FuncCallDebugString(func_call);
     DispatchFuncCall(func_worker, dispatch_func_call_message);
-    pending_func_calls_.pop();
     return true;
 }
 
@@ -134,6 +142,7 @@ void Dispatcher::DispatchFuncCall(FuncWorker* func_worker, Message* dispatch_fun
     assigned_workers_[func_call.full_call_id] = func_worker;
     running_workers_[client_id] = func_call;
     func_worker->DispatchFuncCall(dispatch_func_call_message);
+    message_pool_.Return(dispatch_func_call_message);
 }
 
 FuncWorker* Dispatcher::PickIdleWorker() {
