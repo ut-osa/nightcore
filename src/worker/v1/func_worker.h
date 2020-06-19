@@ -64,6 +64,7 @@ private:
     std::vector<InvokeFuncResource> invoke_func_resources_ ABSL_GUARDED_BY(mu_);
     utils::BufferPool buffer_pool_for_pipes_ ABSL_GUARDED_BY(mu_);
     utils::AppendableBuffer func_output_buffer_;
+    char main_pipe_buf_[PIPE_BUF];
 
     std::atomic<uint32_t> next_call_id_;
     std::atomic<uint64_t> current_func_call_id_;
@@ -71,14 +72,10 @@ private:
     void MainServingLoop();
     void HandshakeWithGateway();
 
-    void ExecuteFunc(void* worker_handle, const protocol::Message& invoke_func_message);
+    void ExecuteFunc(void* worker_handle, const protocol::Message& dispatch_func_call_message);
     bool InvokeFunc(const char* func_name,
                     const char* input_data, size_t input_length,
                     const char** output_data, size_t* output_length);
-    bool WriteOutputToShm(const protocol::FuncCall& func_call);
-    bool WriteOutputToFifo(const protocol::FuncCall& func_call, bool func_call_succeed);
-    bool ReadOutputFromFifo(int fd, InvokeFuncResource* invoke_func_resource,
-                            const char** output_data, size_t* output_length);
     void ReclaimInvokeFuncResources();
 
     // Assume caller_context is an instance of FuncWorker

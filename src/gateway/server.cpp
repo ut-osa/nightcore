@@ -521,8 +521,12 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
             if (message_delay >= 0) {
                 message_delay_stat_.AddSample(message_delay);
             }
-            if (IsFuncCallCompleteMessage(message) && message.payload_size < 0) {
-                output_use_shm_stat_.Tick();
+            if (IsFuncCallCompleteMessage(message)) {
+                if ((func_call.client_id == 0 && message.payload_size < 0)
+                      || (func_call.client_id > 0
+                          && message.payload_size + sizeof(int32_t) > PIPE_BUF)) {
+                    output_use_shm_stat_.Tick();
+                }
             }
             uint64_t full_call_id = func_call.full_call_id;
             if (func_call.client_id == 0 && running_external_func_calls_.contains(full_call_id)) {
