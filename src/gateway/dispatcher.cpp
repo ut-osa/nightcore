@@ -9,6 +9,8 @@
 #define HVLOG(l) VLOG(l) << log_header_
 
 ABSL_FLAG(double, max_relative_queueing_delay, 0.0, "");
+ABSL_FLAG(double, concurrency_limit_coef, 1.0, "");
+ABSL_FLAG(double, expected_concurrency_coef, 1.0, "");
 
 namespace faas {
 namespace gateway {
@@ -24,10 +26,25 @@ using protocol::NewDispatchFuncCallMessage;
 Dispatcher::Dispatcher(Server* server, uint16_t func_id)
     : server_(server), func_id_(func_id),
       log_header_(fmt::format("Dispatcher[{}]: ", func_id)),
+      last_request_worker_timestamp_(-1),
       idle_workers_stat_(stat::StatisticsCollector<uint16_t>::StandardReportCallback(
           fmt::format("idle_workers[{}]", func_id))),
       running_workers_stat_(stat::StatisticsCollector<uint16_t>::StandardReportCallback(
-          fmt::format("running_workers[{}]", func_id))) {}
+          fmt::format("running_workers[{}]", func_id))),
+      max_concurrency_stat_(stat::StatisticsCollector<uint32_t>::StandardReportCallback(
+          fmt::format("max_concurrency[{}]", func_id))),
+      estimated_concurrency_stat_(stat::StatisticsCollector<float>::StandardReportCallback(
+          fmt::format("estimated_concurrency[{}]", func_id))) {
+    const FuncConfig::Entry* func_entry = server_->func_config()->find_by_func_id(func_id);
+    DCHECK(func_entry != nullptr);
+    func_config_entry_ = func_entry;
+    if (func_config_entry_->min_workers > 0) {
+        HLOG(INFO) << "min_workers=" << func_config_entry_->min_workers;
+    }
+    if (func_config_entry_->max_workers > 0) {
+        HLOG(INFO) << "max_workers=" << func_config_entry_->max_workers;
+    }
+}
 
 Dispatcher::~Dispatcher() {}
 
@@ -37,6 +54,13 @@ bool Dispatcher::OnFuncWorkerConnected(FuncWorker* func_worker) {
     absl::MutexLock lk(&mu_);
     DCHECK(!workers_.contains(client_id));
     workers_[client_id] = func_worker;
+    if (requested_workers_.contains(client_id)) {
+        int64_t request_timestamp = requested_workers_[client_id];
+        requested_workers_.erase(client_id);
+        HLOG(INFO) << fmt::format("FuncWorker (client_id {}) takes {}ms to launch",
+                                  client_id,
+                                  (GetMonotonicMicroTimestamp() - request_timestamp) / 1000);
+    }
     if (!DispatchPendingFuncCall(func_worker)) {
         idle_workers_.push_back(client_id);
     }
@@ -167,6 +191,11 @@ void Dispatcher::DispatchFuncCall(FuncWorker* func_worker, Message* dispatch_fun
 }
 
 FuncWorker* Dispatcher::PickIdleWorker() {
+    size_t max_concurrency = DetermineConcurrencyLimit();
+    max_concurrency_stat_.AddSample(gsl::narrow_cast<uint32_t>(max_concurrency));
+    if (running_workers_.size() >= max_concurrency) {
+        return nullptr;
+    }
     while (!idle_workers_.empty()) {
         uint16_t client_id = idle_workers_.back();
         idle_workers_.pop_back();
@@ -174,6 +203,7 @@ FuncWorker* Dispatcher::PickIdleWorker() {
             return workers_[client_id];
         }
     }
+    MayRequestNewFuncWorker();
     return nullptr;
 }
 
@@ -185,6 +215,60 @@ void Dispatcher::UpdateWorkerLoadStat() {
                             running_workers, idle_workers);
     idle_workers_stat_.AddSample(gsl::narrow_cast<uint16_t>(idle_workers));
     running_workers_stat_.AddSample(gsl::narrow_cast<uint16_t>(running_workers));
+}
+
+size_t Dispatcher::DetermineExpectedConcurrency() {
+    double average_processing_time = server_->tracer()->GetAverageProcessingTime2(func_id_);
+    double average_instant_rps = server_->tracer()->GetAverageInstantRps(func_id_);
+    if (average_processing_time > 0 && average_instant_rps > 0) {
+        double estimated_concurrency = absl::GetFlag(FLAGS_expected_concurrency_coef)
+                                     * average_processing_time * average_instant_rps / 1e6;
+        return gsl::narrow_cast<size_t>(0.5 + estimated_concurrency);
+    } else {
+        return 0;
+    }
+}
+
+size_t Dispatcher::DetermineConcurrencyLimit() {
+    size_t result = std::numeric_limits<size_t>::max();
+    double average_running_delay = server_->tracer()->GetAverageRunningDelay(func_id_);
+    double average_instant_rps = server_->tracer()->GetAverageInstantRps(func_id_);
+    if (average_running_delay > 0 && average_instant_rps > 0) {
+        double estimated_concurrency = absl::GetFlag(FLAGS_concurrency_limit_coef)
+                                     * average_running_delay * average_instant_rps / 1e6;
+        estimated_concurrency_stat_.AddSample(gsl::narrow_cast<float>(estimated_concurrency));
+        result = gsl::narrow_cast<size_t>(0.5 + estimated_concurrency);
+    }
+    if (func_config_entry_->min_workers > 0) {
+        result = std::max(result, gsl::narrow_cast<size_t>(func_config_entry_->min_workers));
+    }
+    if (func_config_entry_->max_workers > 0) {
+        result = std::min(result, gsl::narrow_cast<size_t>(func_config_entry_->max_workers));
+    }
+    return result;
+}
+
+void Dispatcher::MayRequestNewFuncWorker() {
+    size_t estimated_concurrency = DetermineExpectedConcurrency();
+    size_t max_workers = std::numeric_limits<size_t>::max();
+    if (func_config_entry_->max_workers > 0) {
+        max_workers = gsl::narrow_cast<size_t>(func_config_entry_->max_workers);
+    }
+    int64_t current_timestamp = GetMonotonicMicroTimestamp();
+    if (estimated_concurrency > 0
+            && workers_.size() + requested_workers_.size() < max_workers
+            && workers_.size() + requested_workers_.size() < estimated_concurrency
+            && (last_request_worker_timestamp_ == -1
+                || current_timestamp > last_request_worker_timestamp_ + kMinWorkerRequestInterval)) {
+        HLOG(INFO) << "Request new FuncWorker: estimated_concurrency=" << estimated_concurrency;
+        uint16_t client_id;
+        if (server_->worker_manager()->RequestNewFuncWorker(func_id_, &client_id)) {
+            requested_workers_[client_id] = current_timestamp;
+            last_request_worker_timestamp_ = current_timestamp;
+        } else {
+            HLOG(ERROR) << "Failed to request new FuncWorker";
+        }
+    }
 }
 
 }  // namespace gateway

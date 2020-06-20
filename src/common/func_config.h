@@ -17,6 +17,7 @@ public:
         std::string func_name;
         int func_id;
         int min_workers;
+        int max_workers;
         bool is_grpc_service;
         std::string grpc_service_name;
         std::vector<std::string> grpc_methods;

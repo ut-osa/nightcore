@@ -10,7 +10,7 @@
 
 #include <absl/flags/flag.h>
 
-ABSL_FLAG(size_t, max_running_external_requests, 16, "");
+ABSL_FLAG(size_t, max_running_external_requests, 0, "");
 ABSL_FLAG(bool, disable_monitor, false, "");
 
 #define HLOG(l) LOG(l) << "Server: "
@@ -61,6 +61,9 @@ Server::Server()
       input_use_shm_stat_(stat::Counter::StandardReportCallback("input_use_shm")),
       output_use_shm_stat_(stat::Counter::StandardReportCallback("output_use_shm")),
       discarded_func_call_stat_(stat::Counter::StandardReportCallback("discarded_func_call")) {
+    if (max_running_external_requests_ > 0) {
+        HLOG(INFO) << "max_running_external_requests=" << max_running_external_requests_;
+    }
     UV_DCHECK_OK(uv_loop_init(&uv_loop_));
     uv_loop_.data = &event_loop_thread_;
     UV_DCHECK_OK(uv_tcp_init(&uv_loop_, &uv_http_handle_));
@@ -546,7 +549,8 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
                 func_call_context = std::move(running_external_func_calls_[full_call_id]);
                 running_external_func_calls_.erase(full_call_id);
                 if (!pending_external_func_calls_.empty()
-                        && running_external_func_calls_.size() < max_running_external_requests_) {
+                        && (max_running_external_requests_ == 0 ||
+                            running_external_func_calls_.size() < max_running_external_requests_)) {
                     auto func_call_context = std::move(pending_external_func_calls_.front());
                     pending_external_func_calls_.pop();
                     uint64_t full_call_id = func_call_context->call().full_call_id;
@@ -670,7 +674,8 @@ void Server::NewExternalFuncCall(std::unique_ptr<ExternalFuncCallContext> func_c
         last_external_request_timestamp_ = current_timestamp;
         inflight_external_requests_stat_.AddSample(
             gsl::narrow_cast<uint16_t>(inflight_external_requests_.load()));
-        if (running_external_func_calls_.size() < max_running_external_requests_) {
+        if (max_running_external_requests_ == 0
+                || running_external_func_calls_.size() < max_running_external_requests_) {
             func_call_for_dispatch = func_call_context.get();
             uint64_t full_call_id = func_call_context->call().full_call_id;
             running_external_func_calls_[full_call_id] = std::move(func_call_context);
@@ -731,7 +736,8 @@ void Server::ProcessDiscardedFuncCallIfNecessary() {
         }
         discarded_func_calls_.clear();
         while (!pending_external_func_calls_.empty()
-                   && running_external_func_calls_.size() < max_running_external_requests_) {
+                   && (max_running_external_requests_ == 0 ||
+                       running_external_func_calls_.size() < max_running_external_requests_)) {
             auto func_call_context = std::move(pending_external_func_calls_.front());
             pending_external_func_calls_.pop();
             uint64_t full_call_id = func_call_context->call().full_call_id;

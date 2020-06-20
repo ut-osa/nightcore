@@ -9,8 +9,8 @@ namespace utils {
 
 class ExpMovingAvg {
 public:
-    explicit ExpMovingAvg(double alpha = 0.999, double p = 1.0)
-        : alpha_(alpha), p_(p), avg_(0), initial_(true) {}
+    explicit ExpMovingAvg(double alpha = 0.999, double p = 1.0, size_t min_samples = 128)
+        : alpha_(alpha), p_(p), min_samples_(min_samples), avg_(0), n_samples_(0) {}
     ~ExpMovingAvg() {}
 
     template<class T>
@@ -19,16 +19,16 @@ public:
             LOG(WARNING) << "ExpMovingAvg is supposed to handle non-negative sample values";
             return;
         }
-        if (initial_) {
-            avg_ = std::pow(static_cast<double>(sample), p_);
-            initial_ = false;
+        if (n_samples_ < min_samples_) {
+            avg_ += std::pow(static_cast<double>(sample), p_) / min_samples_;
         } else {
             avg_ = alpha_ * avg_ + (1 - alpha_) * std::pow(static_cast<double>(sample), p_);
         }
+        n_samples_++;
     }
 
     double GetValue() {
-        if (initial_) {
+        if (n_samples_ < min_samples_) {
             return 0;
         } else {
             return std::pow(avg_, 1.0 / p_);
@@ -36,15 +36,16 @@ public:
     }
 
     void Reset() {
-        initial_ = true;
+        n_samples_ = 0;
         avg_ = 0;
     }
 
 private:
     double alpha_;
     double p_;
+    size_t min_samples_;
     double avg_;
-    bool initial_;
+    size_t n_samples_;
 
     DISALLOW_COPY_AND_ASSIGN(ExpMovingAvg);
 };

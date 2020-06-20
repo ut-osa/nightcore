@@ -3,6 +3,7 @@
 #include "base/common.h"
 #include "common/stat.h"
 #include "common/protocol.h"
+#include "common/func_config.h"
 #include "utils/object_pool.h"
 #include "gateway/tracer.h"
 
@@ -14,6 +15,8 @@ class FuncWorker;
 
 class Dispatcher {
 public:
+    static constexpr int kMinWorkerRequestInterval = 200000;  // 200ms
+
     Dispatcher(Server* server, uint16_t func_id);
     ~Dispatcher();
 
@@ -32,6 +35,7 @@ public:
 private:
     Server* server_;
     uint16_t func_id_;
+    const FuncConfig::Entry* func_config_entry_;
     absl::Mutex mu_;
 
     std::string log_header_;
@@ -41,6 +45,10 @@ private:
         running_workers_ ABSL_GUARDED_BY(mu_);
     std::vector</* client_id */ uint16_t> idle_workers_ ABSL_GUARDED_BY(mu_);
     utils::SimpleObjectPool<protocol::Message> message_pool_ ABSL_GUARDED_BY(mu_);
+
+    absl::flat_hash_map</* client_id */ uint16_t, /* request_timestamp */ int64_t>
+        requested_workers_ ABSL_GUARDED_BY(mu_);
+    int64_t last_request_worker_timestamp_ ABSL_GUARDED_BY(mu_);
 
     struct PendingFuncCall {
         protocol::Message*    dispatch_func_call_message;
@@ -53,6 +61,8 @@ private:
 
     stat::StatisticsCollector<uint16_t> idle_workers_stat_ ABSL_GUARDED_BY(mu_);
     stat::StatisticsCollector<uint16_t> running_workers_stat_ ABSL_GUARDED_BY(mu_);
+    stat::StatisticsCollector<uint32_t> max_concurrency_stat_ ABSL_GUARDED_BY(mu_);
+    stat::StatisticsCollector<float> estimated_concurrency_stat_ ABSL_GUARDED_BY(mu_);
 
     void FuncWorkerFinished(FuncWorker* func_worker) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
     void DispatchFuncCall(FuncWorker* func_worker, protocol::Message* dispatch_func_call_message)
@@ -60,6 +70,9 @@ private:
     bool DispatchPendingFuncCall(FuncWorker* idle_func_worker) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
     FuncWorker* PickIdleWorker() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
     void UpdateWorkerLoadStat() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
+    size_t DetermineExpectedConcurrency() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
+    size_t DetermineConcurrencyLimit() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
+    void MayRequestNewFuncWorker() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
 
     DISALLOW_COPY_AND_ASSIGN(Dispatcher);
 };

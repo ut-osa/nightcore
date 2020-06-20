@@ -22,7 +22,7 @@ public:
     void OnLauncherDisconnected(MessageConnection* launcher_connection);
     bool OnFuncWorkerConnected(MessageConnection* worker_connection);
     void OnFuncWorkerDisconnected(MessageConnection* worker_connection);
-    bool RequestNewFuncWorker(uint16_t func_id);
+    bool RequestNewFuncWorker(uint16_t func_id, uint16_t* client_id);
 
 private:
     Server* server_;
@@ -34,7 +34,7 @@ private:
     absl::flat_hash_map</* client_id */ uint16_t, std::unique_ptr<FuncWorker>>
         func_workers_ ABSL_GUARDED_BY(mu_);
     
-    bool RequestNewFuncWorkerInternal(MessageConnection* launcher_connection);
+    bool RequestNewFuncWorkerInternal(MessageConnection* launcher_connection, uint16_t* client_id);
 
     DISALLOW_COPY_AND_ASSIGN(WorkerManager);
 };

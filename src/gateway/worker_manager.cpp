@@ -36,7 +36,8 @@ bool WorkerManager::OnLauncherConnected(MessageConnection* launcher_connection) 
         min_workers = kDefaultMinWorkersPerFunc;
     }
     for (int i = 0; i < min_workers; i++) {
-        RequestNewFuncWorkerInternal(launcher_connection);
+        uint16_t client_id;
+        RequestNewFuncWorkerInternal(launcher_connection, &client_id);
     }
     return true;
 }
@@ -100,7 +101,7 @@ void WorkerManager::OnFuncWorkerDisconnected(MessageConnection* worker_connectio
     ipc::FifoRemove(ipc::GetFuncWorkerOutputFifoName(client_id));
 }
 
-bool WorkerManager::RequestNewFuncWorker(uint16_t func_id) {
+bool WorkerManager::RequestNewFuncWorker(uint16_t func_id, uint16_t* client_id) {
     MessageConnection* launcher_connection;
     {
         absl::MutexLock lk(&mu_);
@@ -110,10 +111,11 @@ bool WorkerManager::RequestNewFuncWorker(uint16_t func_id) {
         }
         launcher_connection = launcher_connections_[func_id];
     }
-    return RequestNewFuncWorkerInternal(launcher_connection);
+    return RequestNewFuncWorkerInternal(launcher_connection, client_id);
 }
 
-bool WorkerManager::RequestNewFuncWorkerInternal(MessageConnection* launcher_connection) {
+bool WorkerManager::RequestNewFuncWorkerInternal(MessageConnection* launcher_connection,
+                                                 uint16_t* out_client_id) {
     uint16_t client_id = next_client_id_.fetch_add(1);
     CHECK_LE(client_id, protocol::kMaxClientId) << "Reach maximum number of clients!";
     HLOG(INFO) << fmt::format("Request new FuncWorker for func_id {} with client_id {}",
@@ -124,6 +126,7 @@ bool WorkerManager::RequestNewFuncWorkerInternal(MessageConnection* launcher_con
         << "FifoCreate failed";
     Message message = NewCreateFuncWorkerMessage(client_id);
     launcher_connection->WriteMessage(message);
+    *out_client_id = client_id;
     return true;
 }
 

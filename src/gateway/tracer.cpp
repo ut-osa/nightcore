@@ -64,6 +64,7 @@ Tracer::FuncCallInfo* Tracer::OnNewFuncCall(const FuncCall& func_call,
         info->finish_timestamp = 0;
         info->assigned_worker = nullptr;
         info->processing_time = 0;
+        info->total_queuing_delay = 0;
     }
 
     uint16_t func_id = func_call.func_id;
@@ -103,19 +104,21 @@ Tracer::FuncCallInfo* Tracer::OnFuncCallDispatched(const protocol::FuncCall& fun
         info = func_call_infos_[func_call.full_call_id];
     }
 
+    int32_t queueing_delay = 0;
     {
         absl::MutexLock lk(&info->mu);
         info->state = FuncCallState::kDispatched;
         info->dispatch_timestamp = current_timestamp;
         info->assigned_worker = func_worker;
+        queueing_delay = gsl::narrow_cast<int32_t>(current_timestamp - info->recv_timestamp);
+        info->total_queuing_delay += queueing_delay;
     }
 
     PerFuncStatistics* per_func_stat = per_func_stats_[func_call.func_id];
     {
         absl::MutexLock lk(&per_func_stat->mu);
         absl::ReaderMutexLock info_lk(&info->mu);
-        per_func_stat->queueing_delay_stat.AddSample(
-            gsl::narrow_cast<int32_t>(current_timestamp - info->recv_timestamp));
+        per_func_stat->queueing_delay_stat.AddSample(queueing_delay);
     }
 
     return info;
@@ -125,6 +128,7 @@ Tracer::FuncCallInfo* Tracer::OnFuncCallCompleted(const FuncCall& func_call,
                                                   int32_t processing_time, size_t output_size) {
     int64_t current_timestamp = GetMonotonicMicroTimestamp();
     FuncCallInfo* info;
+    FuncCallInfo* parent_info = nullptr;
 
     {
         absl::MutexLock lk(&mu_);
@@ -136,14 +140,23 @@ Tracer::FuncCallInfo* Tracer::OnFuncCallCompleted(const FuncCall& func_call,
         absl::ReaderMutexLock info_lk(&info->mu);
         dispatch_overhead_stat_.AddSample(gsl::narrow_cast<int32_t>(
             current_timestamp - info->dispatch_timestamp - processing_time));
+        if (func_call_infos_.contains(info->parent_func_call.full_call_id)) {
+            parent_info = func_call_infos_[info->parent_func_call.full_call_id];
+        }
     }
 
+    int32_t total_queuing_delay;
     {
         absl::MutexLock lk(&info->mu);
         info->state = FuncCallState::kCompleted;
         info->output_size = output_size;
         info->finish_timestamp = current_timestamp;
         info->processing_time = processing_time;
+        total_queuing_delay = info->total_queuing_delay;
+    }
+    if (parent_info != nullptr) {
+        absl::MutexLock lk(&parent_info->mu);
+        parent_info->total_queuing_delay += total_queuing_delay;
     }
 
     PerFuncStatistics* per_func_stat = per_func_stats_[func_call.func_id];
@@ -161,6 +174,11 @@ Tracer::FuncCallInfo* Tracer::OnFuncCallCompleted(const FuncCall& func_call,
         per_func_stat->output_size_stat.AddSample(gsl::narrow_cast<uint32_t>(output_size));
         per_func_stat->running_delay_ema.AddSample(running_delay);
         per_func_stat->processing_time_ema.AddSample(processing_time);
+        int64_t processing_time2 = current_timestamp - info->recv_timestamp - total_queuing_delay;
+        if (processing_time2 > 0) {
+            per_func_stat->processing_time2_ema.AddSample(
+                gsl::narrow_cast<int32_t>(processing_time2));
+        }
     }
 
     return info;
@@ -169,6 +187,7 @@ Tracer::FuncCallInfo* Tracer::OnFuncCallCompleted(const FuncCall& func_call,
 Tracer::FuncCallInfo* Tracer::OnFuncCallFailed(const FuncCall& func_call) {
     int64_t current_timestamp = GetMonotonicMicroTimestamp();
     FuncCallInfo* info;
+    FuncCallInfo* parent_info = nullptr;
 
     {
         absl::MutexLock lk(&mu_);
@@ -177,12 +196,21 @@ Tracer::FuncCallInfo* Tracer::OnFuncCallFailed(const FuncCall& func_call) {
             return nullptr;
         }
         info = func_call_infos_[func_call.full_call_id];
+        if (func_call_infos_.contains(info->parent_func_call.full_call_id)) {
+            parent_info = func_call_infos_[info->parent_func_call.full_call_id];
+        }
     }
 
+    int32_t total_queuing_delay;
     {
         absl::MutexLock lk(&info->mu);
         info->state = FuncCallState::kFailed;
         info->finish_timestamp = current_timestamp;
+        total_queuing_delay = info->total_queuing_delay;
+    }
+    if (parent_info != nullptr) {
+        absl::MutexLock lk(&parent_info->mu);
+        parent_info->total_queuing_delay += total_queuing_delay;
     }
 
     PerFuncStatistics* per_func_stat = per_func_stats_[func_call.func_id];
@@ -235,6 +263,16 @@ double Tracer::GetAverageProcessingTime(uint16_t func_id) {
     {
         absl::MutexLock lk(&per_func_stat->mu);
         return per_func_stat->processing_time_ema.GetValue();
+    }
+}
+
+double Tracer::GetAverageProcessingTime2(uint16_t func_id) {
+    DCHECK_LT(func_id, protocol::kMaxFuncId);
+    DCHECK(per_func_stats_[func_id] != nullptr);
+    PerFuncStatistics* per_func_stat = per_func_stats_[func_id];
+    {
+        absl::MutexLock lk(&per_func_stat->mu);
+        return per_func_stat->processing_time2_ema.GetValue();
     }
 }
 

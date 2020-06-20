@@ -92,8 +92,12 @@ bool FuncConfig::Load(std::string_view json_contents) {
             entry->func_name = func_name;
             entry->func_id = func_id;
             entry->min_workers = -1;
+            entry->max_workers = -1;
             if (item.contains("minWorkers")) {
                 entry->min_workers = item.at("minWorkers").get<int>();
+            }
+            if (item.contains("maxWorkers")) {
+                entry->max_workers = item.at("maxWorkers").get<int>();
             }
             entry->is_grpc_service = false;
             if (StartsWith(func_name, "grpc:")) {

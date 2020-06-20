@@ -29,16 +29,17 @@ public:
 
     struct FuncCallInfo {
         absl::Mutex        mu;
-        FuncCallState      state              ABSL_GUARDED_BY(mu);
-        protocol::FuncCall func_call          ABSL_GUARDED_BY(mu);
-        protocol::FuncCall parent_func_call   ABSL_GUARDED_BY(mu);
-        size_t             input_size         ABSL_GUARDED_BY(mu);
-        size_t             output_size        ABSL_GUARDED_BY(mu);
-        int64_t            recv_timestamp     ABSL_GUARDED_BY(mu);
-        int64_t            dispatch_timestamp ABSL_GUARDED_BY(mu);
-        int64_t            finish_timestamp   ABSL_GUARDED_BY(mu);
-        FuncWorker*        assigned_worker    ABSL_GUARDED_BY(mu);
-        int32_t            processing_time    ABSL_GUARDED_BY(mu);
+        FuncCallState      state               ABSL_GUARDED_BY(mu);
+        protocol::FuncCall func_call           ABSL_GUARDED_BY(mu);
+        protocol::FuncCall parent_func_call    ABSL_GUARDED_BY(mu);
+        size_t             input_size          ABSL_GUARDED_BY(mu);
+        size_t             output_size         ABSL_GUARDED_BY(mu);
+        int64_t            recv_timestamp      ABSL_GUARDED_BY(mu);
+        int64_t            dispatch_timestamp  ABSL_GUARDED_BY(mu);
+        int64_t            finish_timestamp    ABSL_GUARDED_BY(mu);
+        FuncWorker*        assigned_worker     ABSL_GUARDED_BY(mu);
+        int32_t            processing_time     ABSL_GUARDED_BY(mu);
+        int32_t            total_queuing_delay ABSL_GUARDED_BY(mu);
     };
 
     FuncCallInfo* OnNewFuncCall(const protocol::FuncCall& func_call,
@@ -55,6 +56,7 @@ public:
     double GetAverageInstantRps(uint16_t func_id);
     double GetAverageRunningDelay(uint16_t func_id);
     double GetAverageProcessingTime(uint16_t func_id);
+    double GetAverageProcessingTime2(uint16_t func_id);
 
 private:
     Server* server_;
@@ -82,9 +84,10 @@ private:
         stat::StatisticsCollector<int32_t>  running_delay_stat     ABSL_GUARDED_BY(mu);
         stat::StatisticsCollector<uint16_t> inflight_requests_stat ABSL_GUARDED_BY(mu);
 
-        utils::ExpMovingAvg instant_rps_ema     ABSL_GUARDED_BY(mu);
-        utils::ExpMovingAvg running_delay_ema   ABSL_GUARDED_BY(mu);
-        utils::ExpMovingAvg processing_time_ema ABSL_GUARDED_BY(mu);
+        utils::ExpMovingAvg instant_rps_ema      ABSL_GUARDED_BY(mu);
+        utils::ExpMovingAvg running_delay_ema    ABSL_GUARDED_BY(mu);
+        utils::ExpMovingAvg processing_time_ema  ABSL_GUARDED_BY(mu);
+        utils::ExpMovingAvg processing_time2_ema ABSL_GUARDED_BY(mu);
 
         explicit PerFuncStatistics(uint16_t func_id);
     };
