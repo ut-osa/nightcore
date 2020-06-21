@@ -11,6 +11,7 @@
 ABSL_FLAG(double, max_relative_queueing_delay, 0.0, "");
 ABSL_FLAG(double, concurrency_limit_coef, 1.0, "");
 ABSL_FLAG(double, expected_concurrency_coef, 1.0, "");
+ABSL_FLAG(int, min_worker_request_interval_ms, 200, "");
 
 namespace faas {
 namespace gateway {
@@ -255,11 +256,13 @@ void Dispatcher::MayRequestNewFuncWorker() {
         max_workers = gsl::narrow_cast<size_t>(func_config_entry_->max_workers);
     }
     int64_t current_timestamp = GetMonotonicMicroTimestamp();
+    int min_worker_request_interval_ms = absl::GetFlag(FLAGS_min_worker_request_interval_ms);
     if (estimated_concurrency > 0
             && workers_.size() + requested_workers_.size() < max_workers
             && workers_.size() + requested_workers_.size() < estimated_concurrency
             && (last_request_worker_timestamp_ == -1
-                || current_timestamp > last_request_worker_timestamp_ + kMinWorkerRequestInterval)) {
+                || current_timestamp > last_request_worker_timestamp_
+                                       + min_worker_request_interval_ms * 1000)) {
         HLOG(INFO) << "Request new FuncWorker: estimated_concurrency=" << estimated_concurrency;
         uint16_t client_id;
         if (server_->worker_manager()->RequestNewFuncWorker(func_id_, &client_id)) {

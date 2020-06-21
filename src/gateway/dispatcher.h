@@ -15,8 +15,6 @@ class FuncWorker;
 
 class Dispatcher {
 public:
-    static constexpr int kMinWorkerRequestInterval = 200000;  // 200ms
-
     Dispatcher(Server* server, uint16_t func_id);
     ~Dispatcher();
 
