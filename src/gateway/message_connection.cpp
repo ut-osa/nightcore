@@ -6,8 +6,12 @@
 #include "ipc/fifo.h"
 #include "gateway/server.h"
 
+#include <absl/flags/flag.h>
+
 #define HLOG(l) LOG(l) << log_header_
 #define HVLOG(l) VLOG(l) << log_header_
+
+ABSL_FLAG(bool, func_worker_pipe_direct_write, false, "");
 
 namespace faas {
 namespace gateway {
@@ -20,6 +24,7 @@ MessageConnection::MessageConnection(Server* server)
     : Connection(Connection::Type::Message, server),
       io_worker_(nullptr), state_(kCreated),
       func_id_(0), client_id_(0), handshake_done_(false),
+      pipe_for_write_fd_(-1),
       log_header_("MessageConnection[Handshaking]: ") {
 }
 
@@ -175,10 +180,24 @@ void MessageConnection::RecvHandshakeMessage() {
 }
 
 void MessageConnection::WriteMessage(const Message& message) {
+    if (!is_launcher_connection() && absl::GetFlag(FLAGS_func_worker_pipe_direct_write)) {
+        int fd = pipe_for_write_fd_.load();
+        if (fd != -1) {
+            ssize_t ret = write(pipe_for_write_fd_, &message, sizeof(Message));
+            if (ret > 0) {
+                if (gsl::narrow_cast<size_t>(ret) == sizeof(Message)) {
+                    // All good
+                    return;
+                } else {
+                    HLOG(FATAL) << "This should not happen given atomic property of pipe";
+                }
+            }
+        }
+        HLOG(INFO) << "Fallback to original WriteMessage";
+    }
     {
         absl::MutexLock lk(&write_message_mu_);
         pending_messages_.push_back(message);
-        pending_messages_.back().send_timestamp = GetMonotonicMicroTimestamp();
     }
     io_worker_->ScheduleFunction(
         this, absl::bind_front(&MessageConnection::SendPendingMessages, this));
@@ -262,6 +281,12 @@ UV_WRITE_CB_FOR_CLASS(MessageConnection, WriteMessage) {
         HLOG(ERROR) << "Failed to write response, will close this connection: "
                     << uv_strerror(status);
         ScheduleClose();
+    } else {
+        if (!is_launcher_connection() && absl::GetFlag(FLAGS_func_worker_pipe_direct_write)) {
+            int fd = -1;
+            UV_DCHECK_OK(uv_fileno(UV_AS_HANDLE(pipe_for_write_message_), &fd));
+            pipe_for_write_fd_.store(fd);
+        }
     }
 }
 

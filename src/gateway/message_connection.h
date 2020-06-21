@@ -45,6 +45,7 @@ private:
     uv_pipe_t* pipe_for_read_message_;
     uv_pipe_t* pipe_for_write_message_;
     uv::HandleScope handle_scope_;
+    std::atomic<int> pipe_for_write_fd_;
 
     std::string log_header_;
 

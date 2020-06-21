@@ -138,6 +138,7 @@ FuncWorker::FuncWorker(MessageConnection* message_connection)
 FuncWorker::~FuncWorker() {}
 
 void FuncWorker::DispatchFuncCall(Message* dispatch_func_call_message) {
+    dispatch_func_call_message->send_timestamp = GetMonotonicMicroTimestamp();
     connection_->WriteMessage(*dispatch_func_call_message);
 }
 
