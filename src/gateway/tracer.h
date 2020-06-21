@@ -39,6 +39,7 @@ public:
         int64_t            finish_timestamp    ABSL_GUARDED_BY(mu);
         FuncWorker*        assigned_worker     ABSL_GUARDED_BY(mu);
         int32_t            processing_time     ABSL_GUARDED_BY(mu);
+        int32_t            dispatch_delay      ABSL_GUARDED_BY(mu);
         int32_t            total_queuing_delay ABSL_GUARDED_BY(mu);
     };
 
@@ -48,8 +49,9 @@ public:
     FuncCallInfo* OnFuncCallDispatched(const protocol::FuncCall& func_call,
                                        FuncWorker* func_worker);
     FuncCallInfo* OnFuncCallCompleted(const protocol::FuncCall& func_call,
-                                      int32_t processing_time, size_t output_size);
-    FuncCallInfo* OnFuncCallFailed(const protocol::FuncCall& func_call);
+                                      int32_t processing_time, int32_t dispatch_delay,
+                                      size_t output_size);
+    FuncCallInfo* OnFuncCallFailed(const protocol::FuncCall& func_call, int32_t dispatch_delay);
 
     void DiscardFuncCallInfo(const protocol::FuncCall& func_call);
 
@@ -82,6 +84,7 @@ private:
         stat::StatisticsCollector<uint32_t> output_size_stat       ABSL_GUARDED_BY(mu);
         stat::StatisticsCollector<int32_t>  queueing_delay_stat    ABSL_GUARDED_BY(mu);
         stat::StatisticsCollector<int32_t>  running_delay_stat     ABSL_GUARDED_BY(mu);
+        stat::StatisticsCollector<int32_t>  dispatch_delay_stat    ABSL_GUARDED_BY(mu);
         stat::StatisticsCollector<uint16_t> inflight_requests_stat ABSL_GUARDED_BY(mu);
 
         utils::ExpMovingAvg instant_rps_ema      ABSL_GUARDED_BY(mu);

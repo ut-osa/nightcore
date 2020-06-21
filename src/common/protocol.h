@@ -21,7 +21,7 @@ union FuncCall {
         uint16_t client_id : 14;
         uint32_t call_id   : 32;
         uint16_t padding   : 4;
-    } __attribute__((packed));
+    } __attribute__ ((packed));
     uint64_t full_call_id;
 };
 static_assert(sizeof(FuncCall) == 8, "Unexpected FuncCall size");
@@ -85,7 +85,10 @@ struct Message {
     }  __attribute__ ((packed));
     union {
         uint64_t parent_call_id;  // Used in INVOKE_FUNC, saved as full_call_id
-        int32_t processing_time;  // Used in FUNC_CALL_COMPLETE
+        struct {
+            int32_t dispatch_delay;   // Used in FUNC_CALL_COMPLETE, FUNC_CALL_FAILED
+            int32_t processing_time;  // Used in FUNC_CALL_COMPLETE
+        } __attribute__ ((packed));
     };
     int64_t send_timestamp;
     int32_t payload_size;  // Used in HANDSHAKE_RESPONSE, INVOKE_FUNC, FUNC_CALL_COMPLETE

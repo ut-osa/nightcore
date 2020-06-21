@@ -125,7 +125,8 @@ Tracer::FuncCallInfo* Tracer::OnFuncCallDispatched(const protocol::FuncCall& fun
 }
 
 Tracer::FuncCallInfo* Tracer::OnFuncCallCompleted(const FuncCall& func_call,
-                                                  int32_t processing_time, size_t output_size) {
+                                                  int32_t processing_time, int32_t dispatch_delay,
+                                                  size_t output_size) {
     int64_t current_timestamp = GetMonotonicMicroTimestamp();
     FuncCallInfo* info;
     FuncCallInfo* parent_info = nullptr;
@@ -152,6 +153,7 @@ Tracer::FuncCallInfo* Tracer::OnFuncCallCompleted(const FuncCall& func_call,
         info->output_size = output_size;
         info->finish_timestamp = current_timestamp;
         info->processing_time = processing_time;
+        info->dispatch_delay = dispatch_delay;
         total_queuing_delay = info->total_queuing_delay;
     }
     if (parent_info != nullptr) {
@@ -166,6 +168,7 @@ Tracer::FuncCallInfo* Tracer::OnFuncCallCompleted(const FuncCall& func_call,
         int32_t running_delay = gsl::narrow_cast<int32_t>(
             current_timestamp - info->dispatch_timestamp);
         per_func_stat->running_delay_stat.AddSample(running_delay);
+        per_func_stat->dispatch_delay_stat.AddSample(dispatch_delay);
         per_func_stat->inflight_requests--;
         if (per_func_stat->inflight_requests < 0) {
             HLOG(ERROR) << "Negative inflight_requests for func_id " << per_func_stat->func_id;
@@ -184,7 +187,7 @@ Tracer::FuncCallInfo* Tracer::OnFuncCallCompleted(const FuncCall& func_call,
     return info;
 }
 
-Tracer::FuncCallInfo* Tracer::OnFuncCallFailed(const FuncCall& func_call) {
+Tracer::FuncCallInfo* Tracer::OnFuncCallFailed(const FuncCall& func_call, int32_t dispatch_delay) {
     int64_t current_timestamp = GetMonotonicMicroTimestamp();
     FuncCallInfo* info;
     FuncCallInfo* parent_info = nullptr;
@@ -206,6 +209,7 @@ Tracer::FuncCallInfo* Tracer::OnFuncCallFailed(const FuncCall& func_call) {
         absl::MutexLock lk(&info->mu);
         info->state = FuncCallState::kFailed;
         info->finish_timestamp = current_timestamp;
+        info->dispatch_delay = dispatch_delay;
         total_queuing_delay = info->total_queuing_delay;
     }
     if (parent_info != nullptr) {
@@ -217,6 +221,7 @@ Tracer::FuncCallInfo* Tracer::OnFuncCallFailed(const FuncCall& func_call) {
     {
         absl::MutexLock lk(&per_func_stat->mu);
         per_func_stat->failed_requests_stat.Tick();
+        per_func_stat->dispatch_delay_stat.AddSample(dispatch_delay);
         per_func_stat->inflight_requests--;
         if (per_func_stat->inflight_requests < 0) {
             HLOG(ERROR) << "Negative inflight_requests for func_id " << per_func_stat->func_id;
@@ -294,6 +299,8 @@ Tracer::PerFuncStatistics::PerFuncStatistics(uint16_t func_id)
           fmt::format("queueing_delay[{}]", func_id))),
       running_delay_stat(stat::StatisticsCollector<int32_t>::StandardReportCallback(
           fmt::format("running_delay[{}]", func_id))),
+      dispatch_delay_stat(stat::StatisticsCollector<int32_t>::StandardReportCallback(
+          fmt::format("dispatch_delay[{}]", func_id))),
       inflight_requests_stat(stat::StatisticsCollector<uint16_t>::StandardReportCallback(
           fmt::format("inflight_requests[{}]", func_id))),
       instant_rps_ema(/* alpha= */ 0.999, /* p= */ 1.0),

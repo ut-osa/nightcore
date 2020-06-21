@@ -29,8 +29,8 @@ public:
                        const protocol::FuncCall& parent_func_call,
                        size_t input_size, std::span<const char> inline_input, bool shm_input);
     void OnFuncCallCompleted(const protocol::FuncCall& func_call,
-                             int32_t processing_time, size_t output_size);
-    void OnFuncCallFailed(const protocol::FuncCall& func_call);
+                             int32_t processing_time, int32_t dispatch_delay, size_t output_size);
+    void OnFuncCallFailed(const protocol::FuncCall& func_call, int32_t dispatch_delay);
 
 private:
     Server* server_;

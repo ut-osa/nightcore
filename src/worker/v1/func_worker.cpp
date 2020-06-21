@@ -103,6 +103,8 @@ void FuncWorker::HandshakeWithGateway() {
 }
 
 void FuncWorker::ExecuteFunc(void* worker_handle, const Message& dispatch_func_call_message) {
+    int32_t dispatch_delay = gsl::narrow_cast<int32_t>(
+        GetMonotonicMicroTimestamp() - dispatch_func_call_message.send_timestamp);
     FuncCall func_call = GetFuncCallFromMessage(dispatch_func_call_message);
     VLOG(1) << "Execute func_call " << FuncCallDebugString(func_call);
     std::unique_ptr<ipc::ShmRegion> input_region;
@@ -126,6 +128,7 @@ void FuncWorker::ExecuteFunc(void* worker_handle, const Message& dispatch_func_c
         func_call, /* success= */ ret == 0, func_output_buffer_.to_span(),
         processing_time, main_pipe_buf_, &response);
     VLOG(1) << "Send response to gateway";
+    response.dispatch_delay = dispatch_delay;
     response.send_timestamp = GetMonotonicMicroTimestamp();
     PCHECK(io_utils::SendMessage(output_pipe_fd_, response));
 }

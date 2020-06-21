@@ -563,10 +563,10 @@ void Server::OnRecvMessage(MessageConnection* connection, const Message& message
         if (dispatcher != nullptr) {
             if (IsFuncCallCompleteMessage(message)) {
                 dispatcher->OnFuncCallCompleted(
-                    func_call, message.processing_time,
+                    func_call, message.processing_time, message.dispatch_delay,
                     /* output_size= */ gsl::narrow_cast<size_t>(std::abs(message.payload_size)));
             } else {
-                dispatcher->OnFuncCallFailed(func_call);
+                dispatcher->OnFuncCallFailed(func_call, message.dispatch_delay);
             }
         }
         if (func_call.client_id == 0) {

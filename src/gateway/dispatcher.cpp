@@ -105,12 +105,12 @@ bool Dispatcher::OnNewFuncCall(const FuncCall& func_call, const FuncCall& parent
     return true;
 }
 
-void Dispatcher::OnFuncCallCompleted(const FuncCall& func_call,
-                                     int32_t processing_time, size_t output_size) {
+void Dispatcher::OnFuncCallCompleted(const FuncCall& func_call, int32_t processing_time,
+                                     int32_t dispatch_delay, size_t output_size) {
     VLOG(1) << "OnFuncCallCompleted " << FuncCallDebugString(func_call);
     DCHECK_EQ(func_id_, func_call.func_id);
     absl::MutexLock lk(&mu_);
-    server_->tracer()->OnFuncCallCompleted(func_call, processing_time, output_size);
+    server_->tracer()->OnFuncCallCompleted(func_call, processing_time, dispatch_delay, output_size);
     server_->tracer()->DiscardFuncCallInfo(func_call);
     if (!assigned_workers_.contains(func_call.full_call_id)) {
         HLOG(ERROR) << "Cannot find assigned worker for full_call_id " << func_call.full_call_id;
@@ -121,11 +121,11 @@ void Dispatcher::OnFuncCallCompleted(const FuncCall& func_call,
     assigned_workers_.erase(func_call.full_call_id);
 }
 
-void Dispatcher::OnFuncCallFailed(const FuncCall& func_call) {
+void Dispatcher::OnFuncCallFailed(const FuncCall& func_call, int32_t dispatch_delay) {
     VLOG(1) << "OnFuncCallFailed " << FuncCallDebugString(func_call);
     DCHECK_EQ(func_id_, func_call.func_id);
     absl::MutexLock lk(&mu_);
-    server_->tracer()->OnFuncCallFailed(func_call);
+    server_->tracer()->OnFuncCallFailed(func_call, dispatch_delay);
     server_->tracer()->DiscardFuncCallInfo(func_call);
     if (!assigned_workers_.contains(func_call.full_call_id)) {
         return;
