@@ -68,6 +68,7 @@ private:
     absl::flat_hash_map</* full_call_id */ uint64_t, FuncCallInfo*>
         func_call_infos_ ABSL_GUARDED_BY(mu_);
 
+    stat::StatisticsCollector<int32_t> dispatch_delay_stat_    ABSL_GUARDED_BY(mu_);
     stat::StatisticsCollector<int32_t> dispatch_overhead_stat_ ABSL_GUARDED_BY(mu_);
 
     struct PerFuncStatistics {
@@ -84,7 +85,6 @@ private:
         stat::StatisticsCollector<uint32_t> output_size_stat       ABSL_GUARDED_BY(mu);
         stat::StatisticsCollector<int32_t>  queueing_delay_stat    ABSL_GUARDED_BY(mu);
         stat::StatisticsCollector<int32_t>  running_delay_stat     ABSL_GUARDED_BY(mu);
-        stat::StatisticsCollector<int32_t>  dispatch_delay_stat    ABSL_GUARDED_BY(mu);
         stat::StatisticsCollector<uint16_t> inflight_requests_stat ABSL_GUARDED_BY(mu);
 
         utils::ExpMovingAvg instant_rps_ema      ABSL_GUARDED_BY(mu);

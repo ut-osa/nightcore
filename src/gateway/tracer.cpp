@@ -14,6 +14,8 @@ using protocol::FuncCallDebugString;
 
 Tracer::Tracer(Server* server)
     : server_(server),
+      dispatch_delay_stat_(
+          stat::StatisticsCollector<int32_t>::StandardReportCallback("dispatch_delay")),
       dispatch_overhead_stat_(
           stat::StatisticsCollector<int32_t>::StandardReportCallback("dispatch_overhead")) {
     for (int i = 0; i < protocol::kMaxFuncId; i++) {
@@ -141,6 +143,7 @@ Tracer::FuncCallInfo* Tracer::OnFuncCallCompleted(const FuncCall& func_call,
         absl::ReaderMutexLock info_lk(&info->mu);
         dispatch_overhead_stat_.AddSample(gsl::narrow_cast<int32_t>(
             current_timestamp - info->dispatch_timestamp - processing_time));
+        dispatch_delay_stat_.AddSample(dispatch_delay);
         if (func_call_infos_.contains(info->parent_func_call.full_call_id)) {
             parent_info = func_call_infos_[info->parent_func_call.full_call_id];
         }
@@ -168,7 +171,6 @@ Tracer::FuncCallInfo* Tracer::OnFuncCallCompleted(const FuncCall& func_call,
         int32_t running_delay = gsl::narrow_cast<int32_t>(
             current_timestamp - info->dispatch_timestamp);
         per_func_stat->running_delay_stat.AddSample(running_delay);
-        per_func_stat->dispatch_delay_stat.AddSample(dispatch_delay);
         per_func_stat->inflight_requests--;
         if (per_func_stat->inflight_requests < 0) {
             HLOG(ERROR) << "Negative inflight_requests for func_id " << per_func_stat->func_id;
@@ -199,6 +201,7 @@ Tracer::FuncCallInfo* Tracer::OnFuncCallFailed(const FuncCall& func_call, int32_
             return nullptr;
         }
         info = func_call_infos_[func_call.full_call_id];
+        dispatch_delay_stat_.AddSample(dispatch_delay);
         if (func_call_infos_.contains(info->parent_func_call.full_call_id)) {
             parent_info = func_call_infos_[info->parent_func_call.full_call_id];
         }
@@ -221,7 +224,6 @@ Tracer::FuncCallInfo* Tracer::OnFuncCallFailed(const FuncCall& func_call, int32_
     {
         absl::MutexLock lk(&per_func_stat->mu);
         per_func_stat->failed_requests_stat.Tick();
-        per_func_stat->dispatch_delay_stat.AddSample(dispatch_delay);
         per_func_stat->inflight_requests--;
         if (per_func_stat->inflight_requests < 0) {
             HLOG(ERROR) << "Negative inflight_requests for func_id " << per_func_stat->func_id;
@@ -299,8 +301,6 @@ Tracer::PerFuncStatistics::PerFuncStatistics(uint16_t func_id)
           fmt::format("queueing_delay[{}]", func_id))),
       running_delay_stat(stat::StatisticsCollector<int32_t>::StandardReportCallback(
           fmt::format("running_delay[{}]", func_id))),
-      dispatch_delay_stat(stat::StatisticsCollector<int32_t>::StandardReportCallback(
-          fmt::format("dispatch_delay[{}]", func_id))),
       inflight_requests_stat(stat::StatisticsCollector<uint16_t>::StandardReportCallback(
           fmt::format("inflight_requests[{}]", func_id))),
       instant_rps_ema(/* alpha= */ 0.999, /* p= */ 1.0),
