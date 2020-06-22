@@ -31,6 +31,9 @@ inline bool WithinEventLoop(uv_loop_t* uv_loop) {
 
 #if DCHECK_IS_ON()
 
+#include <typeinfo>
+#include <typeindex>
+
 #define UV_DCHECK_INSTANCE_OF(ptr, ClassName)                               \
     static_assert(std::is_convertible<ClassName*, faas::uv::Base*>::value,  \
                   #ClassName " is not inherited from fass::uv::Base");      \
@@ -38,9 +41,14 @@ inline bool WithinEventLoop(uv_loop_t* uv_loop) {
         faas::uv::Base* t_ptr = reinterpret_cast<faas::uv::Base*>(ptr);     \
         try {                                                               \
             const std::type_info& r = typeid(*t_ptr);                       \
-            CHECK(r == typeid(ClassName))                                   \
-                << #ptr << " does not store an instance of class "          \
-                << #ClassName;                                              \
+            if (std::type_index(r) != std::type_index(typeid(ClassName))) { \
+                ClassName* c_ptr = dynamic_cast<ClassName*>(t_ptr);         \
+                if (reinterpret_cast<void*>(c_ptr) != ptr) {                \
+                    LOG(FATAL) << #ptr                                      \
+                               << " does not store an instance of class "   \
+                               << #ClassName;                               \
+                }                                                           \
+            }                                                               \
         } catch (const std::bad_typeid& e) {                                \
             LOG(FATAL) << "Failed to obtain type info of " << #ptr;         \
         }                                                                   \
