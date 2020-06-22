@@ -14,6 +14,7 @@ IOWorker::IOWorker(std::string_view worker_name,
                          absl::bind_front(&IOWorker::EventLoopThreadMain, this)),
       read_buffer_pool_(absl::StrFormat("%s_Read", worker_name), read_buffer_size),
       write_buffer_pool_(absl::StrFormat("%s_Write", worker_name), write_buffer_size),
+      connections_on_closing_(0),
       async_event_recv_timestamp_(0),
       uv_async_delay_stat_(stat::StatisticsCollector<int32_t>::StandardReportCallback(
           absl::StrFormat("uv_async_delay[%s]", worker_name))) {
@@ -30,6 +31,7 @@ IOWorker::~IOWorker() {
     State state = state_.load();
     DCHECK(state == kCreated || state == kStopped);
     DCHECK(connections_.empty());
+    DCHECK_EQ(connections_on_closing_, 0);
     UV_DCHECK_OK(uv_loop_close(&uv_loop_));
 }
 
@@ -123,12 +125,13 @@ void IOWorker::OnConnectionClose(ConnectionBase* connection) {
     DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
     DCHECK(pipe_to_server_.loop == &uv_loop_);
     DCHECK(connections_.contains(connection->id()));
+    connections_.erase(connection->id());
     uv_write_t* write_req = connection->uv_write_req_for_back_transfer();
     size_t buf_len = sizeof(void*);
     char* buf = connection->pipe_write_buf_for_transfer();
     memcpy(buf, &connection, buf_len);
     uv_buf_t uv_buf = uv_buf_init(buf, buf_len);
-    write_req->data = connection;
+    connections_on_closing_++;
     UV_DCHECK_OK(uv_write(write_req, UV_AS_STREAM(&pipe_to_server_),
                           &uv_buf, 1, &IOWorker::PipeWriteCallback));
 }
@@ -151,7 +154,7 @@ UV_ASYNC_CB_FOR_CLASS(IOWorker, Stop) {
     }
     HLOG(INFO) << "Start stopping process";
     UV_DCHECK_OK(uv_read_stop(UV_AS_STREAM(&pipe_to_server_)));
-    if (connections_.empty()) {
+    if (connections_.empty() && connections_on_closing_ == 0) {
         HLOG(INFO) << "Close pipe to Server";
         uv_close(UV_AS_HANDLE(&pipe_to_server_), nullptr);
     } else {
@@ -173,6 +176,8 @@ UV_READ_CB_FOR_CLASS(IOWorker, NewConnection) {
     uv_stream_t* client = connection->InitUVHandle(&uv_loop_);
     UV_DCHECK_OK(uv_accept(UV_AS_STREAM(&pipe_to_server_), client));
     connection->Start(this);
+    DCHECK(connection->id() >= 0);
+    DCHECK(!connections_.contains(connection->id()));
     connections_[connection->id()] = connection;
     if (state_.load(std::memory_order_consume) == kStopping) {
         HLOG(WARNING) << "Receive new connection in stopping state, will close it directly";
@@ -182,10 +187,11 @@ UV_READ_CB_FOR_CLASS(IOWorker, NewConnection) {
 
 UV_WRITE_CB_FOR_CLASS(IOWorker, PipeWrite) {
     DCHECK(status == 0) << "Failed to write to pipe: " << uv_strerror(status);
-    ConnectionBase* connection = reinterpret_cast<ConnectionBase*>(req->data);
-    DCHECK(connections_.contains(connection->id()));
-    connections_.erase(connection->id());
-    if (state_.load(std::memory_order_consume) == kStopping && connections_.empty()) {
+    DCHECK_GT(connections_on_closing_, 0);
+    connections_on_closing_--;
+    if (state_.load(std::memory_order_consume) == kStopping
+            && connections_.empty()
+            && connections_on_closing_ == 0) {
         // We have returned all Connection objects to Server
         HLOG(INFO) << "Close pipe to Server";
         uv_close(UV_AS_HANDLE(&pipe_to_server_), nullptr);

@@ -101,11 +101,11 @@ void ServerBase::RegisterConnection(IOWorker* io_worker,
     uv_buf_t uv_buf = uv_buf_init(reinterpret_cast<char*>(buf), sizeof(void*));
     uv_pipe_t* pipe_to_worker = pipes_to_io_worker_[io_worker].get();
     write_req->data = uv_handle;
+    connection->set_id(next_connection_id_++);
+    connections_.insert(std::move(connection));
     UV_DCHECK_OK(uv_write2(write_req, UV_AS_STREAM(pipe_to_worker),
                            &uv_buf, 1, UV_AS_STREAM(uv_handle),
                            &PipeWrite2Callback));
-    connection->set_id(next_connection_id_++);
-    connections_.insert(std::move(connection));
 }
 
 void ServerBase::ReturnConnection(ConnectionBase* connection) {

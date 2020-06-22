@@ -58,6 +58,7 @@ private:
     utils::BufferPool read_buffer_pool_;
     utils::BufferPool write_buffer_pool_;
     utils::SimpleObjectPool<uv_write_t> write_req_pool_;
+    int connections_on_closing_;
 
     struct ScheduledFunction {
         int owner_id;
