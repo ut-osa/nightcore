@@ -201,6 +201,7 @@ Tracer::FuncCallInfo* Tracer::OnFuncCallFailed(const FuncCall& func_call, int32_
             return nullptr;
         }
         info = func_call_infos_[func_call.full_call_id];
+        absl::ReaderMutexLock info_lk(&info->mu);
         dispatch_delay_stat_.AddSample(dispatch_delay);
         if (func_call_infos_.contains(info->parent_func_call.full_call_id)) {
             parent_info = func_call_infos_[info->parent_func_call.full_call_id];
