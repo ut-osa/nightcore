@@ -23,8 +23,7 @@ public:
     void WaitForFinish();
 
     void OnIOWorkerCreated(std::string_view worker_name, int event_loop_thread_tid);
-    void OnLauncherConnected(MessageConnection* launcher_connection,
-                             std::string_view container_id);
+    void OnNewFuncContainer(uint16_t func_id, std::string_view container_id);
 
 private:
     enum State { kCreated, kRunning, kStopping, kStopped };

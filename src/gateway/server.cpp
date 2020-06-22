@@ -255,8 +255,8 @@ bool Server::OnNewHandshake(MessageConnection* connection,
             return false;
         }
         std::string container_id(payload.data(), payload.size());
-        if (monitor_ != nullptr) {
-            monitor_->OnLauncherConnected(connection, container_id);
+        if (monitor_ != nullptr && container_id != docker_utils::kInvalidContainerId) {
+            monitor_->OnNewFuncContainer(func_id, container_id);
         }
         success = worker_manager_->OnLauncherConnected(connection);
     } else {

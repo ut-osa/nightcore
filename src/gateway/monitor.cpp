@@ -51,9 +51,7 @@ void Monitor::OnIOWorkerCreated(std::string_view worker_name, int event_loop_thr
     io_workers_[event_loop_thread_tid] = std::string(worker_name);
 }
 
-void Monitor::OnLauncherConnected(MessageConnection* launcher_connection,
-                                  std::string_view container_id) {
-    uint16_t func_id = launcher_connection->func_id();
+void Monitor::OnNewFuncContainer(uint16_t func_id, std::string_view container_id) {
     absl::MutexLock lk(&mu_);
     if (func_container_ids_.contains(func_id)) {
         HLOG(ERROR) << fmt::format("func_id {} already exists", func_id);
