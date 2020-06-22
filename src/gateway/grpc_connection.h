@@ -4,7 +4,8 @@
 #include "common/uv.h"
 #include "utils/appendable_buffer.h"
 #include "utils/object_pool.h"
-#include "gateway/connection.h"
+#include "server/io_worker.h"
+#include "server/connection_base.h"
 #include "gateway/grpc_call_context.h"
 
 #include <nghttp2/nghttp2.h>
@@ -13,27 +14,26 @@ namespace faas {
 namespace gateway {
 
 class Server;
-class IOWorker;
 
-class GrpcConnection final : public Connection {
+class GrpcConnection final : public server::ConnectionBase {
 public:
+    static constexpr int kTypeId = 2;
+
     static constexpr size_t kH2FrameHeaderByteSize = 9;
     static constexpr size_t kGrpcLPMPrefixByteSize = 5;
 
     GrpcConnection(Server* server, int connection_id);
     ~GrpcConnection();
 
-    int id() const { return connection_id_; }
-
     uv_stream_t* InitUVHandle(uv_loop_t* uv_loop) override;
-    void Start(IOWorker* io_worker) override;
+    void Start(server::IOWorker* io_worker) override;
     void ScheduleClose() override;
 
 private:
     enum State { kCreated, kRunning, kClosing, kClosed };
 
-    int connection_id_;
-    IOWorker* io_worker_;
+    Server* server_;
+    server::IOWorker* io_worker_;
     uv_tcp_t uv_tcp_handle_;
     State state_;
     int closed_uv_handles_;

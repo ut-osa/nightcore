@@ -3,7 +3,8 @@
 #include "base/common.h"
 #include "common/uv.h"
 #include "utils/appendable_buffer.h"
-#include "gateway/connection.h"
+#include "server/io_worker.h"
+#include "server/connection_base.h"
 
 #include <http_parser.h>
 
@@ -11,27 +12,26 @@ namespace faas {
 namespace gateway {
 
 class Server;
-class IOWorker;
 class HttpAsyncRequestContext;
 
-class HttpConnection final : public Connection {
+class HttpConnection final : public server::ConnectionBase {
 public:
+    static constexpr int kTypeId = 0;
+
     static constexpr const char* kDefaultContentType = "text/plain";
 
     HttpConnection(Server* server, int connection_id);
     ~HttpConnection();
 
-    int id() const { return connection_id_; }
-
     uv_stream_t* InitUVHandle(uv_loop_t* uv_loop) override;
-    void Start(IOWorker* io_worker) override;
+    void Start(server::IOWorker* io_worker) override;
     void ScheduleClose() override;
 
 private:
     enum State { kCreated, kRunning, kClosing, kClosed };
 
-    int connection_id_;
-    IOWorker* io_worker_;
+    Server* server_;
+    server::IOWorker* io_worker_;
     uv_tcp_t uv_tcp_handle_;
     State state_;
 

@@ -6,9 +6,7 @@
 #include "common/stat.h"
 #include "common/protocol.h"
 #include "common/func_config.h"
-#include "utils/buffer_pool.h"
-#include "gateway/connection.h"
-#include "gateway/io_worker.h"
+#include "server/server_base.h"
 #include "gateway/http_request_context.h"
 #include "gateway/http_connection.h"
 #include "gateway/grpc_connection.h"
@@ -21,7 +19,7 @@
 namespace faas {
 namespace gateway {
 
-class Server : public uv::Base {
+class Server final : public server::ServerBase {
 public:
     static constexpr int kDefaultListenBackLog = 32;
     static constexpr int kDefaultNumHttpWorkers = 1;
@@ -46,10 +44,6 @@ public:
     WorkerManager* worker_manager() { return worker_manager_.get(); }
     Monitor* monitor() { return monitor_.get(); }
     Tracer* tracer() { return tracer_.get(); }
-
-    void Start();
-    void ScheduleStop();
-    void WaitForFinish();
 
     typedef std::function<bool(std::string_view /* method */,
                                std::string_view /* path */)> RequestMatcher;
@@ -105,8 +99,6 @@ public:
 
 private:
     class ExternalFuncCallContext;
-    enum State { kCreated, kRunning, kStopping, kStopped };
-    std::atomic<State> state_;
 
     std::string address_;
     int http_port_;
@@ -117,21 +109,15 @@ private:
     int num_io_workers_;
     std::string func_config_file_;
 
-    uv_loop_t uv_loop_;
     uv_tcp_t uv_http_handle_;
     uv_tcp_t uv_grpc_handle_;
     uv_pipe_t uv_ipc_handle_;
-    uv_async_t stop_event_;
-    base::Thread event_loop_thread_;
 
-    std::vector<std::unique_ptr<IOWorker>> io_workers_;
-    std::vector<IOWorker*> http_workers_;
-    std::vector<IOWorker*> ipc_workers_;
-    absl::flat_hash_map<IOWorker*, std::unique_ptr<uv_pipe_t>> pipes_to_io_worker_;
-    utils::AppendableBuffer return_connection_read_buffer_;
+    std::vector<server::IOWorker*> http_workers_;
+    std::vector<server::IOWorker*> ipc_workers_;
 
-    absl::flat_hash_set<std::unique_ptr<HttpConnection>> http_connections_;
-    absl::flat_hash_set<std::unique_ptr<GrpcConnection>> grpc_connections_;
+    absl::flat_hash_set<HttpConnection*> http_connections_;
+    absl::flat_hash_set<GrpcConnection*> grpc_connections_;
 
     int next_http_connection_id_;
     int next_grpc_connection_id_;
@@ -140,7 +126,7 @@ private:
 
     std::vector<std::unique_ptr<RequestHandler>> request_handlers_;
 
-    absl::flat_hash_set<std::unique_ptr<MessageConnection>> message_connections_;
+    absl::flat_hash_set<MessageConnection*> message_connections_;
     std::unique_ptr<WorkerManager> worker_manager_;
     std::unique_ptr<Monitor> monitor_;
     std::unique_ptr<Tracer> tracer_;
@@ -172,31 +158,25 @@ private:
     stat::Counter output_use_shm_stat_ ABSL_GUARDED_BY(mu_);
     stat::Counter discarded_func_call_stat_ ABSL_GUARDED_BY(mu_);
 
-    void InitAndStartIOWorker(IOWorker* io_worker);
-    std::unique_ptr<uv_pipe_t> CreatePipeToWorker(int* pipe_fd_for_worker);
-    void TransferConnectionToWorker(IOWorker* io_worker, Connection* connection,
-                                    uv_stream_t* send_handle);
-    void ReturnConnection(Connection* connection);
+    void StartInternal() override;
+    void StopInternal() override;
+    void OnConnectionClose(server::ConnectionBase* connection) override;
 
     void RegisterInternalRequestHandlers();
     void OnExternalFuncCall(uint16_t func_id,
                             std::shared_ptr<HttpAsyncRequestContext> http_context);
     void NewExternalFuncCall(std::unique_ptr<ExternalFuncCallContext> func_call_context);
 
-    void EventLoopThreadMain();
-    IOWorker* PickHttpWorker();
-    IOWorker* PickIpcWorker();
+    server::IOWorker* PickHttpWorker();
+    server::IOWorker* PickIpcWorker();
 
     Dispatcher* GetOrCreateDispatcherLocked(uint16_t func_id) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
     bool DispatchExternalFuncCall(ExternalFuncCallContext* func_call_context);
     void ProcessDiscardedFuncCallIfNecessary();
 
-    DECLARE_UV_ASYNC_CB_FOR_CLASS(Stop);
     DECLARE_UV_CONNECTION_CB_FOR_CLASS(HttpConnection);
     DECLARE_UV_CONNECTION_CB_FOR_CLASS(GrpcConnection);
     DECLARE_UV_CONNECTION_CB_FOR_CLASS(MessageConnection);
-    DECLARE_UV_READ_CB_FOR_CLASS(ReturnConnection);
-    DECLARE_UV_WRITE_CB_FOR_CLASS(PipeWrite2);
 
     DISALLOW_COPY_AND_ASSIGN(Server);
 };

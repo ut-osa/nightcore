@@ -1,17 +1,14 @@
-#include "gateway/io_worker.h"
-
-#include "gateway/monitor.h"
-#include "gateway/server.h"
+#include "server/io_worker.h"
 
 #define HLOG(l) LOG(l) << log_header_
 #define HVLOG(l) VLOG(l) << log_header_
 
 namespace faas {
-namespace gateway {
+namespace server {
 
-IOWorker::IOWorker(Server* server, std::string_view worker_name,
+IOWorker::IOWorker(std::string_view worker_name,
                    size_t read_buffer_size, size_t write_buffer_size)
-    : server_(server), worker_name_(worker_name), state_(kCreated),
+    : worker_name_(worker_name), state_(kCreated),
       log_header_(absl::StrFormat("%s: ", worker_name)),
       event_loop_thread_(absl::StrFormat("%s/EL", worker_name),
                          absl::bind_front(&IOWorker::EventLoopThreadMain, this)),
@@ -96,14 +93,14 @@ void IOWorker::ReturnWriteRequest(uv_write_t* write_req) {
     write_req_pool_.Return(write_req);
 }
 
-void IOWorker::ScheduleFunction(Connection* owner, std::function<void()> fn) {
+void IOWorker::ScheduleFunction(ConnectionBase* owner, std::function<void()> fn) {
     if (state_.load(std::memory_order_consume) != kRunning) {
         HLOG(WARNING) << "Cannot schedule function in non-running state, will ignore it";
         return;
     }
     bool within_my_event_loop = uv::WithinEventLoop(&uv_loop_);
     std::unique_ptr<ScheduledFunction> function = std::make_unique<ScheduledFunction>();
-    function->owner = owner;
+    function->owner_id = owner->id();
     function->fn = fn;
     {
         absl::MutexLock lk(&scheduled_function_mu_);
@@ -122,10 +119,10 @@ void IOWorker::ScheduleFunction(Connection* owner, std::function<void()> fn) {
     }
 }
 
-void IOWorker::OnConnectionClose(Connection* connection) {
+void IOWorker::OnConnectionClose(ConnectionBase* connection) {
     DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
     DCHECK(pipe_to_server_.loop == &uv_loop_);
-    DCHECK(connections_.contains(connection));
+    DCHECK(connections_.contains(connection->id()));
     uv_write_t* write_req = connection->uv_write_req_for_back_transfer();
     size_t buf_len = sizeof(void*);
     char* buf = connection->pipe_write_buf_for_transfer();
@@ -137,10 +134,6 @@ void IOWorker::OnConnectionClose(Connection* connection) {
 }
 
 void IOWorker::EventLoopThreadMain() {
-    Monitor* monitor = server_->monitor();
-    if (monitor != nullptr) {
-        monitor->OnIOWorkerCreated(worker_name_, base::Thread::current()->tid());
-    }
     base::Thread::current()->MarkThreadCategory("IO");
     HLOG(INFO) << "Event loop starts";
     int ret = uv_run(&uv_loop_, UV_RUN_DEFAULT);
@@ -162,7 +155,8 @@ UV_ASYNC_CB_FOR_CLASS(IOWorker, Stop) {
         HLOG(INFO) << "Close pipe to Server";
         uv_close(UV_AS_HANDLE(&pipe_to_server_), nullptr);
     } else {
-        for (Connection* connection : connections_) {
+        for (const auto& entry : connections_) {
+            ConnectionBase* connection = entry.second;
             connection->ScheduleClose();
         }
     }
@@ -173,13 +167,13 @@ UV_ASYNC_CB_FOR_CLASS(IOWorker, Stop) {
 
 UV_READ_CB_FOR_CLASS(IOWorker, NewConnection) {
     DCHECK_EQ(nread, gsl::narrow_cast<ssize_t>(sizeof(void*)));
-    Connection* connection;
+    ConnectionBase* connection;
     memcpy(&connection, buf->base, sizeof(void*));
     free(buf->base);
     uv_stream_t* client = connection->InitUVHandle(&uv_loop_);
     UV_DCHECK_OK(uv_accept(UV_AS_STREAM(&pipe_to_server_), client));
     connection->Start(this);
-    connections_.insert(connection);
+    connections_[connection->id()] = connection;
     if (state_.load(std::memory_order_consume) == kStopping) {
         HLOG(WARNING) << "Receive new connection in stopping state, will close it directly";
         connection->ScheduleClose();
@@ -188,9 +182,9 @@ UV_READ_CB_FOR_CLASS(IOWorker, NewConnection) {
 
 UV_WRITE_CB_FOR_CLASS(IOWorker, PipeWrite) {
     DCHECK(status == 0) << "Failed to write to pipe: " << uv_strerror(status);
-    Connection* connection = reinterpret_cast<Connection*>(req->data);
-    DCHECK(connections_.contains(connection));
-    connections_.erase(connection);
+    ConnectionBase* connection = reinterpret_cast<ConnectionBase*>(req->data);
+    DCHECK(connections_.contains(connection->id()));
+    connections_.erase(connection->id());
     if (state_.load(std::memory_order_consume) == kStopping && connections_.empty()) {
         // We have returned all Connection objects to Server
         HLOG(INFO) << "Close pipe to Server";
@@ -209,14 +203,14 @@ UV_ASYNC_CB_FOR_CLASS(IOWorker, RunScheduledFunctions) {
             GetMonotonicMicroTimestamp() - async_event_recv_timestamp));
     }
 #endif
-    absl::InlinedVector<std::unique_ptr<ScheduledFunction>, 32> functions;
+    absl::InlinedVector<std::unique_ptr<ScheduledFunction>, 16> functions;
     {
         absl::MutexLock lk(&scheduled_function_mu_);
         functions = std::move(scheduled_functions_);
         scheduled_functions_.clear();
     }
     for (const auto& function : functions) {
-        if (connections_.contains(function->owner)) {
+        if (connections_.contains(function->owner_id)) {
             function->fn();
         } else {
             HLOG(WARNING) << "Owner connection has closed";
@@ -224,5 +218,5 @@ UV_ASYNC_CB_FOR_CLASS(IOWorker, RunScheduledFunctions) {
     }
 }
 
-}  // namespace gateway
+}  // namespace server
 }  // namespace faas

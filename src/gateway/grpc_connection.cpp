@@ -3,7 +3,6 @@
 #include "common/time.h"
 #include "common/http_status.h"
 #include "gateway/server.h"
-#include "gateway/io_worker.h"
 
 #include <byteswap.h>
 
@@ -68,9 +67,8 @@ struct GrpcConnection::H2StreamContext {
     }
 };
 
-GrpcConnection::GrpcConnection(Server* server, int connection_id)
-    : Connection(Connection::Type::Grpc, server),
-      connection_id_(connection_id), io_worker_(nullptr),
+GrpcConnection::GrpcConnection(Server* server,  int connection_id)
+    : server::ConnectionBase(kTypeId), server_(server), io_worker_(nullptr),
       state_(kCreated), log_header_(absl::StrFormat("GrpcConnection[%d]: ", connection_id)),
       h2_session_(nullptr), h2_error_code_(NGHTTP2_NO_ERROR),
       uv_write_for_mem_send_ongoing_(false) {
@@ -105,7 +103,7 @@ uv_stream_t* GrpcConnection::InitUVHandle(uv_loop_t* uv_loop) {
     return UV_AS_STREAM(&uv_tcp_handle_);
 }
 
-void GrpcConnection::Start(IOWorker* io_worker) {
+void GrpcConnection::Start(server::IOWorker* io_worker) {
     DCHECK(state_ == kCreated);
     DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
     io_worker_ = io_worker;

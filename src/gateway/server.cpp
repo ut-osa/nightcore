@@ -35,10 +35,9 @@ using protocol::NewHandshakeResponseMessage;
 using protocol::ComputeMessageDelay;
 
 Server::Server()
-    : state_(kCreated), http_port_(-1), grpc_port_(-1),
+    : http_port_(-1), grpc_port_(-1),
       listen_backlog_(kDefaultListenBackLog), num_http_workers_(kDefaultNumHttpWorkers),
       num_ipc_workers_(kDefaultNumIpcWorkers), num_io_workers_(-1),
-      event_loop_thread_("Server/EL", absl::bind_front(&Server::EventLoopThreadMain, this)),
       next_http_connection_id_(0), next_grpc_connection_id_(0),
       next_http_worker_id_(0), next_ipc_worker_id_(0),
       worker_manager_(new WorkerManager(this)),
@@ -64,23 +63,15 @@ Server::Server()
     if (max_running_external_requests_ > 0) {
         HLOG(INFO) << "max_running_external_requests=" << max_running_external_requests_;
     }
-    UV_DCHECK_OK(uv_loop_init(&uv_loop_));
-    uv_loop_.data = &event_loop_thread_;
-    UV_DCHECK_OK(uv_tcp_init(&uv_loop_, &uv_http_handle_));
+    UV_DCHECK_OK(uv_tcp_init(uv_loop(), &uv_http_handle_));
     uv_http_handle_.data = this;
-    UV_DCHECK_OK(uv_tcp_init(&uv_loop_, &uv_grpc_handle_));
+    UV_DCHECK_OK(uv_tcp_init(uv_loop(), &uv_grpc_handle_));
     uv_grpc_handle_.data = this;
-    UV_DCHECK_OK(uv_pipe_init(&uv_loop_, &uv_ipc_handle_, 0));
+    UV_DCHECK_OK(uv_pipe_init(uv_loop(), &uv_ipc_handle_, 0));
     uv_ipc_handle_.data = this;
-    UV_DCHECK_OK(uv_async_init(&uv_loop_, &stop_event_, &Server::StopCallback));
-    stop_event_.data = this;
 }
 
-Server::~Server() {
-    State state = state_.load();
-    DCHECK(state == kCreated || state == kStopped);
-    UV_DCHECK_OK(uv_loop_close(&uv_loop_));
-}
+Server::~Server() {}
 
 void Server::RegisterInternalRequestHandlers() {
     // POST /shutdown
@@ -112,8 +103,7 @@ void Server::RegisterInternalRequestHandlers() {
     });
 }
 
-void Server::Start() {
-    DCHECK(state_.load() == kCreated);
+void Server::StartInternal() {
     RegisterInternalRequestHandlers();
     // Load function config file
     CHECK(!func_config_file_.empty());
@@ -126,31 +116,23 @@ void Server::Start() {
         CHECK_GT(num_ipc_workers_, 0);
         HLOG(INFO) << "Start " << num_http_workers_ << " IO workers for HTTP connections";
         for (int i = 0; i < num_http_workers_; i++) {
-            auto io_worker = std::make_unique<IOWorker>(this, absl::StrFormat("Http-%d", i),
-                                                        kHttpConnectionBufferSize);
-            InitAndStartIOWorker(io_worker.get());
-            http_workers_.push_back(io_worker.get());
-            io_workers_.push_back(std::move(io_worker));
+            http_workers_.push_back(CreateIOWorker(
+                absl::StrFormat("Http-%d", i), kHttpConnectionBufferSize));
         }
         HLOG(INFO) << "Start " << num_ipc_workers_ << " IO workers for IPC connections";
         for (int i = 0; i < num_ipc_workers_; i++) {
-            auto io_worker = std::make_unique<IOWorker>(this, absl::StrFormat("Ipc-%d", i),
-                                                        kMessageConnectionBufferSize,
-                                                        kMessageConnectionBufferSize);
-            InitAndStartIOWorker(io_worker.get());
-            ipc_workers_.push_back(io_worker.get());
-            io_workers_.push_back(std::move(io_worker));
+            ipc_workers_.push_back(CreateIOWorker(
+                absl::StrFormat("Ipc-%d", i),
+                kMessageConnectionBufferSize, kMessageConnectionBufferSize));
         }
     } else {
         CHECK_GT(num_io_workers_, 0);
         HLOG(INFO) << "Start " << num_io_workers_
                    << " IO workers for both HTTP and IPC connections";
         for (int i = 0; i < num_io_workers_; i++) {
-            auto io_worker = std::make_unique<IOWorker>(this, absl::StrFormat("IO-%d", i));
-            InitAndStartIOWorker(io_worker.get());
-            http_workers_.push_back(io_worker.get());
-            ipc_workers_.push_back(io_worker.get());
-            io_workers_.push_back(std::move(io_worker));
+            auto io_worker = CreateIOWorker(absl::StrFormat("IO-%d", i));
+            http_workers_.push_back(io_worker);
+            ipc_workers_.push_back(io_worker);
         }
     }
     // Listen on address:http_port for HTTP requests
@@ -182,36 +164,14 @@ void Server::Start() {
     UV_CHECK_OK(uv_listen(
         UV_AS_STREAM(&uv_ipc_handle_), listen_backlog_,
         &Server::MessageConnectionCallback));
-    // Start monitor
-    if (monitor_ != nullptr) {
-        monitor_->Start();
-    }
     // Initialize tracer
     tracer_->Init();
-    // Start thread for running event loop
-    event_loop_thread_.Start();
-    state_.store(kRunning);
 }
 
-void Server::ScheduleStop() {
-    HLOG(INFO) << "Scheduled to stop";
-    if (monitor_ != nullptr) {
-        monitor_->ScheduleStop();
-    }
-    UV_DCHECK_OK(uv_async_send(&stop_event_));
-}
-
-void Server::WaitForFinish() {
-    DCHECK(state_.load() != kCreated);
-    for (const auto& io_worker : io_workers_) {
-        io_worker->WaitForFinish();
-    }
-    if (monitor_ != nullptr) {
-        monitor_->WaitForFinish();
-    }
-    event_loop_thread_.Join();
-    DCHECK(state_.load() == kStopped);
-    HLOG(INFO) << "Stopped";
+void Server::StopInternal() {
+    uv_close(UV_AS_HANDLE(&uv_http_handle_), nullptr);
+    uv_close(UV_AS_HANDLE(&uv_grpc_handle_), nullptr);
+    uv_close(UV_AS_HANDLE(&uv_ipc_handle_), nullptr);
 }
 
 void Server::RegisterSyncRequestHandler(RequestMatcher matcher, SyncRequestHandler handler) {
@@ -235,84 +195,29 @@ bool Server::MatchRequest(std::string_view method, std::string_view path,
     return false;
 }
 
-void Server::EventLoopThreadMain() {
-    base::Thread::current()->MarkThreadCategory("IO");
-    HLOG(INFO) << "Event loop starts";
-    int ret = uv_run(&uv_loop_, UV_RUN_DEFAULT);
-    if (ret != 0) {
-        HLOG(WARNING) << "uv_run returns non-zero value: " << ret;
-    }
-    HLOG(INFO) << "Event loop finishes";
-    state_.store(kStopped);
-}
-
-IOWorker* Server::PickHttpWorker() {
-    IOWorker* io_worker = http_workers_[next_http_worker_id_];
+server::IOWorker* Server::PickHttpWorker() {
+    server::IOWorker* io_worker = http_workers_[next_http_worker_id_];
     next_http_worker_id_ = (next_http_worker_id_ + 1) % http_workers_.size();
     return io_worker;
 }
 
-IOWorker* Server::PickIpcWorker() {
-    IOWorker* io_worker = ipc_workers_[next_ipc_worker_id_];
+server::IOWorker* Server::PickIpcWorker() {
+    server::IOWorker* io_worker = ipc_workers_[next_ipc_worker_id_];
     next_ipc_worker_id_ = (next_ipc_worker_id_ + 1) % ipc_workers_.size();
     return io_worker;
 }
 
-namespace {
-void PipeReadBufferAllocCallback(uv_handle_t* handle, size_t suggested_size, uv_buf_t* buf) {
-    size_t buf_size = 256;
-    buf->base = reinterpret_cast<char*>(malloc(buf_size));
-    buf->len = buf_size;
-}
-}
-
-void Server::InitAndStartIOWorker(IOWorker* io_worker) {
-    int pipe_fd_for_worker;
-    pipes_to_io_worker_[io_worker] = CreatePipeToWorker(&pipe_fd_for_worker);
-    uv_pipe_t* pipe_to_worker = pipes_to_io_worker_[io_worker].get();
-    UV_CHECK_OK(uv_read_start(UV_AS_STREAM(pipe_to_worker),
-                              &PipeReadBufferAllocCallback,
-                              &Server::ReturnConnectionCallback));
-    io_worker->Start(pipe_fd_for_worker);
-}
-
-std::unique_ptr<uv_pipe_t> Server::CreatePipeToWorker(int* pipe_fd_for_worker) {
-    int pipe_fds[2] = { -1, -1 };
-    CHECK_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, pipe_fds), 0);
-    std::unique_ptr<uv_pipe_t> pipe_to_worker = std::make_unique<uv_pipe_t>();
-    UV_CHECK_OK(uv_pipe_init(&uv_loop_, pipe_to_worker.get(), 1));
-    pipe_to_worker->data = this;
-    UV_CHECK_OK(uv_pipe_open(pipe_to_worker.get(), pipe_fds[0]));
-    *pipe_fd_for_worker = pipe_fds[1];
-    return pipe_to_worker;
-}
-
-void Server::TransferConnectionToWorker(IOWorker* io_worker, Connection* connection,
-                                        uv_stream_t* send_handle) {
-    DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
-    uv_write_t* write_req = connection->uv_write_req_for_transfer();
-    size_t buf_len = sizeof(void*);
-    char* buf = connection->pipe_write_buf_for_transfer();
-    memcpy(buf, &connection, buf_len);
-    uv_buf_t uv_buf = uv_buf_init(buf, buf_len);
-    uv_pipe_t* pipe_to_worker = pipes_to_io_worker_[io_worker].get();
-    write_req->data = send_handle;
-    UV_DCHECK_OK(uv_write2(write_req, UV_AS_STREAM(pipe_to_worker),
-                           &uv_buf, 1, UV_AS_STREAM(send_handle),
-                           &PipeWrite2Callback));
-}
-
-void Server::ReturnConnection(Connection* connection) {
-    DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
-    if (connection->type() == Connection::Type::Http) {
+void Server::OnConnectionClose(server::ConnectionBase* connection) {
+    DCHECK_IN_EVENT_LOOP_THREAD(uv_loop());
+    if (connection->type() == HttpConnection::kTypeId) {
         HttpConnection* http_connection = static_cast<HttpConnection*>(connection);
         DCHECK(http_connections_.contains(http_connection));
         http_connections_.erase(http_connection);
-    } else if (connection->type() == Connection::Type::Grpc) {
+    } else if (connection->type() == GrpcConnection::kTypeId) {
         GrpcConnection* grpc_connection = static_cast<GrpcConnection*>(connection);
         DCHECK(grpc_connections_.contains(grpc_connection));
         grpc_connections_.erase(grpc_connection);
-    } else if (connection->type() == Connection::Type::Message) {
+    } else if (connection->type() == MessageConnection::kTypeId) {
         MessageConnection* message_connection = static_cast<MessageConnection*>(connection);
         if (message_connection->handshake_done()) {
             if (message_connection->is_launcher_connection()) {
@@ -324,7 +229,7 @@ void Server::ReturnConnection(Connection* connection) {
         message_connections_.erase(message_connection);
         HLOG(INFO) << "A MessageConnection is returned";
     } else {
-        LOG(FATAL) << "Unknown connection type!";
+        HLOG(ERROR) << "Unknown connection type!";
     }
 }
 
@@ -779,16 +684,18 @@ UV_CONNECTION_CB_FOR_CLASS(Server, HttpConnection) {
         HLOG(WARNING) << "Failed to open HTTP connection: " << uv_strerror(status);
         return;
     }
-    std::unique_ptr<HttpConnection> connection = std::make_unique<HttpConnection>(
-        this, next_http_connection_id_++);
+    HttpConnection* connection = new HttpConnection(this, next_http_connection_id_++);
     uv_tcp_t* client = reinterpret_cast<uv_tcp_t*>(malloc(sizeof(uv_tcp_t)));
-    UV_DCHECK_OK(uv_tcp_init(&uv_loop_, client));
+    UV_DCHECK_OK(uv_tcp_init(uv_loop(), client));
     if (uv_accept(UV_AS_STREAM(&uv_http_handle_), UV_AS_STREAM(client)) == 0) {
-        TransferConnectionToWorker(PickHttpWorker(), connection.get(), UV_AS_STREAM(client));
-        http_connections_.insert(std::move(connection));
+        RegisterConnection(PickHttpWorker(),
+                           std::unique_ptr<server::ConnectionBase>(connection),
+                           UV_AS_STREAM(client));
+        http_connections_.insert(connection);
     } else {
         LOG(ERROR) << "Failed to accept new HTTP connection";
         free(client);
+        delete connection;
     }
 }
 
@@ -797,16 +704,18 @@ UV_CONNECTION_CB_FOR_CLASS(Server, GrpcConnection) {
         HLOG(WARNING) << "Failed to open gRPC connection: " << uv_strerror(status);
         return;
     }
-    std::unique_ptr<GrpcConnection> connection = std::make_unique<GrpcConnection>(
-        this, next_grpc_connection_id_++);
+    GrpcConnection* connection = new GrpcConnection(this, next_grpc_connection_id_++);
     uv_tcp_t* client = reinterpret_cast<uv_tcp_t*>(malloc(sizeof(uv_tcp_t)));
-    UV_DCHECK_OK(uv_tcp_init(&uv_loop_, client));
+    UV_DCHECK_OK(uv_tcp_init(uv_loop(), client));
     if (uv_accept(UV_AS_STREAM(&uv_grpc_handle_), UV_AS_STREAM(client)) == 0) {
-        TransferConnectionToWorker(PickHttpWorker(), connection.get(), UV_AS_STREAM(client));
-        grpc_connections_.insert(std::move(connection));
+        RegisterConnection(PickHttpWorker(),
+                           std::unique_ptr<server::ConnectionBase>(connection),
+                           UV_AS_STREAM(client));
+        grpc_connections_.insert(connection);
     } else {
         LOG(ERROR) << "Failed to accept new gRPC connection";
         free(client);
+        delete connection;
     }
 }
 
@@ -816,64 +725,19 @@ UV_CONNECTION_CB_FOR_CLASS(Server, MessageConnection) {
         return;
     }
     HLOG(INFO) << "New message connection";
-    std::unique_ptr<MessageConnection> connection = std::make_unique<MessageConnection>(this);
+    MessageConnection* connection = new MessageConnection(this);
     uv_pipe_t* client = reinterpret_cast<uv_pipe_t*>(malloc(sizeof(uv_pipe_t)));
-    UV_DCHECK_OK(uv_pipe_init(&uv_loop_, client, 0));
+    UV_DCHECK_OK(uv_pipe_init(uv_loop(), client, 0));
     if (uv_accept(UV_AS_STREAM(&uv_ipc_handle_), UV_AS_STREAM(client)) == 0) {
-        TransferConnectionToWorker(PickIpcWorker(), connection.get(),
-                                   UV_AS_STREAM(client));
-        message_connections_.insert(std::move(connection));
+        RegisterConnection(PickIpcWorker(),
+                           std::unique_ptr<server::ConnectionBase>(connection),
+                           UV_AS_STREAM(client));
+        message_connections_.insert(connection);
     } else {
         LOG(ERROR) << "Failed to accept new message connection";
         free(client);
+        delete connection;
     }
-}
-
-UV_READ_CB_FOR_CLASS(Server, ReturnConnection) {
-    if (nread < 0) {
-        if (nread == UV_EOF) {
-            HLOG(WARNING) << "Pipe is closed by the corresponding IO worker";
-        } else {
-            HLOG(ERROR) << "Failed to read from pipe: " << uv_strerror(nread);
-        }
-    } else if (nread > 0) {
-        utils::ReadMessages<Connection*>(
-            &return_connection_read_buffer_, buf->base, nread,
-            [this] (Connection** connection) {
-                ReturnConnection(*connection);
-            });
-    }
-    free(buf->base);
-}
-
-UV_ASYNC_CB_FOR_CLASS(Server, Stop) {
-    if (state_.load(std::memory_order_consume) == kStopping) {
-        HLOG(WARNING) << "Already in stopping state";
-        return;
-    }
-    HLOG(INFO) << "Start stopping process";
-    for (const auto& io_worker : io_workers_) {
-        io_worker->ScheduleStop();
-        uv_pipe_t* pipe = pipes_to_io_worker_[io_worker.get()].get();
-        UV_DCHECK_OK(uv_read_stop(UV_AS_STREAM(pipe)));
-        uv_close(UV_AS_HANDLE(pipe), nullptr);
-    }
-    uv_close(UV_AS_HANDLE(&uv_http_handle_), nullptr);
-    uv_close(UV_AS_HANDLE(&uv_grpc_handle_), nullptr);
-    uv_close(UV_AS_HANDLE(&uv_ipc_handle_), nullptr);
-    uv_close(UV_AS_HANDLE(&stop_event_), nullptr);
-    state_.store(kStopping);
-}
-
-namespace {
-void HandleFreeCallback(uv_handle_t* handle) {
-    free(handle);
-}
-}
-
-UV_WRITE_CB_FOR_CLASS(Server, PipeWrite2) {
-    DCHECK(status == 0) << "Failed to write to pipe: " << uv_strerror(status);
-    uv_close(UV_AS_HANDLE(req->data), HandleFreeCallback);
 }
 
 }  // namespace gateway

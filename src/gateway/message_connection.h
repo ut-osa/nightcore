@@ -6,15 +6,18 @@
 #include "common/stat.h"
 #include "utils/appendable_buffer.h"
 #include "utils/object_pool.h"
-#include "gateway/connection.h"
+#include "server/io_worker.h"
+#include "server/connection_base.h"
 
 namespace faas {
 namespace gateway {
 
 class Server;
 
-class MessageConnection final : public Connection {
+class MessageConnection final : public server::ConnectionBase {
 public:
+    static constexpr int kTypeId = 1;
+
     explicit MessageConnection(Server* server);
     ~MessageConnection();
 
@@ -24,7 +27,7 @@ public:
     bool is_launcher_connection() const { return client_id_ == 0; }
 
     uv_stream_t* InitUVHandle(uv_loop_t* uv_loop) override;
-    void Start(IOWorker* io_worker) override;
+    void Start(server::IOWorker* io_worker) override;
     void ScheduleClose() override;
 
     // Must be thread-safe
@@ -33,7 +36,8 @@ public:
 private:
     enum State { kCreated, kHandshake, kRunning, kClosing, kClosed };
 
-    IOWorker* io_worker_;
+    Server* server_;
+    server::IOWorker* io_worker_;
     State state_;
     uint16_t func_id_;
     uint16_t client_id_;

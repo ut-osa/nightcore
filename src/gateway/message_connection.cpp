@@ -21,9 +21,8 @@ using protocol::IsLauncherHandshakeMessage;
 using protocol::IsFuncWorkerHandshakeMessage;
 
 MessageConnection::MessageConnection(Server* server)
-    : Connection(Connection::Type::Message, server),
-      io_worker_(nullptr), state_(kCreated),
-      func_id_(0), client_id_(0), handshake_done_(false),
+    : server::ConnectionBase(kTypeId), server_(server), io_worker_(nullptr),
+      state_(kCreated), func_id_(0), client_id_(0), handshake_done_(false),
       pipe_for_write_fd_(-1),
       log_header_("MessageConnection[Handshaking]: ") {
 }
@@ -39,7 +38,7 @@ uv_stream_t* MessageConnection::InitUVHandle(uv_loop_t* uv_loop) {
     return UV_AS_STREAM(&uv_pipe_handle_);
 }
 
-void MessageConnection::Start(IOWorker* io_worker) {
+void MessageConnection::Start(server::IOWorker* io_worker) {
     DCHECK(state_ == kCreated);
     DCHECK_IN_EVENT_LOOP_THREAD(uv_pipe_handle_.loop);
     io_worker_ = io_worker;

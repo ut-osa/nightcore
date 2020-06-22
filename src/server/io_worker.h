@@ -6,20 +6,14 @@
 #include "common/stat.h"
 #include "utils/buffer_pool.h"
 #include "utils/object_pool.h"
-#include "gateway/connection.h"
+#include "server/connection_base.h"
 
 namespace faas {
-namespace gateway {
+namespace server {
 
-class Server;
-
-class IOWorker : public uv::Base {
+class IOWorker final : public uv::Base {
 public:
-    static constexpr size_t kDefaultBufferSize = 4096;
-
-    IOWorker(Server* server, std::string_view worker_name,
-             size_t read_buffer_size = kDefaultBufferSize,
-             size_t write_buffer_size = kDefaultBufferSize);
+    IOWorker(std::string_view worker_name, size_t read_buffer_size, size_t write_buffer_size);
     ~IOWorker();
 
     std::string_view worker_name() const { return worker_name_; }
@@ -29,7 +23,7 @@ public:
     void WaitForFinish();
 
     // Called by Connection for ONLY once
-    void OnConnectionClose(Connection* connection);
+    void OnConnectionClose(ConnectionBase* connection);
 
     // Can only be called from uv_loop_
     void NewReadBuffer(size_t suggested_size, uv_buf_t* buf);
@@ -44,12 +38,11 @@ public:
     // When the function is ready to run, IO worker will check if its
     // owner connection is still active, and will not run the function
     // if it is closed.
-    void ScheduleFunction(Connection* owner, std::function<void()> fn);
+    void ScheduleFunction(ConnectionBase* owner, std::function<void()> fn);
 
 private:
     enum State { kCreated, kRunning, kStopping, kStopped };
 
-    Server* server_;
     std::string worker_name_;
     std::atomic<State> state_;
 
@@ -61,17 +54,17 @@ private:
     uv_async_t run_fn_event_;
 
     base::Thread event_loop_thread_;
-    absl::flat_hash_set<Connection*> connections_;
+    absl::flat_hash_map</* connection_id */ int, ConnectionBase*> connections_;
     utils::BufferPool read_buffer_pool_;
     utils::BufferPool write_buffer_pool_;
     utils::SimpleObjectPool<uv_write_t> write_req_pool_;
 
     struct ScheduledFunction {
-        Connection* owner;
+        int owner_id;
         std::function<void()> fn;
     };
     absl::Mutex scheduled_function_mu_;
-    absl::InlinedVector<std::unique_ptr<ScheduledFunction>, 32>
+    absl::InlinedVector<std::unique_ptr<ScheduledFunction>, 16>
         scheduled_functions_ ABSL_GUARDED_BY(scheduled_function_mu_);
     std::atomic<int64_t> async_event_recv_timestamp_;
 
@@ -87,5 +80,5 @@ private:
     DISALLOW_COPY_AND_ASSIGN(IOWorker);
 };
 
-}  // namespace gateway
+}  // namespace server
 }  // namespace faas
