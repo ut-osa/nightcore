@@ -37,7 +37,7 @@ public:
         int64_t            recv_timestamp      ABSL_GUARDED_BY(mu);
         int64_t            dispatch_timestamp  ABSL_GUARDED_BY(mu);
         int64_t            finish_timestamp    ABSL_GUARDED_BY(mu);
-        FuncWorker*        assigned_worker     ABSL_GUARDED_BY(mu);
+        uint16_t           assigned_worker     ABSL_GUARDED_BY(mu);  // Saved as client_id
         int32_t            processing_time     ABSL_GUARDED_BY(mu);
         int32_t            dispatch_delay      ABSL_GUARDED_BY(mu);
         int32_t            total_queuing_delay ABSL_GUARDED_BY(mu);

@@ -54,7 +54,7 @@ private:
     };
 
     std::queue<PendingFuncCall> pending_func_calls_ ABSL_GUARDED_BY(mu_);
-    absl::flat_hash_map</* full_call_id */ uint64_t, FuncWorker*>
+    absl::flat_hash_map</* full_call_id */ uint64_t, /* client_id */ uint16_t>
         assigned_workers_ ABSL_GUARDED_BY(mu_);
 
     stat::StatisticsCollector<uint16_t> idle_workers_stat_ ABSL_GUARDED_BY(mu_);

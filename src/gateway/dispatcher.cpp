@@ -117,8 +117,13 @@ void Dispatcher::OnFuncCallCompleted(const FuncCall& func_call, int32_t processi
         HLOG(ERROR) << "Cannot find assigned worker for full_call_id " << func_call.full_call_id;
         return;
     }
-    FuncWorker* func_worker = assigned_workers_[func_call.full_call_id];
-    FuncWorkerFinished(func_worker);
+    uint16_t client_id = assigned_workers_[func_call.full_call_id];
+    if (workers_.contains(client_id)) {
+        FuncWorker* func_worker = workers_[client_id];
+        FuncWorkerFinished(func_worker);
+    } else {
+        HLOG(WARNING) << fmt::format("FuncWorker (client_id {}) already disconnected", client_id);
+    }
     assigned_workers_.erase(func_call.full_call_id);
 }
 
@@ -131,8 +136,13 @@ void Dispatcher::OnFuncCallFailed(const FuncCall& func_call, int32_t dispatch_de
     if (!assigned_workers_.contains(func_call.full_call_id)) {
         return;
     }
-    FuncWorker* func_worker = assigned_workers_[func_call.full_call_id];
-    FuncWorkerFinished(func_worker);
+    uint16_t client_id = assigned_workers_[func_call.full_call_id];
+    if (workers_.contains(client_id)) {
+        FuncWorker* func_worker = workers_[client_id];
+        FuncWorkerFinished(func_worker);
+    } else {
+        HLOG(WARNING) << fmt::format("FuncWorker (client_id {}) already disconnected", client_id);
+    }
     assigned_workers_.erase(func_call.full_call_id);
 }
 
@@ -185,7 +195,7 @@ void Dispatcher::DispatchFuncCall(FuncWorker* func_worker, Message* dispatch_fun
     DCHECK(!running_workers_.contains(client_id));
     FuncCall func_call = GetFuncCallFromMessage(*dispatch_func_call_message);
     server_->tracer()->OnFuncCallDispatched(func_call, func_worker);
-    assigned_workers_[func_call.full_call_id] = func_worker;
+    assigned_workers_[func_call.full_call_id] = client_id;
     running_workers_[client_id] = func_call;
     func_worker->DispatchFuncCall(dispatch_func_call_message);
     message_pool_.Return(dispatch_func_call_message);

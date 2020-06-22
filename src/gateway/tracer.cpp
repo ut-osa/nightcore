@@ -64,7 +64,7 @@ Tracer::FuncCallInfo* Tracer::OnNewFuncCall(const FuncCall& func_call,
         info->recv_timestamp = current_timestamp;
         info->dispatch_timestamp = 0;
         info->finish_timestamp = 0;
-        info->assigned_worker = nullptr;
+        info->assigned_worker = 0;
         info->processing_time = 0;
         info->total_queuing_delay = 0;
     }
@@ -111,7 +111,7 @@ Tracer::FuncCallInfo* Tracer::OnFuncCallDispatched(const protocol::FuncCall& fun
         absl::MutexLock lk(&info->mu);
         info->state = FuncCallState::kDispatched;
         info->dispatch_timestamp = current_timestamp;
-        info->assigned_worker = func_worker;
+        info->assigned_worker = func_worker->client_id();
         queueing_delay = gsl::narrow_cast<int32_t>(current_timestamp - info->recv_timestamp);
         info->total_queuing_delay += queueing_delay;
     }
