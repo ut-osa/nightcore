@@ -11,8 +11,7 @@ namespace gateway {
 
 HttpConnection::HttpConnection(Server* server, int connection_id)
     : server::ConnectionBase(kTypeId), server_(server), io_worker_(nullptr),
-      state_(kCreated), log_header_(absl::StrFormat("HttpConnection[%d]: ", connection_id)),
-      within_async_request_(false) {
+      state_(kCreated), log_header_(absl::StrFormat("HttpConnection[%d]: ", connection_id)) {
     http_parser_init(&http_parser_, HTTP_REQUEST);
     http_parser_.data = this;
     http_parser_settings_init(&http_parser_settings_);
@@ -51,11 +50,6 @@ void HttpConnection::ScheduleClose() {
         return;
     }
     DCHECK(state_ == kRunning);
-    if (within_async_request_) {
-        async_request_context_->OnConnectionClose();
-        async_request_context_ = nullptr;
-        within_async_request_ = false;
-    }
     uv_close(UV_AS_HANDLE(&uv_tcp_handle_), &HttpConnection::CloseCallback);
     state_ = kClosing;
 }
@@ -90,8 +84,7 @@ UV_READ_CB_FOR_CLASS(HttpConnection, RecvData) {
         if (nread == UV_EOF || nread == UV_ECONNRESET) {
             VLOG(1) << "HttpConnection closed by client";
         } else {
-            HLOG(WARNING) << "Read error, will close the connection: "
-                          << uv_strerror(nread);
+            HLOG(WARNING) << "Read error, will close the connection: " << uv_strerror(nread);
         }
         ScheduleClose();
         return;
@@ -104,9 +97,8 @@ UV_READ_CB_FOR_CLASS(HttpConnection, RecvData) {
     size_t length = gsl::narrow_cast<size_t>(nread);
     size_t parsed = http_parser_execute(&http_parser_, &http_parser_settings_, data, length);
     if (parsed < length) {
-        HLOG(WARNING) << "HTTP parsing failed: "
-                      << http_errno_name(static_cast<http_errno>(http_parser_.http_errno))
-                      << ",  will close the connection";
+        HLOG(WARNING) << fmt::format("HTTP parsing failed: {}, will close the connection",
+                                     http_errno_name(static_cast<http_errno>(http_parser_.http_errno)));
         ScheduleClose();
     }
 }
@@ -219,107 +211,81 @@ void HttpConnection::ResetHttpParser() {
 void HttpConnection::OnNewHttpRequest(std::string_view method, std::string_view path) {
     DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
     HVLOG(1) << "New HTTP request: " << method << " " << path;
-    response_status_ = 200;
-    response_content_type_ = kDefaultContentType;
-    response_body_buffer_.Reset();
-    const Server::RequestHandler* request_handler;
-    if (!server_->MatchRequest(method, path, &request_handler)) {
-        response_status_ = 404;
-        SendHttpResponse();
+
+    if (method != "POST" || !absl::StartsWith(path, "/function/")) {
+        SendHttpResponse(HttpStatus::NOT_FOUND);
         return;
     }
-    if (request_handler->async()) {
-        if (async_request_context_ == nullptr) {
-            async_request_context_.reset(new HttpAsyncRequestContext());
-        }
-        HttpAsyncRequestContext* context = async_request_context_.get();
-        context->method_ = std::string(method);
-        context->path_ = std::string(path);
-        for (const auto& item : headers_) {
-            context->headers_[std::string(item.first)] = std::string(item.second);
-        }
-        context->body_buffer_.Swap(body_buffer_);
-        context->status_ = 200;
-        context->content_type_ = kDefaultContentType;
-        context->response_body_buffer_.Swap(response_body_buffer_);
-        context->connection_ = this;
-        within_async_request_ = true;
-        request_handler->CallAsync(async_request_context_);
-    } else {
-        HttpSyncRequestContext context;
-        context.method_ = method;
-        context.path_ = path;
-        context.headers_ = &headers_;
-        context.body_ = body_buffer_.to_span();
-        context.status_ = &response_status_;
-        context.content_type_ = &response_content_type_;
-        context.response_body_buffer_ = &response_body_buffer_;
-        request_handler->CallSync(&context);
-        SendHttpResponse();
+    std::string_view func_name = absl::StripPrefix(path, "/function/");
+    const FuncConfig::Entry* func_entry = server_->func_config()->find_by_func_name(func_name);
+    if (func_entry == nullptr) {
+        SendHttpResponse(HttpStatus::NOT_FOUND);
+        return;
     }
+
+    func_call_context_.Reset();
+    func_call_context_.set_func_name(func_name);
+    func_call_context_.append_input(body_buffer_.to_span());
+    server_->OnNewHttpFuncCall(this, &func_call_context_);
 }
 
-void HttpConnection::OnAsyncRequestFinish() {
-    HttpAsyncRequestContext* context = async_request_context_.get();
-    DCHECK(context != nullptr);
-    if (!within_async_request_) {
-        HLOG(WARNING) << "HttpConnection is closing or has closed, will not handle the finish of async request";
-        return;
-    }
-    context->body_buffer_.Swap(body_buffer_);
-    response_status_ = context->status_;
-    response_content_type_ = context->content_type_;
-    context->response_body_buffer_.Swap(response_body_buffer_);
-    within_async_request_ = false;
-    if (state_ != kRunning) {
-        HLOG(WARNING) << "HttpConnection is closing or has closed, will not send response";
-        return;
-    }
-    SendHttpResponse();
-}
-
-void HttpConnection::AsyncRequestFinish(HttpAsyncRequestContext* context) {
+void HttpConnection::OnFuncCallFinished(FuncCallContext* func_call_context) {
+    DCHECK(func_call_context == &func_call_context_);
     io_worker_->ScheduleFunction(
-        this, absl::bind_front(&HttpConnection::OnAsyncRequestFinish, this));
+        this, absl::bind_front(&HttpConnection::OnFuncCallFinishedInternal, this));
 }
 
-void HttpConnection::SendHttpResponse() {
+void HttpConnection::SendHttpResponse(HttpStatus status, std::span<const char> body) {
     DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
-    HVLOG(1) << "Send HTTP response with status " << response_status_;
     static const char* CRLF = "\r\n";
     std::ostringstream header;
-    header << "HTTP/1.1 " << response_status_ << " ";
-    switch (response_status_) {
-    case 200:
-        header << "OK";
-        break;
-    case 400:
-        header << "Bad Request";
-        break;
-    case 404:
-        header << "Not Found";
-        break;
-    case 500:
-        header << "Internal Server Error";
-        break;
-    default:
-        LOG(FATAL) << "Unsupported status code " << response_status_;
-    }
+    header << "HTTP/1.1 " << GetHttpStatusString(status) << " ";
     header << CRLF;
     header << "Date: " << absl::FormatTime(absl::RFC1123_full, absl::Now(), absl::UTCTimeZone()) << CRLF;
-    header << "Server: FaaS/0.1" << CRLF;
-    header << "Content-Type: " << response_content_type_ << CRLF;
-    header << "Content-Length: " << response_body_buffer_.length() << CRLF;
+    header << "Server: " << kServerString << CRLF;
+    header << "Content-Type: " << kResponseContentType << CRLF;
+    header << "Content-Length: " << body.size() << CRLF;
     header << "HttpConnection: Keep-Alive" << CRLF;
     header << CRLF;
     response_header_buffer_.Reset();
     response_header_buffer_.AppendData(header.str());
-    uv_buf_t bufs[] = {
-        { .base = response_header_buffer_.data(), .len = response_header_buffer_.length() },
-        { .base = response_body_buffer_.data(), .len = response_body_buffer_.length() }
-    };
-    UV_DCHECK_OK(uv_write(&response_write_req_, UV_AS_STREAM(&uv_tcp_handle_),
-                          bufs, 2, &HttpConnection::DataWrittenCallback));
+    if (body.size() > 0) {
+        uv_buf_t bufs[] = {
+            { .base = response_header_buffer_.data(), .len = response_header_buffer_.length() },
+            { .base = const_cast<char*>(body.data()), .len = body.size() }
+        };
+        UV_DCHECK_OK(uv_write(&response_write_req_, UV_AS_STREAM(&uv_tcp_handle_),
+                              bufs, 2, &HttpConnection::DataWrittenCallback));
+    } else {
+        uv_buf_t buf = {
+            .base = response_header_buffer_.data(),
+            .len = response_header_buffer_.length()
+        };
+        UV_DCHECK_OK(uv_write(&response_write_req_, UV_AS_STREAM(&uv_tcp_handle_),
+                              &buf, 1, &HttpConnection::DataWrittenCallback));
+    }
+}
+
+void HttpConnection::OnFuncCallFinishedInternal() {
+    DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
+    if (state_ != kRunning) {
+        HLOG(WARNING) << "HttpConnection is closing or has closed, will not send response";
+        return;
+    }
+    switch (func_call_context_.status()) {
+    case FuncCallContext::kSuccess:
+        SendHttpResponse(HttpStatus::OK, func_call_context_.output());
+        break;
+    case FuncCallContext::kNotFound:
+        SendHttpResponse(HttpStatus::NOT_FOUND);
+        break;
+    case FuncCallContext::kFailed:
+        SendHttpResponse(HttpStatus::INTERNAL_SERVER_ERROR);
+        break;
+    default:
+        HLOG(ERROR) << "Invalid FuncCallContext status, will close the connection";
+        ScheduleClose();
+    }
 }
 
 int HttpConnection::HttpParserOnMessageBeginCallback(http_parser* http_parser) {

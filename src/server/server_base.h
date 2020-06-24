@@ -11,7 +11,7 @@ namespace server {
 
 class ServerBase : public uv::Base {
 public:
-    static constexpr size_t kDefaultIOWorkerBufferSize = 4096;
+    static constexpr size_t kDefaultIOWorkerBufferSize = 65536;
 
     ServerBase();
     virtual ~ServerBase();
@@ -29,8 +29,7 @@ protected:
     IOWorker* CreateIOWorker(std::string_view worker_name,
                              size_t read_buffer_size = kDefaultIOWorkerBufferSize,
                              size_t write_buffer_size = kDefaultIOWorkerBufferSize);
-    void RegisterConnection(IOWorker* io_worker,
-                            std::unique_ptr<ConnectionBase> connection,
+    void RegisterConnection(IOWorker* io_worker, ConnectionBase* connection,
                             uv_stream_t* uv_handle);
 
     // Supposed to be implemented by sub-class
@@ -45,11 +44,9 @@ private:
 
     absl::flat_hash_set<std::unique_ptr<IOWorker>> io_workers_;
     absl::flat_hash_map<IOWorker*, std::unique_ptr<uv_pipe_t>> pipes_to_io_worker_;
-    absl::flat_hash_set<std::unique_ptr<ConnectionBase>> connections_;
     utils::AppendableBuffer return_connection_read_buffer_;
     int next_connection_id_;
 
-    void ReturnConnection(ConnectionBase* connection);
     void EventLoopThreadMain();
 
     DECLARE_UV_ASYNC_CB_FOR_CLASS(Stop);

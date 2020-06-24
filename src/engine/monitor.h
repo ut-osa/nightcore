@@ -4,16 +4,16 @@
 #include "base/thread.h"
 
 namespace faas {
-namespace gateway {
+namespace engine {
 
-class Server;
+class Engine;
 class MessageConnection;
 
 class Monitor {
 public:
     static constexpr float kDefaultFrequencyHz = 0.3;
 
-    explicit Monitor(Server* server);
+    explicit Monitor(Engine* engine);
     ~Monitor();
 
     void set_frequency(float hz);
@@ -28,7 +28,7 @@ public:
 private:
     enum State { kCreated, kRunning, kStopping, kStopped };
     std::atomic<State> state_;
-    Server* server_;
+    Engine* engine_;
     float frequency_hz_;
     base::Thread background_thread_;
 
@@ -44,5 +44,5 @@ private:
     DISALLOW_COPY_AND_ASSIGN(Monitor);
 };
 
-}  // namespace gateway
+}  // namespace engine
 }  // namespace faas

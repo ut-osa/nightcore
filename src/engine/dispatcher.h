@@ -5,40 +5,41 @@
 #include "common/protocol.h"
 #include "common/func_config.h"
 #include "utils/object_pool.h"
-#include "gateway/tracer.h"
+#include "engine/tracer.h"
 
 namespace faas {
-namespace gateway {
+namespace engine {
 
-class Server;
+class Engine;
 class FuncWorker;
 
 class Dispatcher {
 public:
-    Dispatcher(Server* server, uint16_t func_id);
+    Dispatcher(Engine* engine, uint16_t func_id);
     ~Dispatcher();
 
     int16_t func_id() const { return func_id_; }
 
     // All must be thread-safe
-    bool OnFuncWorkerConnected(FuncWorker* func_worker);
+    bool OnFuncWorkerConnected(std::shared_ptr<FuncWorker> func_worker);
     void OnFuncWorkerDisconnected(FuncWorker* func_worker);
     bool OnNewFuncCall(const protocol::FuncCall& func_call,
                        const protocol::FuncCall& parent_func_call,
                        size_t input_size, std::span<const char> inline_input, bool shm_input);
-    void OnFuncCallCompleted(const protocol::FuncCall& func_call,
+    bool OnFuncCallCompleted(const protocol::FuncCall& func_call,
                              int32_t processing_time, int32_t dispatch_delay, size_t output_size);
-    void OnFuncCallFailed(const protocol::FuncCall& func_call, int32_t dispatch_delay);
+    bool OnFuncCallFailed(const protocol::FuncCall& func_call, int32_t dispatch_delay);
 
 private:
-    Server* server_;
+    Engine* engine_;
     uint16_t func_id_;
     const FuncConfig::Entry* func_config_entry_;
     absl::Mutex mu_;
 
     std::string log_header_;
 
-    absl::flat_hash_map</* client_id */ uint16_t, FuncWorker*> workers_ ABSL_GUARDED_BY(mu_);
+    absl::flat_hash_map</* client_id */ uint16_t, std::shared_ptr<FuncWorker>>
+        workers_ ABSL_GUARDED_BY(mu_);
     absl::flat_hash_map</* client_id */ uint16_t, protocol::FuncCall>
         running_workers_ ABSL_GUARDED_BY(mu_);
     std::vector</* client_id */ uint16_t> idle_workers_ ABSL_GUARDED_BY(mu_);
@@ -75,5 +76,5 @@ private:
     DISALLOW_COPY_AND_ASSIGN(Dispatcher);
 };
 
-}  // namespace gateway
+}  // namespace engine
 }  // namespace faas

@@ -8,7 +8,7 @@ namespace ipc {
 void SetRootPathForIpc(std::string_view path, bool create = false);
 
 std::string_view GetRootPathForIpc();
-std::string_view GetGatewayUnixSocketPath();
+std::string_view GetEngineUnixSocketPath();
 std::string_view GetRootPathForShm();
 std::string_view GetRootPathForFifo();
 

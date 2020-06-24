@@ -1,10 +1,10 @@
-#include "gateway/message_connection.h"
+#include "engine/message_connection.h"
 
 #include "common/time.h"
 #include "common/uv.h"
 #include "ipc/base.h"
 #include "ipc/fifo.h"
-#include "gateway/server.h"
+#include "engine/engine.h"
 
 #include <absl/flags/flag.h>
 
@@ -14,14 +14,14 @@
 ABSL_FLAG(bool, func_worker_pipe_direct_write, false, "");
 
 namespace faas {
-namespace gateway {
+namespace engine {
 
 using protocol::Message;
 using protocol::IsLauncherHandshakeMessage;
 using protocol::IsFuncWorkerHandshakeMessage;
 
-MessageConnection::MessageConnection(Server* server)
-    : server::ConnectionBase(kTypeId), server_(server), io_worker_(nullptr),
+MessageConnection::MessageConnection(Engine* engine)
+    : server::ConnectionBase(kTypeId), engine_(engine), io_worker_(nullptr),
       state_(kCreated), func_id_(0), client_id_(0), handshake_done_(false),
       pipe_for_write_fd_(-1),
       log_header_("MessageConnection[Handshaking]: ") {
@@ -125,7 +125,7 @@ void MessageConnection::RecvHandshakeMessage() {
         HLOG(FATAL) << "Unknown handshake message type";
     }
     std::span<const char> payload;
-    if (!server_->OnNewHandshake(this, *message, &handshake_response_, &payload)) {
+    if (!engine_->OnNewHandshake(this, *message, &handshake_response_, &payload)) {
         ScheduleClose();
         return;
     }
@@ -267,7 +267,7 @@ UV_READ_CB_FOR_CLASS(MessageConnection, ReadMessage) {
     utils::ReadMessages<Message>(
         &message_buffer_, buf->base, nread,
         [this] (Message* message) {
-            server_->OnRecvMessage(this, *message);
+            engine_->OnRecvMessage(this, *message);
         });
 }
 
@@ -289,5 +289,5 @@ UV_WRITE_CB_FOR_CLASS(MessageConnection, WriteMessage) {
     }
 }
 
-}  // namespace gateway
+}  // namespace engine
 }  // namespace faas

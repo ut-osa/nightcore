@@ -1,10 +1,9 @@
-#include "gateway/monitor.h"
+#include "engine/monitor.h"
 
 #include "common/time.h"
-#include "gateway/server.h"
-#include "gateway/message_connection.h"
 #include "utils/docker.h"
 #include "utils/procfs.h"
+#include "engine/engine.h"
 
 #include <sys/timerfd.h>
 
@@ -12,10 +11,10 @@
 #define HVLOG(l) VLOG(l) << "Monitor: "
 
 namespace faas {
-namespace gateway {
+namespace engine {
 
-Monitor::Monitor(Server* server)
-    : state_(kCreated), server_(server), frequency_hz_(kDefaultFrequencyHz),
+Monitor::Monitor(Engine* engine)
+    : state_(kCreated), engine_(engine), frequency_hz_(kDefaultFrequencyHz),
       background_thread_("Monitor", absl::bind_front(&Monitor::BackgroundThreadMain, this)),
       self_container_id_(docker_utils::GetSelfContainerId()) {}
 
@@ -203,5 +202,5 @@ void Monitor::BackgroundThreadMain() {
     state_.store(kStopped);
 }
 
-}  // namespace gateway
+}  // namespace engine
 }  // namespace faas

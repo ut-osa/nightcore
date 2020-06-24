@@ -91,31 +91,19 @@ IOWorker* ServerBase::CreateIOWorker(std::string_view worker_name,
     return ret;
 }
 
-void ServerBase::RegisterConnection(IOWorker* io_worker,
-                                    std::unique_ptr<ConnectionBase> connection,
+void ServerBase::RegisterConnection(IOWorker* io_worker, ConnectionBase* connection,
                                     uv_stream_t* uv_handle) {
     DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
     uv_write_t* write_req = connection->uv_write_req_for_transfer();
     void** buf = reinterpret_cast<void**>(connection->pipe_write_buf_for_transfer());
-    *buf = connection.get();
+    *buf = connection;
     uv_buf_t uv_buf = uv_buf_init(reinterpret_cast<char*>(buf), sizeof(void*));
     uv_pipe_t* pipe_to_worker = pipes_to_io_worker_[io_worker].get();
     write_req->data = uv_handle;
     connection->set_id(next_connection_id_++);
-    connections_.insert(std::move(connection));
     UV_DCHECK_OK(uv_write2(write_req, UV_AS_STREAM(pipe_to_worker),
                            &uv_buf, 1, UV_AS_STREAM(uv_handle),
                            &PipeWrite2Callback));
-}
-
-void ServerBase::ReturnConnection(ConnectionBase* connection) {
-    DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
-    if (connections_.contains(connection)) {
-        OnConnectionClose(connection);
-        connections_.erase(connection);
-    } else {
-        HLOG(ERROR) << "Invalid connection pointer in ReturnConnection";
-    }
 }
 
 UV_ASYNC_CB_FOR_CLASS(ServerBase, Stop) {
@@ -146,7 +134,7 @@ UV_READ_CB_FOR_CLASS(ServerBase, ReturnConnection) {
         utils::ReadMessages<ConnectionBase*>(
             &return_connection_read_buffer_, buf->base, nread,
             [this] (ConnectionBase** connection) {
-                ReturnConnection(*connection);
+                OnConnectionClose(*connection);
             });
     }
     free(buf->base);

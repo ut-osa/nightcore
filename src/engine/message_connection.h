@@ -10,21 +10,22 @@
 #include "server/connection_base.h"
 
 namespace faas {
-namespace gateway {
+namespace engine {
 
-class Server;
+class Engine;
 
 class MessageConnection final : public server::ConnectionBase {
 public:
-    static constexpr int kTypeId = 1;
+    static constexpr int kTypeId = 2;
 
-    explicit MessageConnection(Server* server);
+    explicit MessageConnection(Engine* engine);
     ~MessageConnection();
 
     uint16_t func_id() const { return func_id_; }
     uint16_t client_id() const { return client_id_; }
     bool handshake_done() const { return handshake_done_; }
     bool is_launcher_connection() const { return client_id_ == 0; }
+    bool is_func_worker_connection() const { return client_id_ > 0; }
 
     uv_stream_t* InitUVHandle(uv_loop_t* uv_loop) override;
     void Start(server::IOWorker* io_worker) override;
@@ -36,7 +37,7 @@ public:
 private:
     enum State { kCreated, kHandshake, kRunning, kClosing, kClosed };
 
-    Server* server_;
+    Engine* engine_;
     server::IOWorker* io_worker_;
     State state_;
     uint16_t func_id_;
@@ -70,10 +71,9 @@ private:
     DECLARE_UV_WRITE_CB_FOR_CLASS(WriteHandshakeResponse);
     DECLARE_UV_READ_CB_FOR_CLASS(ReadMessage);
     DECLARE_UV_WRITE_CB_FOR_CLASS(WriteMessage);
-    DECLARE_UV_ASYNC_CB_FOR_CLASS(NewMessageForWrite);
 
     DISALLOW_COPY_AND_ASSIGN(MessageConnection);
 };
 
-}  // namespace gateway
+}  // namespace engine
 }  // namespace faas

@@ -1,19 +1,19 @@
-#include "gateway/tracer.h"
+#include "engine/tracer.h"
 
-#include "gateway/server.h"
-#include "gateway/worker_manager.h"
+#include "engine/engine.h"
+#include "engine/worker_manager.h"
 
 #define HLOG(l) LOG(l) << "Tracer: "
 #define HVLOG(l) VLOG(l) << "Tracer: "
 
 namespace faas {
-namespace gateway {
+namespace engine {
 
 using protocol::FuncCall;
 using protocol::FuncCallDebugString;
 
-Tracer::Tracer(Server* server)
-    : server_(server),
+Tracer::Tracer(Engine* engine)
+    : engine_(engine),
       dispatch_delay_stat_(
           stat::StatisticsCollector<int32_t>::StandardReportCallback("dispatch_delay")),
       dispatch_overhead_stat_(
@@ -33,7 +33,7 @@ Tracer::~Tracer() {
 
 void Tracer::Init() {
     for (int i = 0; i < protocol::kMaxFuncId; i++) {
-        if (server_->func_config()->find_by_func_id(i) != nullptr) {
+        if (engine_->func_config()->find_by_func_id(i) != nullptr) {
             per_func_stats_[i] = new PerFuncStatistics(i);
         }
     }
@@ -308,5 +308,5 @@ Tracer::PerFuncStatistics::PerFuncStatistics(uint16_t func_id)
       running_delay_ema(/* alpha= */ 0.999, /* p= */ 1.0),
       processing_time_ema(/* alpha= */ 0.999, /* p= */ 1.0) {}
 
-}  // namespace gateway
+}  // namespace engine
 }  // namespace faas

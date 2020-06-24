@@ -18,6 +18,9 @@ public:
 
     std::string_view worker_name() const { return worker_name_; }
 
+    // Return current IOWorker within event loop thread
+    static IOWorker* current() { return current_; }
+
     void Start(int pipe_to_server_fd);
     void ScheduleStop();
     void WaitForFinish();
@@ -32,6 +35,8 @@ public:
     void ReturnWriteBuffer(char* buf);
     uv_write_t* NewWriteRequest();
     void ReturnWriteRequest(uv_write_t* write_req);
+    // Pick a random connection of given type managed by this IOWorker
+    ConnectionBase* PickRandomConnection(int type);
 
     // Schedule a function to run on this IO worker's event loop
     // thread. It can be called safely from other threads.
@@ -45,6 +50,7 @@ private:
 
     std::string worker_name_;
     std::atomic<State> state_;
+    static thread_local IOWorker* current_;
 
     std::string log_header_;
 
@@ -54,7 +60,10 @@ private:
     uv_async_t run_fn_event_;
 
     base::Thread event_loop_thread_;
-    absl::flat_hash_map</* connection_id */ int, ConnectionBase*> connections_;
+    absl::BitGen random_bit_gen_;
+    absl::flat_hash_map</* id */ int, ConnectionBase*> connections_;
+    absl::flat_hash_map</* type */ int, absl::flat_hash_set</* id */ int>> connections_by_type_;
+    absl::flat_hash_map</* type */ int, std::vector<ConnectionBase*>> connections_for_random_pick_;
     utils::BufferPool read_buffer_pool_;
     utils::BufferPool write_buffer_pool_;
     utils::SimpleObjectPool<uv_write_t> write_req_pool_;

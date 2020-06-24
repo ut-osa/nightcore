@@ -35,6 +35,8 @@ IOWorker::~IOWorker() {
     UV_DCHECK_OK(uv_loop_close(&uv_loop_));
 }
 
+thread_local IOWorker* IOWorker::current_ = nullptr;
+
 namespace {
 void PipeReadBufferAllocCallback(uv_handle_t* handle, size_t suggested_size, uv_buf_t* buf) {
     size_t buf_size = 32;
@@ -95,30 +97,45 @@ void IOWorker::ReturnWriteRequest(uv_write_t* write_req) {
     write_req_pool_.Return(write_req);
 }
 
+ConnectionBase* IOWorker::PickRandomConnection(int type) {
+    DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
+    if (!connections_by_type_.contains(type) || connections_by_type_[type].empty()) {
+        return nullptr;
+    }
+    size_t n_conn = connections_by_type_[type].size();
+    if (!connections_for_random_pick_.contains(type)) {
+        std::vector<ConnectionBase*> conns;
+        for (int id : connections_by_type_[type]) {
+            DCHECK(connections_.contains(id));
+            conns.push_back(connections_[id]);
+        }
+        connections_for_random_pick_[type] = std::move(conns);
+    } else {
+        DCHECK_EQ(connections_for_random_pick_[type].size(), n_conn);
+    }
+    size_t idx = absl::Uniform<size_t>(random_bit_gen_, 0, n_conn);
+    return connections_for_random_pick_[type][idx];
+}
+
 void IOWorker::ScheduleFunction(ConnectionBase* owner, std::function<void()> fn) {
     if (state_.load(std::memory_order_consume) != kRunning) {
         HLOG(WARNING) << "Cannot schedule function in non-running state, will ignore it";
         return;
     }
-    bool within_my_event_loop = uv::WithinEventLoop(&uv_loop_);
+    if (uv::WithinEventLoop(&uv_loop_)) {
+        fn();
+        return;
+    }
     std::unique_ptr<ScheduledFunction> function = std::make_unique<ScheduledFunction>();
-    function->owner_id = owner->id();
+    function->owner_id = (owner == nullptr) ? -1 : owner->id();
     function->fn = fn;
-    {
-        absl::MutexLock lk(&scheduled_function_mu_);
-        scheduled_functions_.push_back(std::move(function));
-        if (!within_my_event_loop) {
+    absl::MutexLock lk(&scheduled_function_mu_);
+    scheduled_functions_.push_back(std::move(function));
 #ifdef __FAAS_ENABLE_PROFILING
-            int64_t empty = 0;
-            async_event_recv_timestamp_.compare_exchange_strong(
-                empty, GetMonotonicMicroTimestamp());
+    int64_t empty = 0;
+    async_event_recv_timestamp_.compare_exchange_strong(empty, GetMonotonicMicroTimestamp());
 #endif
-            UV_DCHECK_OK(uv_async_send(&run_fn_event_));
-        }
-    }
-    if (within_my_event_loop) {
-        OnRunScheduledFunctions();
-    }
+    UV_DCHECK_OK(uv_async_send(&run_fn_event_));
 }
 
 void IOWorker::OnConnectionClose(ConnectionBase* connection) {
@@ -126,6 +143,13 @@ void IOWorker::OnConnectionClose(ConnectionBase* connection) {
     DCHECK(pipe_to_server_.loop == &uv_loop_);
     DCHECK(connections_.contains(connection->id()));
     connections_.erase(connection->id());
+    if (connection->type() >= 0) {
+        DCHECK(connections_by_type_[connection->type()].contains(connection->id()));
+        connections_by_type_[connection->type()].erase(connection->id());
+        if (connections_for_random_pick_.contains(connection->type())) {
+            connections_for_random_pick_.erase(connection->type());
+        }
+    }
     uv_write_t* write_req = connection->uv_write_req_for_back_transfer();
     size_t buf_len = sizeof(void*);
     char* buf = connection->pipe_write_buf_for_transfer();
@@ -138,6 +162,7 @@ void IOWorker::OnConnectionClose(ConnectionBase* connection) {
 
 void IOWorker::EventLoopThreadMain() {
     base::Thread::current()->MarkThreadCategory("IO");
+    current_ = this;
     HLOG(INFO) << "Event loop starts";
     int ret = uv_run(&uv_loop_, UV_RUN_DEFAULT);
     if (ret != 0) {
@@ -179,6 +204,12 @@ UV_READ_CB_FOR_CLASS(IOWorker, NewConnection) {
     DCHECK(connection->id() >= 0);
     DCHECK(!connections_.contains(connection->id()));
     connections_[connection->id()] = connection;
+    if (connection->type() >= 0) {
+        connections_by_type_[connection->type()].insert(connection->id());
+        if (connections_for_random_pick_.contains(connection->type())) {
+            connections_for_random_pick_[connection->type()].push_back(connection);
+        }
+    }
     if (state_.load(std::memory_order_consume) == kStopping) {
         HLOG(WARNING) << "Receive new connection in stopping state, will close it directly";
         connection->ScheduleClose();
@@ -216,7 +247,7 @@ UV_ASYNC_CB_FOR_CLASS(IOWorker, RunScheduledFunctions) {
         scheduled_functions_.clear();
     }
     for (const auto& function : functions) {
-        if (connections_.contains(function->owner_id)) {
+        if (function->owner_id < 0 || connections_.contains(function->owner_id)) {
             function->fn();
         } else {
             HLOG(WARNING) << "Owner connection has closed";

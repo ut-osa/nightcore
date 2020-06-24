@@ -65,14 +65,16 @@ inline std::string FuncCallDebugString(const FuncCall& func_call) {
 
 enum class MessageType : uint16_t {
     INVALID               = 0,
-    LAUNCHER_HANDSHAKE    = 1,
-    FUNC_WORKER_HANDSHAKE = 2,
-    HANDSHAKE_RESPONSE    = 3,
-    CREATE_FUNC_WORKER    = 4,
-    INVOKE_FUNC           = 5,
-    DISPATCH_FUNC_CALL    = 6,
-    FUNC_CALL_COMPLETE    = 7,
-    FUNC_CALL_FAILED      = 8
+    ENGINE_HANDSHAKE      = 1,
+    LAUNCHER_HANDSHAKE    = 2,
+    FUNC_WORKER_HANDSHAKE = 3,
+    HANDSHAKE_RESPONSE    = 4,
+    CREATE_FUNC_WORKER    = 5,
+    INVOKE_FUNC           = 6,
+    DISPATCH_FUNC_CALL    = 7,
+    FUNC_CALL_COMPLETE    = 8,
+    FUNC_CALL_FAILED      = 9,
+    FUNC_CALL_DISCARDED   = 10
 };
 
 struct Message {
@@ -101,6 +103,32 @@ struct Message {
 #define MESSAGE_INLINE_DATA_SIZE (__FAAS_MESSAGE_SIZE - __FAAS_CACHE_LINE_SIZE)
 static_assert(sizeof(Message) == __FAAS_MESSAGE_SIZE, "Unexpected Message size");
 
+struct GatewayMessage {
+    struct {
+        uint16_t message_type : 4;
+        uint16_t func_id      : 8;
+        uint16_t method_id    : 6;
+        uint16_t client_id    : 14;
+        uint32_t call_id;
+    }  __attribute__ ((packed));
+    union {
+        // Used in ENGINE_HANDSHAKE
+        struct {
+            uint16_t node_id;
+            uint16_t conn_id;
+        } __attribute__ ((packed));
+        int32_t processing_time; // Used in FUNC_CALL_COMPLETE
+        int32_t status_code;     // Used in FUNC_CALL_FAILED, FUNC_CALL_DISCARDED
+    };
+    int32_t payload_size;        // Used in INVOKE_FUNC, FUNC_CALL_COMPLETE
+} __attribute__ ((packed));
+
+static_assert(sizeof(GatewayMessage) == 16, "Unexpected GatewayMessage size");
+
+inline bool IsEngineHandshakeMessage(const GatewayMessage& message) {
+    return static_cast<MessageType>(message.message_type) == MessageType::ENGINE_HANDSHAKE;
+}
+
 inline bool IsLauncherHandshakeMessage(const Message& message) {
     return static_cast<MessageType>(message.message_type) == MessageType::LAUNCHER_HANDSHAKE;
 }
@@ -125,7 +153,15 @@ inline bool IsDispatchFuncCallMessage(const Message& message) {
     return static_cast<MessageType>(message.message_type) == MessageType::DISPATCH_FUNC_CALL;
 }
 
+inline bool IsDispatchFuncCallMessage(const GatewayMessage& message) {
+    return static_cast<MessageType>(message.message_type) == MessageType::DISPATCH_FUNC_CALL;
+}
+
 inline bool IsFuncCallCompleteMessage(const Message& message) {
+    return static_cast<MessageType>(message.message_type) == MessageType::FUNC_CALL_COMPLETE;
+}
+
+inline bool IsFuncCallCompleteMessage(const GatewayMessage& message) {
     return static_cast<MessageType>(message.message_type) == MessageType::FUNC_CALL_COMPLETE;
 }
 
@@ -133,7 +169,22 @@ inline bool IsFuncCallFailedMessage(const Message& message) {
     return static_cast<MessageType>(message.message_type) == MessageType::FUNC_CALL_FAILED;
 }
 
+inline bool IsFuncCallFailedMessage(const GatewayMessage& message) {
+    return static_cast<MessageType>(message.message_type) == MessageType::FUNC_CALL_FAILED;
+}
+
+inline bool IsFuncCallDiscardedMessage(const GatewayMessage& message) {
+    return static_cast<MessageType>(message.message_type) == MessageType::FUNC_CALL_DISCARDED;
+}
+
 inline void SetFuncCallInMessage(Message* message, const FuncCall& func_call) {
+    message->func_id = func_call.func_id;
+    message->method_id = func_call.method_id;
+    message->client_id = func_call.client_id;
+    message->call_id = func_call.call_id;
+}
+
+inline void SetFuncCallInMessage(GatewayMessage* message, const FuncCall& func_call) {
     message->func_id = func_call.func_id;
     message->method_id = func_call.method_id;
     message->client_id = func_call.client_id;
@@ -145,6 +196,20 @@ inline FuncCall GetFuncCallFromMessage(const Message& message) {
              || IsDispatchFuncCallMessage(message)
              || IsFuncCallCompleteMessage(message)
              || IsFuncCallFailedMessage(message));
+    FuncCall func_call;
+    func_call.func_id = message.func_id;
+    func_call.method_id = message.method_id;
+    func_call.client_id = message.client_id;
+    func_call.call_id = message.call_id;
+    func_call.padding = 0;
+    return func_call;
+}
+
+inline FuncCall GetFuncCallFromMessage(const GatewayMessage& message) {
+    DCHECK(IsDispatchFuncCallMessage(message)
+             || IsFuncCallCompleteMessage(message)
+             || IsFuncCallFailedMessage(message)
+             || IsFuncCallDiscardedMessage(message));
     FuncCall func_call;
     func_call.func_id = message.func_id;
     func_call.method_id = message.method_id;
@@ -247,6 +312,54 @@ inline Message NewFuncCallFailedMessage(const FuncCall& func_call) {
 }
 
 #undef NEW_EMPTY_MESSAGE
+
+#define NEW_EMPTY_GATEWAY_MESSAGE(var)       \
+    GatewayMessage var;                      \
+    memset(&var, 0, sizeof(GatewayMessage))
+
+inline GatewayMessage NewEngineHandshakeGatewayMessage(uint16_t node_id, uint16_t conn_id) {
+    NEW_EMPTY_GATEWAY_MESSAGE(message);
+    message.message_type = static_cast<uint16_t>(MessageType::ENGINE_HANDSHAKE);
+    message.node_id = node_id;
+    message.conn_id = conn_id;
+    return message;
+}
+
+inline GatewayMessage NewDispatchFuncCallGatewayMessage(const FuncCall& func_call) {
+    NEW_EMPTY_GATEWAY_MESSAGE(message);
+    message.message_type = static_cast<uint16_t>(MessageType::DISPATCH_FUNC_CALL);
+    SetFuncCallInMessage(&message, func_call);
+    return message;
+}
+
+inline GatewayMessage NewFuncCallCompleteGatewayMessage(const FuncCall& func_call,
+                                                        int32_t processing_time) {
+    NEW_EMPTY_GATEWAY_MESSAGE(message);
+    message.message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_COMPLETE);
+    SetFuncCallInMessage(&message, func_call);
+    message.processing_time = processing_time;
+    return message;
+}
+
+inline GatewayMessage NewFuncCallFailedGatewayMessage(const FuncCall& func_call,
+                                                      int32_t status_code = 0) {
+    NEW_EMPTY_GATEWAY_MESSAGE(message);
+    message.message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_FAILED);
+    SetFuncCallInMessage(&message, func_call);
+    message.status_code = status_code;
+    return message;
+}
+
+inline GatewayMessage NewFuncCallDiscardedGatewayMessage(const FuncCall& func_call,
+                                                         int32_t status_code = 0) {
+    NEW_EMPTY_GATEWAY_MESSAGE(message);
+    message.message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_DISCARDED);
+    SetFuncCallInMessage(&message, func_call);
+    message.status_code = status_code;
+    return message;
+}
+
+#undef NEW_EMPTY_GATEWAY_MESSAGE
 
 }  // namespace protocol
 }  // namespace faas

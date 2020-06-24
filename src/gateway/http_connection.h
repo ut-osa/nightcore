@@ -2,9 +2,11 @@
 
 #include "base/common.h"
 #include "common/uv.h"
+#include "common/http_status.h"
 #include "utils/appendable_buffer.h"
 #include "server/io_worker.h"
 #include "server/connection_base.h"
+#include "gateway/func_call_context.h"
 
 #include <http_parser.h>
 
@@ -12,13 +14,13 @@ namespace faas {
 namespace gateway {
 
 class Server;
-class HttpAsyncRequestContext;
 
 class HttpConnection final : public server::ConnectionBase {
 public:
     static constexpr int kTypeId = 0;
 
-    static constexpr const char* kDefaultContentType = "text/plain";
+    static constexpr const char* kServerString = "FaaS/0.1";
+    static constexpr const char* kResponseContentType = "text/plain";
 
     HttpConnection(Server* server, int connection_id);
     ~HttpConnection();
@@ -26,6 +28,8 @@ public:
     uv_stream_t* InitUVHandle(uv_loop_t* uv_loop) override;
     void Start(server::IOWorker* io_worker) override;
     void ScheduleClose() override;
+
+    void OnFuncCallFinished(FuncCallContext* func_call_context);
 
 private:
     enum State { kCreated, kRunning, kClosing, kClosed };
@@ -37,6 +41,7 @@ private:
 
     std::string log_header_;
 
+    FuncCallContext func_call_context_;
     http_parser_settings http_parser_settings_;
     http_parser http_parser_;
     int header_field_value_flag_;
@@ -53,13 +58,7 @@ private:
     // For response
     utils::AppendableBuffer response_header_buffer_;
     utils::AppendableBuffer response_body_buffer_;
-    int response_status_;
-    std::string response_content_type_;
     uv_write_t response_write_req_;
-    bool within_async_request_;
-    std::shared_ptr<HttpAsyncRequestContext> async_request_context_;
-
-    friend class HttpAsyncRequestContext;
 
     void StartRecvData();
     void StopRecvData();
@@ -80,9 +79,8 @@ private:
     void HttpParserOnNewHeader();
     void ResetHttpParser();
     void OnNewHttpRequest(std::string_view method, std::string_view path);
-    void OnAsyncRequestFinish();
-    void AsyncRequestFinish(HttpAsyncRequestContext* context);
-    void SendHttpResponse();
+    void SendHttpResponse(HttpStatus status, std::span<const char> body = std::span<const char>());
+    void OnFuncCallFinishedInternal();
 
     static int HttpParserOnMessageBeginCallback(http_parser* http_parser);
     static int HttpParserOnUrlCallback(http_parser* http_parser, const char* data, size_t length);

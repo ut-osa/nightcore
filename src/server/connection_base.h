@@ -8,13 +8,17 @@ namespace server {
 
 class IOWorker;
 
-class ConnectionBase : public uv::Base {
+class ConnectionBase : public uv::Base, std::enable_shared_from_this<ConnectionBase> {
 public:
     explicit ConnectionBase(int type = -1) : type_(type), id_(-1) {}
     virtual ~ConnectionBase() {}
 
     int type() const { return type_; }
     int id() const { return id_; }
+
+    template<class T>
+    T* as_ptr() { return static_cast<T*>(this); }
+    std::shared_ptr<ConnectionBase> ref_self() { return shared_from_this(); }
 
     virtual uv_stream_t* InitUVHandle(uv_loop_t* uv_loop) = 0;
     virtual void Start(IOWorker* io_worker) = 0;

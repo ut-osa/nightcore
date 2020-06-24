@@ -1,7 +1,7 @@
-#include "gateway/dispatcher.h"
+#include "engine/dispatcher.h"
 
 #include "ipc/base.h"
-#include "gateway/server.h"
+#include "engine/engine.h"
 
 #include <absl/flags/flag.h>
 
@@ -14,7 +14,7 @@ ABSL_FLAG(double, expected_concurrency_coef, 1.0, "");
 ABSL_FLAG(int, min_worker_request_interval_ms, 200, "");
 
 namespace faas {
-namespace gateway {
+namespace engine {
 
 using protocol::FuncCall;
 using protocol::FuncCallDebugString;
@@ -24,8 +24,8 @@ using protocol::GetFuncCallFromMessage;
 using protocol::NewCreateFuncWorkerMessage;
 using protocol::NewDispatchFuncCallMessage;
 
-Dispatcher::Dispatcher(Server* server, uint16_t func_id)
-    : server_(server), func_id_(func_id),
+Dispatcher::Dispatcher(Engine* engine, uint16_t func_id)
+    : engine_(engine), func_id_(func_id),
       log_header_(fmt::format("Dispatcher[{}]: ", func_id)),
       last_request_worker_timestamp_(-1),
       idle_workers_stat_(stat::StatisticsCollector<uint16_t>::StandardReportCallback(
@@ -36,7 +36,7 @@ Dispatcher::Dispatcher(Server* server, uint16_t func_id)
           fmt::format("max_concurrency[{}]", func_id))),
       estimated_concurrency_stat_(stat::StatisticsCollector<float>::StandardReportCallback(
           fmt::format("estimated_concurrency[{}]", func_id))) {
-    const FuncConfig::Entry* func_entry = server_->func_config()->find_by_func_id(func_id);
+    const FuncConfig::Entry* func_entry = engine_->func_config()->find_by_func_id(func_id);
     DCHECK(func_entry != nullptr);
     func_config_entry_ = func_entry;
     if (func_config_entry_->min_workers > 0) {
@@ -49,7 +49,7 @@ Dispatcher::Dispatcher(Server* server, uint16_t func_id)
 
 Dispatcher::~Dispatcher() {}
 
-bool Dispatcher::OnFuncWorkerConnected(FuncWorker* func_worker) {
+bool Dispatcher::OnFuncWorkerConnected(std::shared_ptr<FuncWorker> func_worker) {
     DCHECK_EQ(func_id_, func_worker->func_id());
     uint16_t client_id = func_worker->client_id();
     absl::MutexLock lk(&mu_);
@@ -62,7 +62,7 @@ bool Dispatcher::OnFuncWorkerConnected(FuncWorker* func_worker) {
                                   client_id,
                                   (GetMonotonicMicroTimestamp() - request_timestamp) / 1000);
     }
-    if (!DispatchPendingFuncCall(func_worker)) {
+    if (!DispatchPendingFuncCall(func_worker.get())) {
         idle_workers_.push_back(client_id);
     }
     UpdateWorkerLoadStat();
@@ -91,7 +91,7 @@ bool Dispatcher::OnNewFuncCall(const FuncCall& func_call, const FuncCall& parent
         SetInlineDataInMessage(dispatch_func_call_message, inline_input);
     }
 
-    Tracer::FuncCallInfo* func_call_info = server_->tracer()->OnNewFuncCall(
+    Tracer::FuncCallInfo* func_call_info = engine_->tracer()->OnNewFuncCall(
         func_call, parent_func_call, input_size);
     FuncWorker* idle_worker = PickIdleWorker();
     if (idle_worker) {
@@ -106,44 +106,53 @@ bool Dispatcher::OnNewFuncCall(const FuncCall& func_call, const FuncCall& parent
     return true;
 }
 
-void Dispatcher::OnFuncCallCompleted(const FuncCall& func_call, int32_t processing_time,
+bool Dispatcher::OnFuncCallCompleted(const FuncCall& func_call, int32_t processing_time,
                                      int32_t dispatch_delay, size_t output_size) {
     VLOG(1) << "OnFuncCallCompleted " << FuncCallDebugString(func_call);
     DCHECK_EQ(func_id_, func_call.func_id);
+    Tracer::FuncCallInfo* func_call_info = engine_->tracer()->OnFuncCallFailed(
+        func_call, dispatch_delay);
+    if (func_call_info == nullptr) {
+        return false;
+    }
+    engine_->tracer()->DiscardFuncCallInfo(func_call);
     absl::MutexLock lk(&mu_);
-    server_->tracer()->OnFuncCallCompleted(func_call, processing_time, dispatch_delay, output_size);
-    server_->tracer()->DiscardFuncCallInfo(func_call);
     if (!assigned_workers_.contains(func_call.full_call_id)) {
-        HLOG(ERROR) << "Cannot find assigned worker for full_call_id " << func_call.full_call_id;
-        return;
+        return true;
     }
     uint16_t client_id = assigned_workers_[func_call.full_call_id];
     if (workers_.contains(client_id)) {
-        FuncWorker* func_worker = workers_[client_id];
+        FuncWorker* func_worker = workers_[client_id].get();
         FuncWorkerFinished(func_worker);
     } else {
         HLOG(WARNING) << fmt::format("FuncWorker (client_id {}) already disconnected", client_id);
     }
     assigned_workers_.erase(func_call.full_call_id);
+    return true;
 }
 
-void Dispatcher::OnFuncCallFailed(const FuncCall& func_call, int32_t dispatch_delay) {
+bool Dispatcher::OnFuncCallFailed(const FuncCall& func_call, int32_t dispatch_delay) {
     VLOG(1) << "OnFuncCallFailed " << FuncCallDebugString(func_call);
     DCHECK_EQ(func_id_, func_call.func_id);
+    Tracer::FuncCallInfo* func_call_info = engine_->tracer()->OnFuncCallFailed(
+        func_call, dispatch_delay);
+    if (func_call_info == nullptr) {
+        return false;
+    }
+    engine_->tracer()->DiscardFuncCallInfo(func_call);
     absl::MutexLock lk(&mu_);
-    server_->tracer()->OnFuncCallFailed(func_call, dispatch_delay);
-    server_->tracer()->DiscardFuncCallInfo(func_call);
     if (!assigned_workers_.contains(func_call.full_call_id)) {
-        return;
+        return true;
     }
     uint16_t client_id = assigned_workers_[func_call.full_call_id];
     if (workers_.contains(client_id)) {
-        FuncWorker* func_worker = workers_[client_id];
+        FuncWorker* func_worker = workers_[client_id].get();
         FuncWorkerFinished(func_worker);
     } else {
         HLOG(WARNING) << fmt::format("FuncWorker (client_id {}) already disconnected", client_id);
     }
     assigned_workers_.erase(func_call.full_call_id);
+    return true;
 }
 
 void Dispatcher::FuncWorkerFinished(FuncWorker* func_worker) {
@@ -161,7 +170,7 @@ bool Dispatcher::DispatchPendingFuncCall(FuncWorker* func_worker) {
     if (pending_func_calls_.empty()) {
         return false;
     }
-    double average_processing_time = server_->tracer()->GetAverageProcessingTime(func_id_);
+    double average_processing_time = engine_->tracer()->GetAverageProcessingTime(func_id_);
     double max_relative_queueing_delay = absl::GetFlag(FLAGS_max_relative_queueing_delay);
     int64_t current_timestamp = GetMonotonicMicroTimestamp();
     while (!pending_func_calls_.empty()) {
@@ -182,8 +191,8 @@ bool Dispatcher::DispatchPendingFuncCall(FuncWorker* func_worker) {
             return true;
         } else {
             message_pool_.Return(dispatch_func_call_message);
-            server_->DiscardFuncCall(func_call);
-            server_->tracer()->DiscardFuncCallInfo(func_call);
+            engine_->DiscardFuncCall(func_call);
+            engine_->tracer()->DiscardFuncCallInfo(func_call);
         }
     }
     return false;
@@ -194,7 +203,7 @@ void Dispatcher::DispatchFuncCall(FuncWorker* func_worker, Message* dispatch_fun
     DCHECK(workers_.contains(client_id));
     DCHECK(!running_workers_.contains(client_id));
     FuncCall func_call = GetFuncCallFromMessage(*dispatch_func_call_message);
-    server_->tracer()->OnFuncCallDispatched(func_call, func_worker);
+    engine_->tracer()->OnFuncCallDispatched(func_call, func_worker);
     assigned_workers_[func_call.full_call_id] = client_id;
     running_workers_[client_id] = func_call;
     func_worker->DispatchFuncCall(dispatch_func_call_message);
@@ -211,7 +220,7 @@ FuncWorker* Dispatcher::PickIdleWorker() {
         uint16_t client_id = idle_workers_.back();
         idle_workers_.pop_back();
         if (workers_.contains(client_id) && !running_workers_.contains(client_id)) {
-            return workers_[client_id];
+            return workers_[client_id].get();
         }
     }
     MayRequestNewFuncWorker();
@@ -229,8 +238,8 @@ void Dispatcher::UpdateWorkerLoadStat() {
 }
 
 size_t Dispatcher::DetermineExpectedConcurrency() {
-    double average_processing_time = server_->tracer()->GetAverageProcessingTime2(func_id_);
-    double average_instant_rps = server_->tracer()->GetAverageInstantRps(func_id_);
+    double average_processing_time = engine_->tracer()->GetAverageProcessingTime2(func_id_);
+    double average_instant_rps = engine_->tracer()->GetAverageInstantRps(func_id_);
     if (average_processing_time > 0 && average_instant_rps > 0) {
         double estimated_concurrency = absl::GetFlag(FLAGS_expected_concurrency_coef)
                                      * average_processing_time * average_instant_rps / 1e6;
@@ -242,8 +251,8 @@ size_t Dispatcher::DetermineExpectedConcurrency() {
 
 size_t Dispatcher::DetermineConcurrencyLimit() {
     size_t result = std::numeric_limits<size_t>::max();
-    double average_running_delay = server_->tracer()->GetAverageRunningDelay(func_id_);
-    double average_instant_rps = server_->tracer()->GetAverageInstantRps(func_id_);
+    double average_running_delay = engine_->tracer()->GetAverageRunningDelay(func_id_);
+    double average_instant_rps = engine_->tracer()->GetAverageInstantRps(func_id_);
     if (average_running_delay > 0 && average_instant_rps > 0) {
         double estimated_concurrency = absl::GetFlag(FLAGS_concurrency_limit_coef)
                                      * average_running_delay * average_instant_rps / 1e6;
@@ -275,7 +284,7 @@ void Dispatcher::MayRequestNewFuncWorker() {
                                        + min_worker_request_interval_ms * 1000)) {
         HLOG(INFO) << "Request new FuncWorker: estimated_concurrency=" << estimated_concurrency;
         uint16_t client_id;
-        if (server_->worker_manager()->RequestNewFuncWorker(func_id_, &client_id)) {
+        if (engine_->worker_manager()->RequestNewFuncWorker(func_id_, &client_id)) {
             requested_workers_[client_id] = current_timestamp;
             last_request_worker_timestamp_ = current_timestamp;
         } else {
@@ -284,5 +293,5 @@ void Dispatcher::MayRequestNewFuncWorker() {
     }
 }
 
-}  // namespace gateway
+}  // namespace engine
 }  // namespace faas

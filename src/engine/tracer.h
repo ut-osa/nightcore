@@ -7,14 +7,14 @@
 #include "utils/exp_moving_avg.h"
 
 namespace faas {
-namespace gateway {
+namespace engine {
 
-class Server;
+class Engine;
 class FuncWorker;
 
 class Tracer {
 public:
-    explicit Tracer(Server* server);
+    explicit Tracer(Engine* engine);
     ~Tracer();
 
     void Init();
@@ -61,7 +61,7 @@ public:
     double GetAverageProcessingTime2(uint16_t func_id);
 
 private:
-    Server* server_;
+    Engine* engine_;
     absl::Mutex mu_;
 
     utils::SimpleObjectPool<FuncCallInfo> func_call_info_pool_ ABSL_GUARDED_BY(mu_);
@@ -99,5 +99,5 @@ private:
     DISALLOW_COPY_AND_ASSIGN(Tracer);
 };
 
-}  // namespace gateway
+}  // namespace engine
 }  // namespace faas

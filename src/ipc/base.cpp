@@ -6,19 +6,19 @@ namespace faas {
 namespace ipc {
 
 namespace {
-std::string root_path_for_ipc     = "NOT_SET";
-std::string gateway_unix_ipc_path = "NOT_SET";
-std::string root_path_for_shm     = "NOT_SET";
-std::string root_path_for_fifo    = "NOT_SET";
+std::string root_path_for_ipc    = "NOT_SET";
+std::string engine_unix_ipc_path = "NOT_SET";
+std::string root_path_for_shm    = "NOT_SET";
+std::string root_path_for_fifo   = "NOT_SET";
 
-static constexpr const char* kGatewayUnixSocket = "gateway.sock";
+static constexpr const char* kEngineUnixSocket = "engine.sock";
 static constexpr const char* kShmSubPath = "shm";
 static constexpr const char* kFifoSubPath = "fifo";
 }
 
 void SetRootPathForIpc(std::string_view path, bool create) {
     root_path_for_ipc = std::string(path);
-    gateway_unix_ipc_path = fs_utils::JoinPath(root_path_for_ipc, kGatewayUnixSocket);
+    engine_unix_ipc_path = fs_utils::JoinPath(root_path_for_ipc, kEngineUnixSocket);
     root_path_for_shm = fs_utils::JoinPath(root_path_for_ipc, kShmSubPath);
     root_path_for_fifo = fs_utils::JoinPath(root_path_for_ipc, kFifoSubPath);
     if (create) {
@@ -42,9 +42,9 @@ std::string_view GetRootPathForIpc() {
     return root_path_for_ipc;
 }
 
-std::string_view GetGatewayUnixSocketPath() {
-    CHECK_NE(gateway_unix_ipc_path, "NOT_SET");
-    return gateway_unix_ipc_path;
+std::string_view GetEngineUnixSocketPath() {
+    CHECK_NE(engine_unix_ipc_path, "NOT_SET");
+    return engine_unix_ipc_path;
 }
 
 std::string_view GetRootPathForShm() {

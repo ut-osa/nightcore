@@ -52,7 +52,7 @@ void FuncWorker::Serve() {
         "faas_func_call");
     CHECK(init_fn_() == 0) << "Failed to initialize loaded library";
     // Connect to gateway via IPC path
-    gateway_sock_fd_ = utils::UnixDomainSocketConnect(ipc::GetGatewayUnixSocketPath());
+    gateway_sock_fd_ = utils::UnixDomainSocketConnect(ipc::GetEngineUnixSocketPath());
     HandshakeWithGateway();
     // Enter main serving loop
     MainServingLoop();
