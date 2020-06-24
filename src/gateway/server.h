@@ -34,7 +34,6 @@ public:
 
     // Must be thread-safe
     void OnNewHttpFuncCall(HttpConnection* connection, FuncCallContext* func_call_context);
-    void DiscardFuncCall(const protocol::FuncCall& func_call);
     void OnRecvEngineMessage(EngineConnection* connection,
                              const protocol::GatewayMessage& message,
                              std::span<const char> payload);
@@ -53,7 +52,6 @@ private:
     uv_tcp_t uv_http_handle_;
     std::vector<server::IOWorker*> io_workers_;
 
-    absl::flat_hash_map</* id */ int, std::shared_ptr<server::ConnectionBase>> http_connections_;
     size_t next_http_conn_worker_id_;
     int next_http_connection_id_;
 
@@ -70,13 +68,12 @@ private:
 
     absl::Mutex mu_;
 
-    struct FuncCallState {
-        std::shared_ptr<server::ConnectionBase> connection;
-        FuncCallContext* context;
-    };
-
-    absl::flat_hash_map</* full_call_id */ uint64_t, FuncCallState>
+    absl::flat_hash_map</* full_call_id */ uint64_t,
+                        std::pair</* connection_id */ int, FuncCallContext*>>
         running_func_calls_ ABSL_GUARDED_BY(mu_);
+    absl::flat_hash_map</* connection_id */ int,
+                        std::shared_ptr<server::ConnectionBase>>
+        connections_ ABSL_GUARDED_BY(mu_);
 
     int64_t last_request_timestamp_ ABSL_GUARDED_BY(mu_);
     stat::Counter incoming_requests_stat_ ABSL_GUARDED_BY(mu_);

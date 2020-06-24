@@ -16,7 +16,7 @@ class Engine;
 
 class MessageConnection final : public server::ConnectionBase {
 public:
-    static constexpr int kTypeId = 2;
+    static constexpr int kTypeId = 1;
 
     explicit MessageConnection(Engine* engine);
     ~MessageConnection();

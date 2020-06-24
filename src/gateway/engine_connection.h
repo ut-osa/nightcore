@@ -15,7 +15,7 @@ class Server;
 
 class EngineConnection final : public server::ConnectionBase {
 public:
-    static constexpr int kBaseTypeId = 1;
+    static constexpr int kBaseTypeId = 2;
 
     static int type_id(uint16_t node_id) { return kBaseTypeId + node_id; }
 
@@ -45,6 +45,8 @@ private:
     std::string log_header_;
 
     utils::AppendableBuffer read_buffer_;
+
+    void ProcessGatewayMessages();
 
     DECLARE_UV_ALLOC_CB_FOR_CLASS(BufferAlloc);
     DECLARE_UV_READ_CB_FOR_CLASS(RecvData);

@@ -8,10 +8,6 @@
 #include "utils/docker.h"
 #include "worker/worker_lib.h"
 
-#include <absl/flags/flag.h>
-
-ABSL_FLAG(size_t, max_running_external_requests, 0, "");
-
 #define HLOG(l) LOG(l) << "Server: "
 #define HVLOG(l) VLOG(l) << "Server: "
 
@@ -23,7 +19,12 @@ using protocol::FuncCallDebugString;
 using protocol::NewFuncCall;
 using protocol::NewFuncCallWithMethod;
 using protocol::GatewayMessage;
+using protocol::GetFuncCallFromMessage;
 using protocol::IsEngineHandshakeMessage;
+using protocol::IsFuncCallCompleteMessage;
+using protocol::IsFuncCallFailedMessage;
+using protocol::IsFuncCallDiscardedMessage;
+using protocol::NewDispatchFuncCallGatewayMessage;
 
 Server::Server()
     : engine_conn_port_(-1), http_port_(-1),
@@ -87,24 +88,68 @@ void Server::StopInternal() {
 void Server::OnConnectionClose(server::ConnectionBase* connection) {
     DCHECK_IN_EVENT_LOOP_THREAD(uv_loop());
     if (connection->type() == HttpConnection::kTypeId) {
-        DCHECK(http_connections_.contains(connection->id()));
-        http_connections_.erase(connection->id());
+        absl::MutexLock lk(&mu_);
+        DCHECK(connections_.contains(connection->id()));
+        connections_.erase(connection->id());
     } else {
         HLOG(ERROR) << "Unknown connection type!";
     }
 }
 
 void Server::OnNewHttpFuncCall(HttpConnection* connection, FuncCallContext* func_call_context) {
-    // TODO
-}
-
-void Server::DiscardFuncCall(const FuncCall& func_call) {
-    // TODO
+    auto func_entry = func_config_.find_by_func_name(func_call_context->func_name());
+    DCHECK(func_entry != nullptr);
+    FuncCall func_call = NewFuncCall(func_entry->func_id, /* client_id= */ 0,
+                                     next_call_id_.fetch_add(1));
+    func_call_context->set_func_call(func_call);
+    {
+        absl::MutexLock lk(&mu_);
+        running_func_calls_[func_call.full_call_id] = std::make_pair(
+            connection->id(), func_call_context);
+    }
+    server::IOWorker* io_worker = server::IOWorker::current();
+    DCHECK(io_worker != nullptr);
+    server::ConnectionBase* engine_connection = io_worker->PickRandomConnection(
+        EngineConnection::type_id(/* node_id= */ 0));
+    GatewayMessage dispatch_message = NewDispatchFuncCallGatewayMessage(func_call);
+    dispatch_message.payload_size = func_call_context->input().size();
+    engine_connection->as_ptr<EngineConnection>()->SendMessage(
+        dispatch_message, func_call_context->input());
 }
 
 void Server::OnRecvEngineMessage(EngineConnection* connection, const GatewayMessage& message,
                                  std::span<const char> payload) {
-    // TODO
+    if (IsFuncCallCompleteMessage(message)
+            || IsFuncCallFailedMessage(message)
+            || IsFuncCallDiscardedMessage(message)) {
+        FuncCall func_call = GetFuncCallFromMessage(message);
+        FuncCallContext* func_call_context = nullptr;
+        std::shared_ptr<server::ConnectionBase> connection;
+        {
+            absl::MutexLock lk(&mu_);
+            if (running_func_calls_.contains(func_call.full_call_id)) {
+                int connection_id = running_func_calls_[func_call.full_call_id].first;
+                if (connections_.contains(connection_id)) {
+                    connection = connections_[connection_id];
+                    func_call_context = running_func_calls_[func_call.full_call_id].second;
+                }
+                running_func_calls_.erase(func_call.full_call_id);
+            }
+        }
+        if (func_call_context != nullptr) {
+            if (IsFuncCallCompleteMessage(message)) {
+                func_call_context->set_status(FuncCallContext::kSuccess);
+                func_call_context->append_output(payload);
+            } else if (IsFuncCallFailedMessage(message) || IsFuncCallDiscardedMessage(message)) {
+                func_call_context->set_status(FuncCallContext::kFailed);
+            } else {
+                HLOG(FATAL) << "Unreachable";
+            }
+            connection->as_ptr<HttpConnection>()->OnFuncCallFinished(func_call_context);
+        }
+    } else {
+        HLOG(ERROR) << "Unknown engine message type";
+    }
 }
 
 bool Server::OnEngineHandshake(uv_tcp_t* uv_handle, std::span<const char> data) {
@@ -153,8 +198,11 @@ UV_CONNECTION_CB_FOR_CLASS(Server, HttpConnection) {
         next_http_conn_worker_id_ = (next_http_conn_worker_id_ + 1) % io_workers_.size();
         RegisterConnection(io_worker, connection.get(), UV_AS_STREAM(client));
         DCHECK_GE(connection->id(), 0);
-        DCHECK(!http_connections_.contains(connection->id()));
-        http_connections_[connection->id()] = std::move(connection);
+        {
+            absl::MutexLock lk(&mu_);
+            DCHECK(!connections_.contains(connection->id()));
+            connections_[connection->id()] = std::move(connection);
+        }
     } else {
         LOG(ERROR) << "Failed to accept new HTTP connection";
         free(client);

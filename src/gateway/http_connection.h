@@ -56,8 +56,7 @@ private:
     absl::flat_hash_map<std::string_view, std::string_view> headers_;
 
     // For response
-    utils::AppendableBuffer response_header_buffer_;
-    utils::AppendableBuffer response_body_buffer_;
+    std::string response_header_;
     uv_write_t response_write_req_;
 
     void StartRecvData();

@@ -3,6 +3,7 @@
 #include "base/common.h"
 #include "common/protocol.h"
 #include "utils/appendable_buffer.h"
+#include "server/connection_base.h"
 
 namespace faas {
 namespace gateway {
@@ -17,7 +18,8 @@ public:
         kNotFound = 3
     };
 
-    FuncCallContext() {}
+    explicit FuncCallContext(server::ConnectionBase* connection)
+        : connection_id_(connection->id()) {}
     ~FuncCallContext() {}
 
     void set_func_name(std::string_view func_name) { func_name_.assign(func_name); }
@@ -27,6 +29,7 @@ public:
     void append_output(std::span<const char> output) { output_.AppendData(output); }
     void set_status(Status status) { status_ = status; }
 
+    int connection_id() { return connection_id_; }
     std::string_view func_name() const { return func_name_; }
     std::string_view method_name() const { return method_name_; }
     protocol::FuncCall func_call() const { return func_call_; }
@@ -44,6 +47,7 @@ public:
     }
 
 private:
+    int connection_id_;
     Status status_;
     std::string func_name_;
     std::string method_name_;

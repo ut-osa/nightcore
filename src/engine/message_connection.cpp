@@ -179,7 +179,7 @@ void MessageConnection::RecvHandshakeMessage() {
 }
 
 void MessageConnection::WriteMessage(const Message& message) {
-    if (!is_launcher_connection() && absl::GetFlag(FLAGS_func_worker_pipe_direct_write)) {
+    if (is_func_worker_connection() && absl::GetFlag(FLAGS_func_worker_pipe_direct_write)) {
         int fd = pipe_for_write_fd_.load();
         if (fd != -1) {
             ssize_t ret = write(pipe_for_write_fd_, &message, sizeof(Message));

@@ -10,8 +10,8 @@ namespace faas {
 namespace gateway {
 
 HttpConnection::HttpConnection(Server* server, int connection_id)
-    : server::ConnectionBase(kTypeId), server_(server), io_worker_(nullptr),
-      state_(kCreated), log_header_(absl::StrFormat("HttpConnection[%d]: ", connection_id)) {
+    : server::ConnectionBase(kTypeId), server_(server), io_worker_(nullptr), state_(kCreated),
+      log_header_(fmt::format("HttpConnection[{}]: ", connection_id)), func_call_context_(this) {
     http_parser_init(&http_parser_, HTTP_REQUEST);
     http_parser_.data = this;
     http_parser_settings_init(&http_parser_settings_);
@@ -237,29 +237,31 @@ void HttpConnection::OnFuncCallFinished(FuncCallContext* func_call_context) {
 
 void HttpConnection::SendHttpResponse(HttpStatus status, std::span<const char> body) {
     DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
-    static const char* CRLF = "\r\n";
-    std::ostringstream header;
-    header << "HTTP/1.1 " << GetHttpStatusString(status) << " ";
-    header << CRLF;
-    header << "Date: " << absl::FormatTime(absl::RFC1123_full, absl::Now(), absl::UTCTimeZone()) << CRLF;
-    header << "Server: " << kServerString << CRLF;
-    header << "Content-Type: " << kResponseContentType << CRLF;
-    header << "Content-Length: " << body.size() << CRLF;
-    header << "HttpConnection: Keep-Alive" << CRLF;
-    header << CRLF;
-    response_header_buffer_.Reset();
-    response_header_buffer_.AppendData(header.str());
+    response_header_ = fmt::format(
+        "HTTP/1.1 {}\r\n"
+        "Date: {}\r\n"
+        "Server: {}\r\n"
+        "Connection: Keep-Alive\r\n"
+        "Content-Type: {}\r\n"
+        "Content-Length: {}\r\n"
+        "\r\n",
+        GetHttpStatusString(status),
+        absl::FormatTime(absl::RFC1123_full, absl::Now(), absl::UTCTimeZone()),
+        kServerString,
+        kResponseContentType,
+        body.size()
+    );
     if (body.size() > 0) {
         uv_buf_t bufs[] = {
-            { .base = response_header_buffer_.data(), .len = response_header_buffer_.length() },
+            { .base = const_cast<char*>(response_header_.data()), .len = response_header_.length() },
             { .base = const_cast<char*>(body.data()), .len = body.size() }
         };
         UV_DCHECK_OK(uv_write(&response_write_req_, UV_AS_STREAM(&uv_tcp_handle_),
                               bufs, 2, &HttpConnection::DataWrittenCallback));
     } else {
         uv_buf_t buf = {
-            .base = response_header_buffer_.data(),
-            .len = response_header_buffer_.length()
+            .base = const_cast<char*>(response_header_.data()),
+            .len = response_header_.length()
         };
         UV_DCHECK_OK(uv_write(&response_write_req_, UV_AS_STREAM(&uv_tcp_handle_),
                               &buf, 1, &HttpConnection::DataWrittenCallback));

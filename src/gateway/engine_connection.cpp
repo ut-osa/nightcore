@@ -1,5 +1,7 @@
 #include "gateway/engine_connection.h"
 
+#include "gateway/server.h"
+
 #define HLOG(l) LOG(l) << log_header_
 #define HVLOG(l) VLOG(l) << log_header_
 
@@ -34,6 +36,7 @@ void EngineConnection::Start(server::IOWorker* io_worker) {
                                &EngineConnection::BufferAllocCallback,
                                &EngineConnection::RecvDataCallback));
     state_ = kRunning;
+    ProcessGatewayMessages();
 }
 
 void EngineConnection::ScheduleClose() {
@@ -48,7 +51,50 @@ void EngineConnection::ScheduleClose() {
 }
 
 void EngineConnection::SendMessage(const GatewayMessage& message, std::span<const char> payload) {
-    // TODO
+    DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
+    if (state_ != kRunning) {
+        HLOG(WARNING) << "EngineConnection is closing or has closed, will not send this message";
+        return;
+    }
+    DCHECK_EQ(message.payload_size, gsl::narrow_cast<int32_t>(payload.size()));
+    size_t pos = 0;
+    while (pos < sizeof(GatewayMessage) + payload.size()) {
+        uv_buf_t buf;
+        io_worker_->NewWriteBuffer(&buf);
+        size_t write_size;
+        if (pos == 0) {
+            DCHECK(sizeof(GatewayMessage) <= buf.len);
+            memcpy(buf.base, &message, sizeof(GatewayMessage));
+            size_t copy_size = std::min(buf.len - sizeof(GatewayMessage), payload.size());
+            memcpy(buf.base + sizeof(GatewayMessage), payload.data(), copy_size);
+            write_size = sizeof(GatewayMessage) + copy_size;
+        } else {
+            size_t copy_size = std::min(buf.len, payload.size() + sizeof(GatewayMessage) - pos);
+            memcpy(buf.base, payload.data() + pos - sizeof(GatewayMessage), copy_size);
+            write_size = copy_size;
+        }
+        uv_write_t* write_req = io_worker_->NewWriteRequest();
+        write_req->data = buf.base;
+        UV_DCHECK_OK(uv_write(write_req, UV_AS_STREAM(&uv_tcp_handle_),
+                              &buf, 1, &EngineConnection::DataWrittenCallback));
+        pos += write_size;
+    }
+}
+
+void EngineConnection::ProcessGatewayMessages() {
+    DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
+    while (read_buffer_.length() >= sizeof(GatewayMessage)) {
+        GatewayMessage* message = reinterpret_cast<GatewayMessage*>(read_buffer_.data());
+        size_t full_size = sizeof(GatewayMessage) + std::max<size_t>(0, message->payload_size);
+        if (read_buffer_.length() >= full_size) {
+            std::span<const char> payload(read_buffer_.data() + sizeof(GatewayMessage),
+                                          full_size - sizeof(GatewayMessage));
+            server_->OnRecvEngineMessage(this, *message, payload);
+            read_buffer_.ConsumeFront(full_size);
+        } else {
+            break;
+        }
+    }
 }
 
 UV_ALLOC_CB_FOR_CLASS(EngineConnection, BufferAlloc) {
@@ -74,11 +120,20 @@ UV_READ_CB_FOR_CLASS(EngineConnection, RecvData) {
     if (nread == 0) {
         return;
     }
-    // TODO
+    read_buffer_.AppendData(buf->base, nread);
+    ProcessGatewayMessages();
 }
 
 UV_WRITE_CB_FOR_CLASS(EngineConnection, DataWritten) {
-    // TODO
+    auto reclaim_worker_resource = gsl::finally([this, req] {
+        io_worker_->ReturnWriteBuffer(reinterpret_cast<char*>(req->data));
+        io_worker_->ReturnWriteRequest(req);
+    });
+    if (status != 0) {
+        HLOG(ERROR) << "Failed to write response, will close this connection: "
+                    << uv_strerror(status);
+        ScheduleClose();
+    }
 }
 
 UV_CLOSE_CB_FOR_CLASS(EngineConnection, Close) {
