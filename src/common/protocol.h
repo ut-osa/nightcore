@@ -73,8 +73,7 @@ enum class MessageType : uint16_t {
     INVOKE_FUNC           = 6,
     DISPATCH_FUNC_CALL    = 7,
     FUNC_CALL_COMPLETE    = 8,
-    FUNC_CALL_FAILED      = 9,
-    FUNC_CALL_DISCARDED   = 10
+    FUNC_CALL_FAILED      = 9
 };
 
 struct Message {
@@ -118,7 +117,7 @@ struct GatewayMessage {
             uint16_t conn_id;
         } __attribute__ ((packed));
         int32_t processing_time; // Used in FUNC_CALL_COMPLETE
-        int32_t status_code;     // Used in FUNC_CALL_FAILED, FUNC_CALL_DISCARDED
+        int32_t status_code;     // Used in FUNC_CALL_FAILED
     };
     int32_t payload_size;        // Used in INVOKE_FUNC, FUNC_CALL_COMPLETE
 } __attribute__ ((packed));
@@ -173,10 +172,6 @@ inline bool IsFuncCallFailedMessage(const GatewayMessage& message) {
     return static_cast<MessageType>(message.message_type) == MessageType::FUNC_CALL_FAILED;
 }
 
-inline bool IsFuncCallDiscardedMessage(const GatewayMessage& message) {
-    return static_cast<MessageType>(message.message_type) == MessageType::FUNC_CALL_DISCARDED;
-}
-
 inline void SetFuncCallInMessage(Message* message, const FuncCall& func_call) {
     message->func_id = func_call.func_id;
     message->method_id = func_call.method_id;
@@ -208,8 +203,7 @@ inline FuncCall GetFuncCallFromMessage(const Message& message) {
 inline FuncCall GetFuncCallFromMessage(const GatewayMessage& message) {
     DCHECK(IsDispatchFuncCallMessage(message)
              || IsFuncCallCompleteMessage(message)
-             || IsFuncCallFailedMessage(message)
-             || IsFuncCallDiscardedMessage(message));
+             || IsFuncCallFailedMessage(message));
     FuncCall func_call;
     func_call.func_id = message.func_id;
     func_call.method_id = message.method_id;
@@ -345,15 +339,6 @@ inline GatewayMessage NewFuncCallFailedGatewayMessage(const FuncCall& func_call,
                                                       int32_t status_code = 0) {
     NEW_EMPTY_GATEWAY_MESSAGE(message);
     message.message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_FAILED);
-    SetFuncCallInMessage(&message, func_call);
-    message.status_code = status_code;
-    return message;
-}
-
-inline GatewayMessage NewFuncCallDiscardedGatewayMessage(const FuncCall& func_call,
-                                                         int32_t status_code = 0) {
-    NEW_EMPTY_GATEWAY_MESSAGE(message);
-    message.message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_DISCARDED);
     SetFuncCallInMessage(&message, func_call);
     message.status_code = status_code;
     return message;

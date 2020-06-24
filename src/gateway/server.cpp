@@ -23,7 +23,6 @@ using protocol::GetFuncCallFromMessage;
 using protocol::IsEngineHandshakeMessage;
 using protocol::IsFuncCallCompleteMessage;
 using protocol::IsFuncCallFailedMessage;
-using protocol::IsFuncCallDiscardedMessage;
 using protocol::NewDispatchFuncCallGatewayMessage;
 
 Server::Server()
@@ -98,7 +97,7 @@ void Server::OnConnectionClose(server::ConnectionBase* connection) {
 
 void Server::OnNewHttpFuncCall(HttpConnection* connection, FuncCallContext* func_call_context) {
     auto func_entry = func_config_.find_by_func_name(func_call_context->func_name());
-    DCHECK(func_entry != nullptr);
+    DCHECK_NOTNULL(func_entry);
     FuncCall func_call = NewFuncCall(func_entry->func_id, /* client_id= */ 0,
                                      next_call_id_.fetch_add(1));
     func_call_context->set_func_call(func_call);
@@ -108,20 +107,28 @@ void Server::OnNewHttpFuncCall(HttpConnection* connection, FuncCallContext* func
             connection->id(), func_call_context);
     }
     server::IOWorker* io_worker = server::IOWorker::current();
-    DCHECK(io_worker != nullptr);
+    DCHECK_NOTNULL(io_worker);
     server::ConnectionBase* engine_connection = io_worker->PickRandomConnection(
         EngineConnection::type_id(/* node_id= */ 0));
-    GatewayMessage dispatch_message = NewDispatchFuncCallGatewayMessage(func_call);
-    dispatch_message.payload_size = func_call_context->input().size();
-    engine_connection->as_ptr<EngineConnection>()->SendMessage(
-        dispatch_message, func_call_context->input());
+    if (engine_connection != nullptr) {
+        GatewayMessage dispatch_message = NewDispatchFuncCallGatewayMessage(func_call);
+        dispatch_message.payload_size = func_call_context->input().size();
+        engine_connection->as_ptr<EngineConnection>()->SendMessage(
+            dispatch_message, func_call_context->input());
+    } else {
+        {
+            absl::MutexLock lk(&mu_);
+            running_func_calls_.erase(func_call.full_call_id);
+        }
+        func_call_context->set_status(FuncCallContext::kNotFound);
+        connection->OnFuncCallFinished(func_call_context);
+    }
 }
 
 void Server::OnRecvEngineMessage(EngineConnection* connection, const GatewayMessage& message,
                                  std::span<const char> payload) {
     if (IsFuncCallCompleteMessage(message)
-            || IsFuncCallFailedMessage(message)
-            || IsFuncCallDiscardedMessage(message)) {
+            || IsFuncCallFailedMessage(message)) {
         FuncCall func_call = GetFuncCallFromMessage(message);
         FuncCallContext* func_call_context = nullptr;
         std::shared_ptr<server::ConnectionBase> connection;
@@ -129,6 +136,7 @@ void Server::OnRecvEngineMessage(EngineConnection* connection, const GatewayMess
             absl::MutexLock lk(&mu_);
             if (running_func_calls_.contains(func_call.full_call_id)) {
                 int connection_id = running_func_calls_[func_call.full_call_id].first;
+                // Check if corresponding connection is still active
                 if (connections_.contains(connection_id)) {
                     connection = connections_[connection_id];
                     func_call_context = running_func_calls_[func_call.full_call_id].second;
@@ -140,7 +148,7 @@ void Server::OnRecvEngineMessage(EngineConnection* connection, const GatewayMess
             if (IsFuncCallCompleteMessage(message)) {
                 func_call_context->set_status(FuncCallContext::kSuccess);
                 func_call_context->append_output(payload);
-            } else if (IsFuncCallFailedMessage(message) || IsFuncCallDiscardedMessage(message)) {
+            } else if (IsFuncCallFailedMessage(message)) {
                 func_call_context->set_status(FuncCallContext::kFailed);
             } else {
                 HLOG(FATAL) << "Unreachable";

@@ -73,10 +73,12 @@ void EngineConnection::SendMessage(const GatewayMessage& message, std::span<cons
             memcpy(buf.base, payload.data() + pos - sizeof(GatewayMessage), copy_size);
             write_size = copy_size;
         }
+        DCHECK_LE(write_size, buf.len);
+        buf.len = write_size;
         uv_write_t* write_req = io_worker_->NewWriteRequest();
         write_req->data = buf.base;
         UV_DCHECK_OK(uv_write(write_req, UV_AS_STREAM(&uv_tcp_handle_),
-                              &buf, 1, &EngineConnection::DataWrittenCallback));
+                              &buf, 1, &EngineConnection::DataSentCallback));
         pos += write_size;
     }
 }
@@ -124,13 +126,13 @@ UV_READ_CB_FOR_CLASS(EngineConnection, RecvData) {
     ProcessGatewayMessages();
 }
 
-UV_WRITE_CB_FOR_CLASS(EngineConnection, DataWritten) {
+UV_WRITE_CB_FOR_CLASS(EngineConnection, DataSent) {
     auto reclaim_worker_resource = gsl::finally([this, req] {
         io_worker_->ReturnWriteBuffer(reinterpret_cast<char*>(req->data));
         io_worker_->ReturnWriteRequest(req);
     });
     if (status != 0) {
-        HLOG(ERROR) << "Failed to write response, will close this connection: "
+        HLOG(ERROR) << "Failed to send data, will close this connection: "
                     << uv_strerror(status);
         ScheduleClose();
     }

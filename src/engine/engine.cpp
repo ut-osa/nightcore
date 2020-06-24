@@ -21,6 +21,7 @@ namespace engine {
 using protocol::FuncCall;
 using protocol::FuncCallDebugString;
 using protocol::Message;
+using protocol::GatewayMessage;
 using protocol::GetFuncCallFromMessage;
 using protocol::GetInlineDataFromMessage;
 using protocol::IsLauncherHandshakeMessage;
@@ -29,6 +30,8 @@ using protocol::IsInvokeFuncMessage;
 using protocol::IsFuncCallCompleteMessage;
 using protocol::IsFuncCallFailedMessage;
 using protocol::NewHandshakeResponseMessage;
+using protocol::NewFuncCallCompleteGatewayMessage;
+using protocol::NewFuncCallFailedGatewayMessage;
 using protocol::ComputeMessageDelay;
 
 Engine::Engine()
@@ -146,6 +149,16 @@ bool Engine::OnNewHandshake(MessageConnection* connection,
     return true;
 }
 
+void Engine::OnRecvGatewayMessage(GatewayConnection* connection, const GatewayMessage& message,
+                                  std::span<const char> payload) {
+    if (IsDispatchFuncCallMessage(message)) {
+        FuncCall func_call = GetFuncCallFromMessage(message);
+        OnExternalFuncCall(func_call, payload);
+    } else {
+        HLOG(ERROR) << "Unknown engine message type";
+    }
+}
+
 void Engine::OnRecvMessage(MessageConnection* connection, const Message& message) {
     int32_t message_delay = ComputeMessageDelay(message);
     if (IsInvokeFuncMessage(message)) {
@@ -212,27 +225,21 @@ void Engine::OnRecvMessage(MessageConnection* connection, const Message& message
                         auto output_region = ipc::ShmOpen(
                             ipc::GetFuncCallOutputShmName(func_call.full_call_id));
                         if (output_region == nullptr) {
-                            ExternalFuncCallFinished(
-                                func_call, /* success= */ false, /* discarded= */ false,
-                                /* output= */ std::span<const char>());
+                            ExternalFuncCallFailed(func_call);
                         } else {
                             output_region->EnableRemoveOnDestruction();
-                            ExternalFuncCallFinished(
-                                func_call, /* success= */ true, /* discarded= */ false,
-                                /* output= */ output_region->to_span());
+                            ExternalFuncCallCompleted(func_call, output_region->to_span(),
+                                                      message.processing_time);
                         }
                     } else {
-                        ExternalFuncCallFinished(
-                            func_call, /* success= */ true, /* discarded= */ false,
-                            /* output= */ GetInlineDataFromMessage(message));
+                        ExternalFuncCallCompleted(func_call, GetInlineDataFromMessage(message),
+                                                  message.processing_time);
                     }
                 }
             } else {
                 bool success = dispatcher->OnFuncCallFailed(func_call, message.dispatch_delay);
                 if (success && func_call.client_id == 0) {
-                    ExternalFuncCallFinished(
-                        func_call, /* success= */ false, /* discarded= */ false,
-                        /* output= */ std::span<const char>());
+                    ExternalFuncCallFailed(func_call);
                 }
             }
         }
@@ -249,9 +256,7 @@ void Engine::OnExternalFuncCall(const FuncCall& func_call, std::span<const char>
         input_region = ipc::ShmCreate(
             ipc::GetFuncCallInputShmName(func_call.full_call_id), input.size());
         if (input_region == nullptr) {
-            ExternalFuncCallFinished(
-                func_call, /* success= */ false, /* discarded= */ false,
-                /* output= */ std::span<const char>());
+            ExternalFuncCallFailed(func_call);
             return;
         }
         input_region->EnableRemoveOnDestruction();
@@ -280,9 +285,7 @@ void Engine::OnExternalFuncCall(const FuncCall& func_call, std::span<const char>
         }
     }
     if (dispatcher == nullptr) {
-        ExternalFuncCallFinished(
-            func_call, /* success= */ false, /* discarded= */ false,
-            /* output= */ std::span<const char>());
+        ExternalFuncCallFailed(func_call);
         return;
     }
     bool success = false;
@@ -300,15 +303,36 @@ void Engine::OnExternalFuncCall(const FuncCall& func_call, std::span<const char>
             absl::MutexLock lk(&mu_);
             input_region = GrabExternalFuncCallShmInput(func_call);
         }
-        ExternalFuncCallFinished(
-            func_call, /* success= */ false, /* discarded= */ false,
-            /* output= */ std::span<const char>());
+        ExternalFuncCallFailed(func_call);
     }
 }
 
-void Engine::ExternalFuncCallFinished(const FuncCall& func_call, bool success, bool discarded,
-                                      std::span<const char> output, int status_code) {
+void Engine::ExternalFuncCallCompleted(const protocol::FuncCall& func_call,
+                                       std::span<const char> output, int32_t processing_time) {
+    server::IOWorker* io_worker = server::IOWorker::current();
+    DCHECK_NOTNULL(io_worker);
+    server::ConnectionBase* gateway_connection = io_worker->PickRandomConnection(
+        GatewayConnection::kTypeId);
+    if (gateway_connection == nullptr) {
+        HLOG(ERROR) << "There is not GatewayConnection associated with current IOWorker";
+        return;
+    }
+    GatewayMessage message = NewFuncCallCompleteGatewayMessage(func_call, processing_time);
+    message.payload_size = output.size();
+    gateway_connection->as_ptr<GatewayConnection>()->SendMessage(message, output);
+}
 
+void Engine::ExternalFuncCallFailed(const protocol::FuncCall& func_call, int status_code) {
+    server::IOWorker* io_worker = server::IOWorker::current();
+    DCHECK_NOTNULL(io_worker);
+    server::ConnectionBase* gateway_connection = io_worker->PickRandomConnection(
+        GatewayConnection::kTypeId);
+    if (gateway_connection == nullptr) {
+        HLOG(ERROR) << "There is not GatewayConnection associated with current IOWorker";
+        return;
+    }
+    GatewayMessage message = NewFuncCallFailedGatewayMessage(func_call, status_code);
+    gateway_connection->as_ptr<GatewayConnection>()->SendMessage(message);
 }
 
 Dispatcher* Engine::GetOrCreateDispatcher(uint16_t func_id) {
@@ -364,9 +388,7 @@ void Engine::ProcessDiscardedFuncCallIfNecessary() {
         discarded_func_calls_.clear();
     }
     for (const FuncCall& func_call : discarded_external_func_calls) {
-        ExternalFuncCallFinished(
-            func_call, /* success= */ false, /* discarded= */ true,
-            /* output= */ std::span<const char>());
+        ExternalFuncCallFailed(func_call);
     }
     if (!discarded_internal_func_calls.empty()) {
         char pipe_buf[PIPE_BUF];

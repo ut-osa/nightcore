@@ -26,10 +26,11 @@ public:
     void Start(server::IOWorker* io_worker) override;
     void ScheduleClose() override;
 
-    void SendMessage(const protocol::GatewayMessage& message, std::span<const char> payload);
+    void SendMessage(const protocol::GatewayMessage& message,
+                     std::span<const char> payload = std::span<const char>());
 
 private:
-    enum State { kCreated, kRunning, kClosing, kClosed };
+    enum State { kCreated, kHandshake, kRunning, kClosing, kClosed };
 
     Engine* engine_;
     uint16_t conn_id_;
@@ -39,11 +40,15 @@ private:
 
     std::string log_header_;
 
+    protocol::GatewayMessage handshake_message_;
     utils::AppendableBuffer read_buffer_;
+
+    void ProcessGatewayMessages();
 
     DECLARE_UV_ALLOC_CB_FOR_CLASS(BufferAlloc);
     DECLARE_UV_READ_CB_FOR_CLASS(RecvData);
-    DECLARE_UV_WRITE_CB_FOR_CLASS(DataWritten);
+    DECLARE_UV_WRITE_CB_FOR_CLASS(DataSent);
+    DECLARE_UV_WRITE_CB_FOR_CLASS(HandshakeSent);
     DECLARE_UV_CLOSE_CB_FOR_CLASS(Close);
 
     DISALLOW_COPY_AND_ASSIGN(GatewayConnection);
