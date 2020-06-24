@@ -26,20 +26,25 @@ using protocol::IsFuncCallFailedMessage;
 using protocol::NewDispatchFuncCallGatewayMessage;
 
 Server::Server()
-    : engine_conn_port_(-1), http_port_(-1),
-      listen_backlog_(kDefaultListenBackLog), num_io_workers_(kDefaultNumIOWorkers),
-      next_http_conn_worker_id_(0), next_http_connection_id_(0),
+    : engine_conn_port_(-1),
+      http_port_(-1),
+      listen_backlog_(kDefaultListenBackLog),
+      num_io_workers_(kDefaultNumIOWorkers),
+      next_http_conn_worker_id_(0),
+      next_http_connection_id_(0),
       read_buffer_pool_("HandshakeRead", 128),
-      next_call_id_(1), inflight_requests_(0), last_request_timestamp_(-1),
+      next_call_id_(1),
+      inflight_requests_(0),
+      last_request_timestamp_(-1),
       incoming_requests_stat_(
           stat::Counter::StandardReportCallback("incoming_requests")),
       requests_instant_rps_stat_(
           stat::StatisticsCollector<float>::StandardReportCallback("requests_instant_rps")),
       inflight_requests_stat_(
           stat::StatisticsCollector<uint16_t>::StandardReportCallback("inflight_requests")) {
-    UV_DCHECK_OK(uv_tcp_init(uv_loop(), &uv_engine_conn_handle_));
+    UV_CHECK_OK(uv_tcp_init(uv_loop(), &uv_engine_conn_handle_));
     uv_engine_conn_handle_.data = this;
-    UV_DCHECK_OK(uv_tcp_init(uv_loop(), &uv_http_handle_));
+    UV_CHECK_OK(uv_tcp_init(uv_loop(), &uv_http_handle_));
     uv_http_handle_.data = this;
 }
 
@@ -170,6 +175,7 @@ bool Server::OnEngineHandshake(uv_tcp_t* uv_handle, std::span<const char> data) 
     }
     uint16_t node_id = message->node_id;
     uint16_t conn_id = message->conn_id;
+    HLOG(INFO) << fmt::format("New engine connection: node_id={}, conn_id={}", node_id, conn_id);
     std::span<const char> remaining_data(data.data() + sizeof(GatewayMessage),
                                          data.size() - sizeof(GatewayMessage));
     std::shared_ptr<server::ConnectionBase> connection(

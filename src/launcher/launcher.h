@@ -51,7 +51,7 @@ public:
     void ScheduleStop();
     void WaitForFinish();
 
-    void OnGatewayConnectionClose();
+    void OnEngineConnectionClose();
     void OnFuncProcessExit(FuncProcess* func_process);
     bool OnRecvHandshakeResponse(const protocol::Message& handshake_response,
                                  std::span<const char> payload);
@@ -72,11 +72,11 @@ private:
     base::Thread event_loop_thread_;
 
     FuncConfig func_config_;
-    GatewayConnection gateway_connection_;
+    EngineConnection engine_connection_;
     std::unique_ptr<utils::BufferPool> buffer_pool_for_subprocess_pipes_;
     std::vector<std::unique_ptr<FuncProcess>> func_processes_;
 
-    stat::StatisticsCollector<int32_t> gateway_message_delay_stat_;
+    stat::StatisticsCollector<int32_t> engine_message_delay_stat_;
 
     void EventLoopThreadMain();
 

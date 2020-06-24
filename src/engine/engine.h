@@ -20,6 +20,7 @@ class Engine final : public server::ServerBase {
 public:
     static constexpr int kDefaultListenBackLog = 64;
     static constexpr int kDefaultNumIOWorkers = 1;
+    static constexpr int kDefaultGatewayConnPerWorker = 2;
     static constexpr size_t kMessageConnectionBufferSize = __FAAS_MESSAGE_SIZE * 2;
 
     Engine();
@@ -30,6 +31,7 @@ public:
         gateway_port_ = port;
     }
     void set_num_io_workers(int value) { num_io_workers_ = value; }
+    void set_gateway_conn_per_worker(int value) { gateway_conn_per_worker_ = value; }
     void set_node_id(uint16_t value) { node_id_ = value; }
     void set_func_config_file(std::string_view path) {
         func_config_file_ = std::string(path);
@@ -60,6 +62,7 @@ private:
     int gateway_port_;
     int listen_backlog_;
     int num_io_workers_;
+    int gateway_conn_per_worker_;
     uint16_t node_id_;
     std::string func_config_file_;
     std::string func_config_json_;
@@ -70,8 +73,10 @@ private:
     std::vector<server::IOWorker*> io_workers_;
     size_t next_gateway_conn_worker_id_;
     size_t next_ipc_conn_worker_id_;
+    uint16_t next_gateway_conn_id_;
 
     absl::flat_hash_map</* id */ int, std::shared_ptr<server::ConnectionBase>> message_connections_;
+    absl::flat_hash_map</* id */ int, std::shared_ptr<server::ConnectionBase>> gateway_connections_;
     std::unique_ptr<WorkerManager> worker_manager_;
     std::unique_ptr<Monitor> monitor_;
     std::unique_ptr<Tracer> tracer_;
@@ -109,6 +114,7 @@ private:
             const protocol::FuncCall& func_call) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
     void ProcessDiscardedFuncCallIfNecessary();
 
+    DECLARE_UV_CONNECT_CB_FOR_CLASS(GatewayConnect);
     DECLARE_UV_CONNECTION_CB_FOR_CLASS(MessageConnection);
 
     DISALLOW_COPY_AND_ASSIGN(Engine);

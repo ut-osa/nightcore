@@ -11,6 +11,7 @@
 ABSL_FLAG(std::string, gateway_addr, "127.0.0.1", "Gateway address");
 ABSL_FLAG(int, gateway_port, 10007, "Gataway port");
 ABSL_FLAG(int, num_io_workers, 1, "Number of IO workers.");
+ABSL_FLAG(int, gateway_conn_per_worker, 2, "Number of gateway connections per IO worker.");
 ABSL_FLAG(uint16_t, node_id, 0, "My node ID.");
 ABSL_FLAG(std::string, root_path_for_ipc, "/dev/shm/faas_ipc",
           "Root directory for IPCs used by FaaS");

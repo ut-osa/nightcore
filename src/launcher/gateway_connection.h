@@ -12,14 +12,13 @@ namespace launcher {
 
 class Launcher;
 
-class GatewayConnection : public uv::Base {
+class EngineConnection : public uv::Base {
 public:
     static constexpr size_t kBufferSize = 4096;
-    static_assert(sizeof(protocol::Message) <= kBufferSize,
-                  "kBufferSize is too small");
+    static_assert(sizeof(protocol::Message) <= kBufferSize, "kBufferSize is too small");
 
-    explicit GatewayConnection(Launcher* launcher);
-    ~GatewayConnection();
+    explicit EngineConnection(Launcher* launcher);
+    ~EngineConnection();
 
     uv_pipe_t* uv_pipe_handle() { return &uv_pipe_handle_; }
 
@@ -52,7 +51,7 @@ private:
     DECLARE_UV_WRITE_CB_FOR_CLASS(WriteMessage);
     DECLARE_UV_CLOSE_CB_FOR_CLASS(Close);
 
-    DISALLOW_COPY_AND_ASSIGN(GatewayConnection);
+    DISALLOW_COPY_AND_ASSIGN(EngineConnection);
 };
 
 }  // namespace launcher

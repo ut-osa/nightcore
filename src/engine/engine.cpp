@@ -36,8 +36,12 @@ using protocol::ComputeMessageDelay;
 
 Engine::Engine()
     : gateway_port_(-1),
-      listen_backlog_(kDefaultListenBackLog), num_io_workers_(kDefaultNumIOWorkers),
-      next_gateway_conn_worker_id_(0), next_ipc_conn_worker_id_(0),
+      listen_backlog_(kDefaultListenBackLog),
+      num_io_workers_(kDefaultNumIOWorkers),
+      gateway_conn_per_worker_(kDefaultGatewayConnPerWorker),
+      next_gateway_conn_worker_id_(0),
+      next_ipc_conn_worker_id_(0),
+      next_gateway_conn_id_(0),
       worker_manager_(new WorkerManager(this)),
       monitor_(absl::GetFlag(FLAGS_disable_monitor) ? nullptr : new Monitor(this)),
       tracer_(new Tracer(this)),
@@ -54,7 +58,7 @@ Engine::Engine()
       input_use_shm_stat_(stat::Counter::StandardReportCallback("input_use_shm")),
       output_use_shm_stat_(stat::Counter::StandardReportCallback("output_use_shm")),
       discarded_func_call_stat_(stat::Counter::StandardReportCallback("discarded_func_call")) {
-    UV_DCHECK_OK(uv_pipe_init(uv_loop(), &uv_ipc_handle_, 0));
+    UV_CHECK_OK(uv_pipe_init(uv_loop(), &uv_ipc_handle_, 0));
     uv_ipc_handle_.data = this;
 }
 
@@ -73,6 +77,20 @@ void Engine::StartInternal() {
     for (int i = 0; i < num_io_workers_; i++) {
         auto io_worker = CreateIOWorker(absl::StrFormat("IO-%d", i));
         io_workers_.push_back(io_worker);
+    }
+    // Connect to gateway
+    CHECK_GT(gateway_conn_per_worker_, 0);
+    CHECK(!gateway_addr_.empty());
+    CHECK_NE(gateway_port_, -1);
+    struct sockaddr_in gateway_addr;
+    UV_CHECK_OK(uv_ip4_addr(gateway_addr_.c_str(), gateway_port_, &gateway_addr));
+    int total_gateway_conn = num_io_workers_ * gateway_conn_per_worker_;
+    for (int i = 0; i < total_gateway_conn; i++) {
+        uv_tcp_t* uv_handle = reinterpret_cast<uv_tcp_t*>(malloc(sizeof(uv_tcp_t)));
+        UV_CHECK_OK(uv_tcp_init(uv_loop(), uv_handle));
+        uv_connect_t* req = reinterpret_cast<uv_connect_t*>(malloc(sizeof(uv_connect_t)));
+        UV_CHECK_OK(uv_tcp_connect(req, uv_handle, (const struct sockaddr *)&gateway_addr,
+                                   &Engine::GatewayConnectCallback));
     }
     // Listen on ipc_path
     std::string ipc_path(ipc::GetEngineUnixSocketPath());
@@ -96,7 +114,7 @@ void Engine::OnConnectionClose(server::ConnectionBase* connection) {
     DCHECK_IN_EVENT_LOOP_THREAD(uv_loop());
     if (connection->type() == MessageConnection::kTypeId) {
         DCHECK(message_connections_.contains(connection->id()));
-        MessageConnection* message_connection = static_cast<MessageConnection*>(connection);
+        MessageConnection* message_connection = connection->as_ptr<MessageConnection>();
         if (message_connection->handshake_done()) {
             if (message_connection->is_launcher_connection()) {
                 worker_manager_->OnLauncherDisconnected(message_connection);
@@ -106,6 +124,12 @@ void Engine::OnConnectionClose(server::ConnectionBase* connection) {
         }
         message_connections_.erase(connection->id());
         HLOG(INFO) << "A MessageConnection is returned";
+    } else if (connection->type() == GatewayConnection::kTypeId) {
+        DCHECK(gateway_connections_.contains(connection->id()));
+        GatewayConnection* gateway_connection = connection->as_ptr<GatewayConnection>();
+        HLOG(WARNING) << fmt::format("Gateway connection (conn_id={}) disconencted",
+                                     gateway_connection->conn_id());
+        gateway_connections_.erase(connection->id());
     } else {
         HLOG(ERROR) << "Unknown connection type!";
     }
@@ -399,6 +423,26 @@ void Engine::ProcessDiscardedFuncCallIfNecessary() {
                 /* processing_time= */ 0, pipe_buf, &dummy_message);
         }
     }
+}
+
+UV_CONNECT_CB_FOR_CLASS(Engine, GatewayConnect) {
+    uv_tcp_t* uv_handle = reinterpret_cast<uv_tcp_t*>(req->handle);
+    free(req);
+    if (status != 0) {
+        HLOG(WARNING) << "Failed to connect to gateway: " << uv_strerror(status);
+        free(uv_handle);
+        return;
+    }
+    uint16_t conn_id = next_gateway_conn_id_++;
+    HLOG(INFO) << "New GatewayConnection: conn_id" << conn_id;
+    std::shared_ptr<server::ConnectionBase> connection(new GatewayConnection(this, conn_id));
+    DCHECK_LT(next_gateway_conn_worker_id_, io_workers_.size());
+    server::IOWorker* io_worker = io_workers_[next_gateway_conn_worker_id_];
+    next_gateway_conn_worker_id_ = (next_gateway_conn_worker_id_ + 1) % io_workers_.size();
+    RegisterConnection(io_worker, connection.get(), UV_AS_STREAM(uv_handle));
+    DCHECK_GE(connection->id(), 0);
+    DCHECK(!gateway_connections_.contains(connection->id()));
+    gateway_connections_[connection->id()] = std::move(connection);
 }
 
 UV_CONNECTION_CB_FOR_CLASS(Engine, MessageConnection) {

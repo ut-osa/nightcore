@@ -165,7 +165,7 @@ inline bool WithinEventLoop(uv_loop_t* uv_loop) {
     void ClassName::On##FnName(int status)
 
 #define DECLARE_UV_CONNECT_CB_FOR_CLASS(FnName)                  \
-    void On##FnName(int status);                                 \
+    void On##FnName(uv_connect_t* req, int status);              \
     static void FnName##Callback(uv_connect_t* req, int status);
 
 #define UV_CONNECT_CB_FOR_CLASS(ClassName, FnName)                         \
@@ -173,9 +173,9 @@ inline bool WithinEventLoop(uv_loop_t* uv_loop) {
         DCHECK_IN_EVENT_LOOP_THREAD(req->handle->loop);                    \
         UV_DCHECK_INSTANCE_OF(req->handle->data, ClassName);               \
         ClassName* self = reinterpret_cast<ClassName*>(req->handle->data); \
-        self->On##FnName(status);                                          \
+        self->On##FnName(req, status);                                     \
     }                                                                      \
-    void ClassName::On##FnName(int status)
+    void ClassName::On##FnName(uv_connect_t* req, int status)
 
 #define DECLARE_UV_EXIT_CB_FOR_CLASS(FnName)                             \
     void On##FnName(int64_t exit_status, int term_signal);               \
