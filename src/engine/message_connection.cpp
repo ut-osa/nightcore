@@ -117,10 +117,10 @@ void MessageConnection::RecvHandshakeMessage() {
     func_id_ = message->func_id;
     if (IsLauncherHandshakeMessage(*message)) {
         client_id_ = 0;
-        log_header_ = absl::StrFormat("LauncherConnection[%d]: ", func_id_);
+        log_header_ = fmt::format("LauncherConnection[{}]: ", func_id_);
     } else if (IsFuncWorkerHandshakeMessage(*message)) {
         client_id_ = message->client_id;
-        log_header_ = absl::StrFormat("FuncWorkerConnection[%d-%d]: ", func_id_, client_id_);
+        log_header_ = fmt::format("FuncWorkerConnection[{}-{}]: ", func_id_, client_id_);
     } else {
         HLOG(FATAL) << "Unknown handshake message type";
     }

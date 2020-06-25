@@ -53,12 +53,12 @@ void Subprocess::SetWorkingDir(std::string_view path) {
 
 void Subprocess::AddEnvVariable(std::string_view name, std::string_view value) {
     DCHECK(state_ == kCreated);
-    env_variables_.push_back(absl::StrFormat("%s=%s", name, value));
+    env_variables_.push_back(fmt::format("{}={}", name, value));
 }
 
 void Subprocess::AddEnvVariable(std::string_view name, int value) {
     DCHECK(state_ == kCreated);
-    env_variables_.push_back(absl::StrFormat("%s=%d", name, value));
+    env_variables_.push_back(fmt::format("{}={}", name, value));
 }
 
 bool Subprocess::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool,

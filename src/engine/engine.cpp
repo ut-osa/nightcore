@@ -75,7 +75,7 @@ void Engine::StartInternal() {
     HLOG(INFO) << "Start " << num_io_workers_
                << " IO workers for both HTTP and IPC connections";
     for (int i = 0; i < num_io_workers_; i++) {
-        auto io_worker = CreateIOWorker(absl::StrFormat("IO-%d", i));
+        auto io_worker = CreateIOWorker(fmt::format("IO-{}", i));
         io_workers_.push_back(io_worker);
     }
     // Connect to gateway

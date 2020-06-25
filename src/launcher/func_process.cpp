@@ -14,7 +14,7 @@ namespace launcher {
 FuncProcess::FuncProcess(Launcher* launcher, int id, uint16_t initial_client_id)
     : state_(kCreated), launcher_(launcher), id_(id),
       initial_client_id_(initial_client_id),
-      log_header_(absl::StrFormat("FuncProcess[%d]: ", id)),
+      log_header_(fmt::format("FuncProcess[{}]: ", id)),
       subprocess_(launcher->fprocess()) {}
 
 FuncProcess::~FuncProcess() {
@@ -34,11 +34,11 @@ bool FuncProcess::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool)
         subprocess_.SetStandardFile(
             uv::Subprocess::kStdout,
             fs_utils::JoinPath(launcher_->fprocess_output_dir(), 
-                               absl::StrFormat("%s_worker_%d.stdout", func_name, id_)));
+                               fmt::format("{}_worker_{}.stdout", func_name, id_)));
         subprocess_.SetStandardFile(
             uv::Subprocess::kStderr,
             fs_utils::JoinPath(launcher_->fprocess_output_dir(), 
-                               absl::StrFormat("%s_worker_%d.stderr", func_name, id_)));
+                               fmt::format("{}_worker_{}.stderr", func_name, id_)));
     }
     if (!launcher_->fprocess_working_dir().empty()) {
         subprocess_.SetWorkingDir(launcher_->fprocess_working_dir());

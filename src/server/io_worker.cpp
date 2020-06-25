@@ -9,15 +9,15 @@ namespace server {
 IOWorker::IOWorker(std::string_view worker_name,
                    size_t read_buffer_size, size_t write_buffer_size)
     : worker_name_(worker_name), state_(kCreated),
-      log_header_(absl::StrFormat("%s: ", worker_name)),
-      event_loop_thread_(absl::StrFormat("%s/EL", worker_name),
+      log_header_(fmt::format("{}: ", worker_name)),
+      event_loop_thread_(fmt::format("{}/EL", worker_name),
                          absl::bind_front(&IOWorker::EventLoopThreadMain, this)),
-      read_buffer_pool_(absl::StrFormat("%s_Read", worker_name), read_buffer_size),
-      write_buffer_pool_(absl::StrFormat("%s_Write", worker_name), write_buffer_size),
+      read_buffer_pool_(fmt::format("{}_Read", worker_name), read_buffer_size),
+      write_buffer_pool_(fmt::format("{}_Write", worker_name), write_buffer_size),
       connections_on_closing_(0),
       async_event_recv_timestamp_(0),
       uv_async_delay_stat_(stat::StatisticsCollector<int32_t>::StandardReportCallback(
-          absl::StrFormat("uv_async_delay[%s]", worker_name))) {
+          fmt::format("uv_async_delay[{}]", worker_name))) {
     UV_DCHECK_OK(uv_loop_init(&uv_loop_));
     uv_loop_.data = &event_loop_thread_;
     UV_DCHECK_OK(uv_async_init(&uv_loop_, &stop_event_, &IOWorker::StopCallback));

@@ -51,7 +51,7 @@ int main(int argc, char* argv[]) {
     int index = 0;
     bench_utils::BenchLoop bench_loop(absl::GetFlag(FLAGS_duration), [&] () -> bool {
         int64_t start_timestamp;
-        std::string path = absl::StrFormat("%s/%d", shm_base_path, index++);
+        std::string path = fmt::format("{}/{}", shm_base_path, index++);
         // File creation
         start_timestamp = GetMonotonicNanoTimestamp();
         int fd = open(path.c_str(), O_CREAT|O_TRUNC|O_RDWR, 0600);
