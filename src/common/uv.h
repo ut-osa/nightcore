@@ -26,6 +26,9 @@ inline bool WithinEventLoop(uv_loop_t* uv_loop) {
     return base::Thread::current() == reinterpret_cast<base::Thread*>(uv_loop->data);
 }
 
+// A simple callback just calls free(handle), used for uv_close
+void HandleFreeCallback(uv_handle_t* handle);
+
 }  // namespace uv
 }  // namespace faas
 

@@ -3,6 +3,10 @@
 namespace faas {
 namespace uv {
 
+void HandleFreeCallback(uv_handle_t* handle) {
+    free(handle);
+}
+
 HandleScope::HandleScope()
     : loop_(nullptr), num_handles_on_closing_(0) {}
 

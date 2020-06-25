@@ -69,7 +69,7 @@ void Server::StartInternal() {
     CHECK_NE(http_port_, -1);
     // Listen on address:engine_conn_port for engine connections
     UV_CHECK_OK(uv_ip4_addr(address_.c_str(), engine_conn_port_, &bind_addr));
-    UV_CHECK_OK(uv_tcp_bind(&uv_http_handle_, (const struct sockaddr *)&bind_addr, 0));
+    UV_CHECK_OK(uv_tcp_bind(&uv_engine_conn_handle_, (const struct sockaddr *)&bind_addr, 0));
     HLOG(INFO) << fmt::format("Listen on {}:{} for engine connections",
                               address_, engine_conn_port_);
     UV_CHECK_OK(uv_listen(
@@ -95,6 +95,13 @@ void Server::OnConnectionClose(server::ConnectionBase* connection) {
         absl::MutexLock lk(&mu_);
         DCHECK(connections_.contains(connection->id()));
         connections_.erase(connection->id());
+    } else if (connection->type() >= EngineConnection::kBaseTypeId) {
+        EngineConnection* engine_connection = connection->as_ptr<EngineConnection>();
+        HLOG(WARNING) << fmt::format("EngineConnection (node_id={}, conn_id={}) disconnected",
+                                     engine_connection->node_id(), engine_connection->conn_id());
+        absl::MutexLock lk(&mu_);
+        DCHECK(engine_connections_.contains(connection->id()));
+        engine_connections_.erase(connection->id());
     } else {
         HLOG(ERROR) << "Unknown connection type!";
     }
@@ -105,6 +112,7 @@ void Server::OnNewHttpFuncCall(HttpConnection* connection, FuncCallContext* func
     DCHECK_NOTNULL(func_entry);
     FuncCall func_call = NewFuncCall(func_entry->func_id, /* client_id= */ 0,
                                      next_call_id_.fetch_add(1));
+    VLOG(1) << "OnNewHttpFuncCall: " << FuncCallDebugString(func_call);
     func_call_context->set_func_call(func_call);
     {
         absl::MutexLock lk(&mu_);
@@ -113,14 +121,16 @@ void Server::OnNewHttpFuncCall(HttpConnection* connection, FuncCallContext* func
     }
     server::IOWorker* io_worker = server::IOWorker::current();
     DCHECK_NOTNULL(io_worker);
+    uint16_t node_id = 0;
     server::ConnectionBase* engine_connection = io_worker->PickRandomConnection(
-        EngineConnection::type_id(/* node_id= */ 0));
+        EngineConnection::type_id(node_id));
     if (engine_connection != nullptr) {
         GatewayMessage dispatch_message = NewDispatchFuncCallGatewayMessage(func_call);
         dispatch_message.payload_size = func_call_context->input().size();
         engine_connection->as_ptr<EngineConnection>()->SendMessage(
             dispatch_message, func_call_context->input());
     } else {
+        HLOG(WARNING) << "There is no engine connection for node_id=" << node_id;
         {
             absl::MutexLock lk(&mu_);
             running_func_calls_.erase(func_call.full_call_id);
@@ -191,12 +201,6 @@ bool Server::OnEngineHandshake(uv_tcp_t* uv_handle, std::span<const char> data) 
     return true;
 }
 
-namespace {
-static void HandleFreeCallback(uv_handle_t* handle) {
-    free(handle);
-}
-}
-
 UV_CONNECTION_CB_FOR_CLASS(Server, HttpConnection) {
     if (status != 0) {
         HLOG(WARNING) << "Failed to open HTTP connection: " << uv_strerror(status);
@@ -261,14 +265,15 @@ UV_CONNECTION_CB_FOR_CLASS(Server, EngineConnection) {
 Server::OngoingEngineHandshake::OngoingEngineHandshake(Server* server, uv_tcp_t* uv_handle)
     : server_(server), uv_handle_(uv_handle) {
     uv_handle_->data = this;
-    UV_DCHECK_OK(uv_read_start(UV_AS_STREAM(&uv_handle_),
+    UV_DCHECK_OK(uv_read_start(UV_AS_STREAM(uv_handle_),
                                &OngoingEngineHandshake::BufferAllocCallback,
                                &OngoingEngineHandshake::ReadMessageCallback));
 }
 
 Server::OngoingEngineHandshake::~OngoingEngineHandshake() {
     if (uv_handle_ != nullptr) {
-        uv_close(UV_AS_HANDLE(uv_handle_), HandleFreeCallback);
+        LOG(INFO) << "Close uv_handle for dead engine connection";
+        uv_close(UV_AS_HANDLE(uv_handle_), uv::HandleFreeCallback);
     }
 }
 

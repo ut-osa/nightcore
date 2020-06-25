@@ -8,7 +8,7 @@ namespace server {
 
 class IOWorker;
 
-class ConnectionBase : public uv::Base, std::enable_shared_from_this<ConnectionBase> {
+class ConnectionBase : public uv::Base, public std::enable_shared_from_this<ConnectionBase> {
 public:
     explicit ConnectionBase(int type = -1) : type_(type), id_(-1) {}
     virtual ~ConnectionBase() {}

@@ -47,7 +47,6 @@ void ServerBase::WaitForFinish() {
 }
 
 void ServerBase::EventLoopThreadMain() {
-    base::Thread::current()->MarkThreadCategory("IO");
     HLOG(INFO) << "Event loop starts";
     int ret = uv_run(&uv_loop_, UV_RUN_DEFAULT);
     if (ret != 0) {
@@ -62,10 +61,6 @@ static void PipeReadBufferAllocCallback(uv_handle_t* handle, size_t suggested_si
     size_t buf_size = 256;
     buf->base = reinterpret_cast<char*>(malloc(buf_size));
     buf->len = buf_size;
-}
-
-static void HandleFreeCallback(uv_handle_t* handle) {
-    free(handle);
 }
 }
 
@@ -142,7 +137,7 @@ UV_READ_CB_FOR_CLASS(ServerBase, ReturnConnection) {
 
 UV_WRITE_CB_FOR_CLASS(ServerBase, PipeWrite2) {
     DCHECK(status == 0) << "Failed to write to pipe: " << uv_strerror(status);
-    uv_close(UV_AS_HANDLE(req->data), HandleFreeCallback);
+    uv_close(UV_AS_HANDLE(req->data), uv::HandleFreeCallback);
 }
 
 }  // namespace server

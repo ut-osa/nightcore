@@ -88,6 +88,7 @@ void Engine::StartInternal() {
     for (int i = 0; i < total_gateway_conn; i++) {
         uv_tcp_t* uv_handle = reinterpret_cast<uv_tcp_t*>(malloc(sizeof(uv_tcp_t)));
         UV_CHECK_OK(uv_tcp_init(uv_loop(), uv_handle));
+        uv_handle->data = this;
         uv_connect_t* req = reinterpret_cast<uv_connect_t*>(malloc(sizeof(uv_connect_t)));
         UV_CHECK_OK(uv_tcp_connect(req, uv_handle, (const struct sockaddr *)&gateway_addr,
                                    &Engine::GatewayConnectCallback));
@@ -430,11 +431,11 @@ UV_CONNECT_CB_FOR_CLASS(Engine, GatewayConnect) {
     free(req);
     if (status != 0) {
         HLOG(WARNING) << "Failed to connect to gateway: " << uv_strerror(status);
-        free(uv_handle);
+        uv_close(UV_AS_HANDLE(uv_handle), uv::HandleFreeCallback);
         return;
     }
     uint16_t conn_id = next_gateway_conn_id_++;
-    HLOG(INFO) << "New GatewayConnection: conn_id" << conn_id;
+    HLOG(INFO) << "New GatewayConnection: conn_id=" << conn_id;
     std::shared_ptr<server::ConnectionBase> connection(new GatewayConnection(this, conn_id));
     DCHECK_LT(next_gateway_conn_worker_id_, io_workers_.size());
     server::IOWorker* io_worker = io_workers_[next_gateway_conn_worker_id_];
