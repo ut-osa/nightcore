@@ -5,6 +5,13 @@
 #define HLOG(l) LOG(l) << log_header_
 #define HVLOG(l) VLOG(l) << log_header_
 
+#include <absl/flags/flag.h>
+
+ABSL_FLAG(bool, gateway_conn_enable_nodelay, false,
+          "Enable TCP_NODELAY for connections to gateway");
+ABSL_FLAG(bool, gateway_conn_enable_keepalive, false,
+          "Enable TCP keep-alive for connections to gateway");
+
 namespace faas {
 namespace engine {
 
@@ -30,6 +37,12 @@ void GatewayConnection::Start(server::IOWorker* io_worker) {
     DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
     io_worker_ = io_worker;
     uv_tcp_handle_.data = this;
+    if (absl::GetFlag(FLAGS_gateway_conn_enable_nodelay)) {
+        UV_DCHECK_OK(uv_tcp_nodelay(&uv_tcp_handle_, 1));
+    }
+    if (absl::GetFlag(FLAGS_gateway_conn_enable_keepalive)) {
+        UV_DCHECK_OK(uv_tcp_keepalive(&uv_tcp_handle_, 1, 0));
+    }
     handshake_message_ = NewEngineHandshakeGatewayMessage(engine_->node_id(), conn_id_);
     uv_buf_t buf = {
         .base = reinterpret_cast<char*>(&handshake_message_),
