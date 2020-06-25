@@ -337,7 +337,7 @@ void Engine::OnExternalFuncCall(const FuncCall& func_call, std::span<const char>
 void Engine::ExternalFuncCallCompleted(const protocol::FuncCall& func_call,
                                        std::span<const char> output, int32_t processing_time) {
     server::IOWorker* io_worker = server::IOWorker::current();
-    DCHECK_NOTNULL(io_worker);
+    DCHECK(io_worker != nullptr);
     server::ConnectionBase* gateway_connection = io_worker->PickRandomConnection(
         GatewayConnection::kTypeId);
     if (gateway_connection == nullptr) {
@@ -351,7 +351,7 @@ void Engine::ExternalFuncCallCompleted(const protocol::FuncCall& func_call,
 
 void Engine::ExternalFuncCallFailed(const protocol::FuncCall& func_call, int status_code) {
     server::IOWorker* io_worker = server::IOWorker::current();
-    DCHECK_NOTNULL(io_worker);
+    DCHECK(io_worker != nullptr);
     server::ConnectionBase* gateway_connection = io_worker->PickRandomConnection(
         GatewayConnection::kTypeId);
     if (gateway_connection == nullptr) {

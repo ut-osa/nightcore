@@ -109,7 +109,7 @@ void Server::OnConnectionClose(server::ConnectionBase* connection) {
 
 void Server::OnNewHttpFuncCall(HttpConnection* connection, FuncCallContext* func_call_context) {
     auto func_entry = func_config_.find_by_func_name(func_call_context->func_name());
-    DCHECK_NOTNULL(func_entry);
+    DCHECK(func_entry != nullptr);
     FuncCall func_call = NewFuncCall(func_entry->func_id, /* client_id= */ 0,
                                      next_call_id_.fetch_add(1));
     VLOG(1) << "OnNewHttpFuncCall: " << FuncCallDebugString(func_call);
@@ -120,7 +120,7 @@ void Server::OnNewHttpFuncCall(HttpConnection* connection, FuncCallContext* func
             connection->id(), func_call_context);
     }
     server::IOWorker* io_worker = server::IOWorker::current();
-    DCHECK_NOTNULL(io_worker);
+    DCHECK(io_worker != nullptr);
     uint16_t node_id = 0;
     server::ConnectionBase* engine_connection = io_worker->PickRandomConnection(
         EngineConnection::type_id(node_id));
