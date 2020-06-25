@@ -6,6 +6,7 @@
 #include "utils/fs.h"
 #include "utils/io.h"
 #include "utils/docker.h"
+#include "utils/socket.h"
 #include "worker/worker_lib.h"
 
 #include <absl/flags/flag.h>
@@ -72,8 +73,7 @@ void Engine::StartInternal() {
     CHECK(func_config_.Load(func_config_json_));
     // Start IO workers
     CHECK_GT(num_io_workers_, 0);
-    HLOG(INFO) << "Start " << num_io_workers_
-               << " IO workers for both HTTP and IPC connections";
+    HLOG(INFO) << fmt::format("Start {} IO workers", num_io_workers_);
     for (int i = 0; i < num_io_workers_; i++) {
         auto io_worker = CreateIOWorker(fmt::format("IO-{}", i));
         io_workers_.push_back(io_worker);
@@ -82,15 +82,17 @@ void Engine::StartInternal() {
     CHECK_GT(gateway_conn_per_worker_, 0);
     CHECK(!gateway_addr_.empty());
     CHECK_NE(gateway_port_, -1);
-    struct sockaddr_in gateway_addr;
-    UV_CHECK_OK(uv_ip4_addr(gateway_addr_.c_str(), gateway_port_, &gateway_addr));
+    struct sockaddr_in addr;
+    if (!utils::FillTcpSocketAddr(&addr, gateway_addr_, gateway_port_)) {
+        HLOG(FATAL) << "Failed to fill socker address for " << gateway_addr_;
+    }
     int total_gateway_conn = num_io_workers_ * gateway_conn_per_worker_;
     for (int i = 0; i < total_gateway_conn; i++) {
         uv_tcp_t* uv_handle = reinterpret_cast<uv_tcp_t*>(malloc(sizeof(uv_tcp_t)));
         UV_CHECK_OK(uv_tcp_init(uv_loop(), uv_handle));
         uv_handle->data = this;
         uv_connect_t* req = reinterpret_cast<uv_connect_t*>(malloc(sizeof(uv_connect_t)));
-        UV_CHECK_OK(uv_tcp_connect(req, uv_handle, (const struct sockaddr *)&gateway_addr,
+        UV_CHECK_OK(uv_tcp_connect(req, uv_handle, (const struct sockaddr *)&addr,
                                    &Engine::GatewayConnectCallback));
     }
     // Listen on ipc_path

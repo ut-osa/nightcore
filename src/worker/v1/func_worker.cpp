@@ -53,6 +53,7 @@ void FuncWorker::Serve() {
     CHECK(init_fn_() == 0) << "Failed to initialize loaded library";
     // Connect to gateway via IPC path
     gateway_sock_fd_ = utils::UnixDomainSocketConnect(ipc::GetEngineUnixSocketPath());
+    CHECK(gateway_sock_fd_ != -1) << "Failed to connect to engine socket";
     HandshakeWithGateway();
     // Enter main serving loop
     MainServingLoop();
