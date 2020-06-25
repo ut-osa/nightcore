@@ -39,6 +39,7 @@ int main(int argc, char* argv[]) {
     engine->set_gateway_addr_port(absl::GetFlag(FLAGS_gateway_addr),
                                   absl::GetFlag(FLAGS_gateway_port));
     engine->set_num_io_workers(absl::GetFlag(FLAGS_num_io_workers));
+    engine->set_gateway_conn_per_worker(absl::GetFlag(FLAGS_gateway_conn_per_worker));
     engine->set_node_id(absl::GetFlag(FLAGS_node_id));
     engine->set_func_config_file(absl::GetFlag(FLAGS_func_config_file));
 

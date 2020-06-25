@@ -110,8 +110,8 @@ bool Dispatcher::OnFuncCallCompleted(const FuncCall& func_call, int32_t processi
                                      int32_t dispatch_delay, size_t output_size) {
     VLOG(1) << "OnFuncCallCompleted " << FuncCallDebugString(func_call);
     DCHECK_EQ(func_id_, func_call.func_id);
-    Tracer::FuncCallInfo* func_call_info = engine_->tracer()->OnFuncCallFailed(
-        func_call, dispatch_delay);
+    Tracer::FuncCallInfo* func_call_info = engine_->tracer()->OnFuncCallCompleted(
+        func_call, dispatch_delay, processing_time, output_size);
     if (func_call_info == nullptr) {
         return false;
     }
