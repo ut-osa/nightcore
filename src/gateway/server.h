@@ -68,8 +68,13 @@ private:
 
     absl::Mutex mu_;
 
-    absl::flat_hash_map</* full_call_id */ uint64_t,
-                        std::pair</* connection_id */ int, FuncCallContext*>>
+    struct FuncCallState {
+        int              connection_id;  // of HttpConnection
+        FuncCallContext* context;
+        int64_t          recv_timestamp;
+    };
+
+    absl::flat_hash_map</* full_call_id */ uint64_t, FuncCallState>
         running_func_calls_ ABSL_GUARDED_BY(mu_);
     absl::flat_hash_map</* connection_id */ int,
                         std::shared_ptr<server::ConnectionBase>>
@@ -79,6 +84,7 @@ private:
     stat::Counter incoming_requests_stat_ ABSL_GUARDED_BY(mu_);
     stat::StatisticsCollector<float> requests_instant_rps_stat_ ABSL_GUARDED_BY(mu_);
     stat::StatisticsCollector<uint16_t> inflight_requests_stat_ ABSL_GUARDED_BY(mu_);
+    stat::StatisticsCollector<int32_t> dispatch_overhead_stat_ ABSL_GUARDED_BY(mu_);
 
     void StartInternal() override;
     void StopInternal() override;

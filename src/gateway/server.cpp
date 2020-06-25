@@ -41,7 +41,9 @@ Server::Server()
       requests_instant_rps_stat_(
           stat::StatisticsCollector<float>::StandardReportCallback("requests_instant_rps")),
       inflight_requests_stat_(
-          stat::StatisticsCollector<uint16_t>::StandardReportCallback("inflight_requests")) {
+          stat::StatisticsCollector<uint16_t>::StandardReportCallback("inflight_requests")),
+      dispatch_overhead_stat_(
+          stat::StatisticsCollector<int32_t>::StandardReportCallback("dispatch_overhead")) {
     UV_CHECK_OK(uv_tcp_init(uv_loop(), &uv_engine_conn_handle_));
     uv_engine_conn_handle_.data = this;
     UV_CHECK_OK(uv_tcp_init(uv_loop(), &uv_http_handle_));
@@ -116,8 +118,20 @@ void Server::OnNewHttpFuncCall(HttpConnection* connection, FuncCallContext* func
     func_call_context->set_func_call(func_call);
     {
         absl::MutexLock lk(&mu_);
-        running_func_calls_[func_call.full_call_id] = std::make_pair(
-            connection->id(), func_call_context);
+        int64_t current_timestamp = GetMonotonicMicroTimestamp();
+        running_func_calls_[func_call.full_call_id] = {
+            .connection_id = connection->id(),
+            .context = func_call_context,
+            .recv_timestamp = current_timestamp
+        };
+        incoming_requests_stat_.Tick();
+        if (last_request_timestamp_ != -1) {
+            requests_instant_rps_stat_.AddSample(gsl::narrow_cast<float>(
+                1e6 / (current_timestamp - last_request_timestamp_)));
+        }
+        last_request_timestamp_ = current_timestamp;
+        inflight_requests_stat_.AddSample(
+            gsl::narrow_cast<uint16_t>(running_func_calls_.size()));
     }
     server::IOWorker* io_worker = server::IOWorker::current();
     DCHECK(io_worker != nullptr);
@@ -142,6 +156,7 @@ void Server::OnNewHttpFuncCall(HttpConnection* connection, FuncCallContext* func
 
 void Server::OnRecvEngineMessage(EngineConnection* connection, const GatewayMessage& message,
                                  std::span<const char> payload) {
+    int64_t current_timestamp = GetMonotonicMicroTimestamp();
     if (IsFuncCallCompleteMessage(message)
             || IsFuncCallFailedMessage(message)) {
         FuncCall func_call = GetFuncCallFromMessage(message);
@@ -150,12 +165,14 @@ void Server::OnRecvEngineMessage(EngineConnection* connection, const GatewayMess
         {
             absl::MutexLock lk(&mu_);
             if (running_func_calls_.contains(func_call.full_call_id)) {
-                int connection_id = running_func_calls_[func_call.full_call_id].first;
+                const FuncCallState& full_call_state = running_func_calls_[func_call.full_call_id];
                 // Check if corresponding connection is still active
-                if (connections_.contains(connection_id)) {
-                    connection = connections_[connection_id];
-                    func_call_context = running_func_calls_[func_call.full_call_id].second;
+                if (connections_.contains(full_call_state.connection_id)) {
+                    connection = connections_[full_call_state.connection_id];
+                    func_call_context = full_call_state.context;
                 }
+                dispatch_overhead_stat_.AddSample(gsl::narrow_cast<int32_t>(
+                    current_timestamp - full_call_state.recv_timestamp - message.processing_time));
                 running_func_calls_.erase(func_call.full_call_id);
             }
         }
