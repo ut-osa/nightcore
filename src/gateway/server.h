@@ -64,9 +64,10 @@ private:
     absl::flat_hash_map</* node_id */ uint16_t, size_t> next_engine_conn_worker_id_;
 
     std::atomic<uint32_t> next_call_id_;
-    std::atomic<int> inflight_requests_;
 
     absl::Mutex mu_;
+    std::vector</* node_id */ uint16_t> connected_nodes_ ABSL_GUARDED_BY(mu_);
+    size_t next_dispatch_node_idx_;
 
     struct FuncCallState {
         int              connection_id;  // of HttpConnection

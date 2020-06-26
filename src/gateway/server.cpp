@@ -34,7 +34,7 @@ Server::Server()
       next_http_connection_id_(0),
       read_buffer_pool_("HandshakeRead", 128),
       next_call_id_(1),
-      inflight_requests_(0),
+      next_dispatch_node_idx_(0),
       last_request_timestamp_(-1),
       incoming_requests_stat_(
           stat::Counter::StandardReportCallback("incoming_requests")),
@@ -116,6 +116,7 @@ void Server::OnNewHttpFuncCall(HttpConnection* connection, FuncCallContext* func
                                      next_call_id_.fetch_add(1));
     VLOG(1) << "OnNewHttpFuncCall: " << FuncCallDebugString(func_call);
     func_call_context->set_func_call(func_call);
+    uint16_t node_id = 0;
     {
         absl::MutexLock lk(&mu_);
         int64_t current_timestamp = GetMonotonicMicroTimestamp();
@@ -132,10 +133,13 @@ void Server::OnNewHttpFuncCall(HttpConnection* connection, FuncCallContext* func
         last_request_timestamp_ = current_timestamp;
         inflight_requests_stat_.AddSample(
             gsl::narrow_cast<uint16_t>(running_func_calls_.size()));
+        if (next_dispatch_node_idx_ < connected_nodes_.size()) {
+            node_id = connected_nodes_[next_dispatch_node_idx_];
+            next_dispatch_node_idx_ = (next_dispatch_node_idx_ + 1) % connected_nodes_.size();
+        }
     }
     server::IOWorker* io_worker = server::IOWorker::current();
     DCHECK(io_worker != nullptr);
-    uint16_t node_id = 0;
     server::ConnectionBase* engine_connection = io_worker->PickRandomConnection(
         EngineConnection::type_id(node_id));
     if (engine_connection != nullptr) {
@@ -207,6 +211,12 @@ bool Server::OnEngineHandshake(uv_tcp_t* uv_handle, std::span<const char> data) 
                                          data.size() - sizeof(GatewayMessage));
     std::shared_ptr<server::ConnectionBase> connection(
         new EngineConnection(this, node_id, conn_id, remaining_data));
+    if (!next_engine_conn_worker_id_.contains(node_id)) {
+        next_engine_conn_worker_id_[node_id] = 0;
+        absl::MutexLock lk(&mu_);
+        connected_nodes_.push_back(node_id);
+        HLOG(INFO) << "Number of connected nodes: " << connected_nodes_.size();
+    }
     size_t& next_worker_id = next_engine_conn_worker_id_[node_id];
     DCHECK_LT(next_worker_id, io_workers_.size());
     server::IOWorker* io_worker = io_workers_[next_worker_id];
