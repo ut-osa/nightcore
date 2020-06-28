@@ -208,6 +208,9 @@ UV_READ_CB_FOR_CLASS(IOWorker, NewConnection) {
         if (connections_for_random_pick_.contains(connection->type())) {
             connections_for_random_pick_[connection->type()].push_back(connection);
         }
+        HLOG(INFO) << fmt::format("New connection of type {0}, total of type {0} is {1}",
+                                  connection->type(),
+                                  connections_by_type_[connection->type()].size());
     }
     if (state_.load(std::memory_order_consume) == kStopping) {
         HLOG(WARNING) << "Receive new connection in stopping state, will close it directly";

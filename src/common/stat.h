@@ -4,6 +4,7 @@
 #include "common/time.h"
 #include "utils/bst.h"
 #include "utils/env_variables.h"
+#include "utils/random.h"
 
 #include <math.h>
 
@@ -14,12 +15,14 @@ class ReportTimer {
 public:
     static constexpr uint32_t kDefaultReportIntervalInMs = 10000;  /* 10 seconds */
 
-    explicit ReportTimer(uint32_t report_interval_in_ms = kDefaultReportIntervalInMs)
-        : report_interval_in_ms_(report_interval_in_ms), last_report_time_(-1) {}
+    explicit ReportTimer(uint32_t report_interval_in_ms = kDefaultReportIntervalInMs) {
+        set_report_interval_in_ms(report_interval_in_ms);
+        last_report_time_ = -1;
+    }
     ~ReportTimer() {}
 
     void set_report_interval_in_ms(uint32_t value) {
-        report_interval_in_ms_ = value;
+        report_interval_in_ms_ = gsl::narrow_cast<uint32_t>(value * utils::GetRandomFloat(0.9, 1.1));
     }
 
     bool Check() {

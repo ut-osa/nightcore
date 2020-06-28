@@ -61,7 +61,7 @@ private:
     absl::flat_hash_set<std::unique_ptr<OngoingEngineHandshake>> ongoing_engine_handshakes_;
     absl::flat_hash_map</* id */ int, std::shared_ptr<server::ConnectionBase>> engine_connections_;
     utils::BufferPool read_buffer_pool_;
-    absl::flat_hash_map</* node_id */ uint16_t, size_t> next_engine_conn_worker_id_;
+    absl::flat_hash_set</* node_id */ uint16_t> connected_node_set_;
 
     std::atomic<uint32_t> next_call_id_;
 
@@ -75,6 +75,7 @@ private:
         int64_t          recv_timestamp;
     };
 
+    absl::BitGen random_bit_gen_ ABSL_GUARDED_BY(mu_);
     absl::flat_hash_map</* full_call_id */ uint64_t, FuncCallState>
         running_func_calls_ ABSL_GUARDED_BY(mu_);
     absl::flat_hash_map</* connection_id */ int,
@@ -83,8 +84,10 @@ private:
 
     int64_t last_request_timestamp_ ABSL_GUARDED_BY(mu_);
     stat::Counter incoming_requests_stat_ ABSL_GUARDED_BY(mu_);
+    stat::StatisticsCollector<int32_t> request_interval_stat_ ABSL_GUARDED_BY(mu_);
     stat::StatisticsCollector<float> requests_instant_rps_stat_ ABSL_GUARDED_BY(mu_);
     stat::StatisticsCollector<uint16_t> inflight_requests_stat_ ABSL_GUARDED_BY(mu_);
+    std::vector<std::unique_ptr<stat::Counter>> dispatched_requests_stat_ ABSL_GUARDED_BY(mu_);
     stat::StatisticsCollector<int32_t> dispatch_overhead_stat_ ABSL_GUARDED_BY(mu_);
 
     void StartInternal() override;

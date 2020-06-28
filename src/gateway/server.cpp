@@ -38,6 +38,8 @@ Server::Server()
       last_request_timestamp_(-1),
       incoming_requests_stat_(
           stat::Counter::StandardReportCallback("incoming_requests")),
+      request_interval_stat_(
+          stat::StatisticsCollector<int32_t>::StandardReportCallback("request_interval")),
       requests_instant_rps_stat_(
           stat::StatisticsCollector<float>::StandardReportCallback("requests_instant_rps")),
       inflight_requests_stat_(
@@ -129,13 +131,16 @@ void Server::OnNewHttpFuncCall(HttpConnection* connection, FuncCallContext* func
         if (last_request_timestamp_ != -1) {
             requests_instant_rps_stat_.AddSample(gsl::narrow_cast<float>(
                 1e6 / (current_timestamp - last_request_timestamp_)));
+            request_interval_stat_.AddSample(gsl::narrow_cast<int32_t>(
+                current_timestamp - last_request_timestamp_));
         }
         last_request_timestamp_ = current_timestamp;
         inflight_requests_stat_.AddSample(
             gsl::narrow_cast<uint16_t>(running_func_calls_.size()));
-        if (next_dispatch_node_idx_ < connected_nodes_.size()) {
-            node_id = connected_nodes_[next_dispatch_node_idx_];
-            next_dispatch_node_idx_ = (next_dispatch_node_idx_ + 1) % connected_nodes_.size();
+        if (connected_nodes_.size() > 0) {
+            size_t idx = absl::Uniform<size_t>(random_bit_gen_, 0, connected_nodes_.size());
+            node_id = connected_nodes_[idx];
+            dispatched_requests_stat_[idx]->Tick();
         }
     }
     server::IOWorker* io_worker = server::IOWorker::current();
@@ -148,9 +153,13 @@ void Server::OnNewHttpFuncCall(HttpConnection* connection, FuncCallContext* func
         engine_connection->as_ptr<EngineConnection>()->SendMessage(
             dispatch_message, func_call_context->input());
     } else {
-        HLOG(WARNING) << "There is no engine connection for node_id=" << node_id;
         {
             absl::MutexLock lk(&mu_);
+            if (connected_nodes_.size() > 0) {
+                HLOG(WARNING) << "There is no engine connection for node_id=" << node_id;
+            } else {
+                HLOG(WARNING) << "There is no node connected";
+            }
             running_func_calls_.erase(func_call.full_call_id);
         }
         func_call_context->set_status(FuncCallContext::kNotFound);
@@ -206,21 +215,22 @@ bool Server::OnEngineHandshake(uv_tcp_t* uv_handle, std::span<const char> data) 
     }
     uint16_t node_id = message->node_id;
     uint16_t conn_id = message->conn_id;
-    HLOG(INFO) << fmt::format("New engine connection: node_id={}, conn_id={}", node_id, conn_id);
     std::span<const char> remaining_data(data.data() + sizeof(GatewayMessage),
                                          data.size() - sizeof(GatewayMessage));
     std::shared_ptr<server::ConnectionBase> connection(
         new EngineConnection(this, node_id, conn_id, remaining_data));
-    if (!next_engine_conn_worker_id_.contains(node_id)) {
-        next_engine_conn_worker_id_[node_id] = 0;
+    if (!connected_node_set_.contains(node_id)) {
+        connected_node_set_.insert(node_id);
         absl::MutexLock lk(&mu_);
         connected_nodes_.push_back(node_id);
+        dispatched_requests_stat_.emplace_back(new stat::Counter(
+            stat::Counter::StandardReportCallback(fmt::format("dispatched_requests[{}]", node_id))));
         HLOG(INFO) << "Number of connected nodes: " << connected_nodes_.size();
     }
-    size_t& next_worker_id = next_engine_conn_worker_id_[node_id];
-    DCHECK_LT(next_worker_id, io_workers_.size());
-    server::IOWorker* io_worker = io_workers_[next_worker_id];
-    next_worker_id = (next_worker_id + 1) % io_workers_.size();
+    size_t worker_id = conn_id % io_workers_.size();
+    HLOG(INFO) << fmt::format("New engine connection (node_id={}, conn_id={}) assigned to IO worker {}",
+                              node_id, conn_id, worker_id);
+    server::IOWorker* io_worker = io_workers_[worker_id];
     RegisterConnection(io_worker, connection.get(), UV_AS_STREAM(uv_handle));
     DCHECK_GE(connection->id(), 0);
     DCHECK(!engine_connections_.contains(connection->id()));

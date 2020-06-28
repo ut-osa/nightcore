@@ -336,6 +336,7 @@ void Engine::OnExternalFuncCall(const FuncCall& func_call, std::span<const char>
 
 void Engine::ExternalFuncCallCompleted(const protocol::FuncCall& func_call,
                                        std::span<const char> output, int32_t processing_time) {
+    inflight_external_requests_.fetch_add(-1);
     server::IOWorker* io_worker = server::IOWorker::current();
     DCHECK(io_worker != nullptr);
     server::ConnectionBase* gateway_connection = io_worker->PickRandomConnection(
@@ -350,6 +351,7 @@ void Engine::ExternalFuncCallCompleted(const protocol::FuncCall& func_call,
 }
 
 void Engine::ExternalFuncCallFailed(const protocol::FuncCall& func_call, int status_code) {
+    inflight_external_requests_.fetch_add(-1);
     server::IOWorker* io_worker = server::IOWorker::current();
     DCHECK(io_worker != nullptr);
     server::ConnectionBase* gateway_connection = io_worker->PickRandomConnection(
@@ -437,9 +439,10 @@ UV_CONNECT_CB_FOR_CLASS(Engine, GatewayConnect) {
         return;
     }
     uint16_t conn_id = next_gateway_conn_id_++;
-    HLOG(INFO) << "New GatewayConnection: conn_id=" << conn_id;
     std::shared_ptr<server::ConnectionBase> connection(new GatewayConnection(this, conn_id));
     DCHECK_LT(next_gateway_conn_worker_id_, io_workers_.size());
+    HLOG(INFO) << fmt::format("New gateway connection (conn_id={}) assigned to IO worker {}",
+                              conn_id, next_gateway_conn_worker_id_);
     server::IOWorker* io_worker = io_workers_[next_gateway_conn_worker_id_];
     next_gateway_conn_worker_id_ = (next_gateway_conn_worker_id_ + 1) % io_workers_.size();
     RegisterConnection(io_worker, connection.get(), UV_AS_STREAM(uv_handle));
