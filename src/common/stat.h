@@ -191,17 +191,15 @@ public:
     }
 
     void AddSample(T sample) {
-#ifndef __FAAS_DISABLE_STAT
-        ranking_bst_.Insert(sample);
-        if (ranking_bst_.Size() >= min_report_samples_ && report_timer_.Check()) {
+        samples_.push_back(sample);
+        if (samples_.size() >= min_report_samples_ && report_timer_.Check()) {
             int duration_ms;
             Report report = BuildReport();
-            size_t n_samples = ranking_bst_.Size();
-            ranking_bst_.Clear();
+            size_t n_samples = samples_.size();
+            samples_.clear();
             report_timer_.MarkReport(&duration_ms);
             report_callback_(duration_ms, n_samples, report);
         }
-#endif
     }
 
 private:
@@ -209,9 +207,10 @@ private:
     ReportCallback report_callback_;
 
     ReportTimer report_timer_;
-    utils::RankingBST<T> ranking_bst_;
+    std::vector<T> samples_;
 
-    inline Report BuildReport() {
+    inline Report BuildReport() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+        std::sort(samples_.begin(), samples_.end());
         return {
             .p30 = percentile(0.3),
             .p50 = percentile(0.5),
@@ -222,18 +221,13 @@ private:
         };
     }
 
-    inline T percentile(double p) {
-        size_t size = ranking_bst_.Size();
-        size_t idx = gsl::narrow_cast<size_t>(size * p + 0.5);
+    inline T percentile(double p) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+        size_t idx = gsl::narrow_cast<size_t>(samples_.size() * p + 0.5);
         if (idx < 0) idx = 0;
-        if (idx >= size) {
-            idx = size - 1;
+        if (idx >= samples_.size()) {
+            idx = samples_.size() - 1;
         }
-        T value = 0;
-        if (!ranking_bst_.GetKthElement(idx, &value)) {
-            LOG(ERROR) << "Failed to get " << idx << "-th element from RankingBST";
-        }
-        return value;
+        return samples_[idx];
     }
 
     DISALLOW_COPY_AND_ASSIGN(StatisticsCollector);
