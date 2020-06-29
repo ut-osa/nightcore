@@ -44,6 +44,7 @@ private:
     int http_port_;
     int listen_backlog_;
     int num_io_workers_;
+    size_t max_running_requests_;
     std::string func_config_file_;
     std::string func_config_json_;
     FuncConfig func_config_;
@@ -73,11 +74,13 @@ private:
         int              connection_id;  // of HttpConnection
         FuncCallContext* context;
         int64_t          recv_timestamp;
+        int64_t          dispatch_timestamp;
     };
 
     absl::BitGen random_bit_gen_ ABSL_GUARDED_BY(mu_);
     absl::flat_hash_map</* full_call_id */ uint64_t, FuncCallState>
         running_func_calls_ ABSL_GUARDED_BY(mu_);
+    std::queue<FuncCallState> pending_func_calls_ ABSL_GUARDED_BY(mu_);
     absl::flat_hash_map</* connection_id */ int,
                         std::shared_ptr<server::ConnectionBase>>
         connections_ ABSL_GUARDED_BY(mu_);
@@ -87,13 +90,17 @@ private:
     stat::StatisticsCollector<int32_t> request_interval_stat_ ABSL_GUARDED_BY(mu_);
     stat::StatisticsCollector<float> requests_instant_rps_stat_ ABSL_GUARDED_BY(mu_);
     stat::StatisticsCollector<uint16_t> inflight_requests_stat_ ABSL_GUARDED_BY(mu_);
+    stat::StatisticsCollector<uint16_t> running_requests_stat_ ABSL_GUARDED_BY(mu_);
     std::vector<std::unique_ptr<stat::Counter>> dispatched_requests_stat_ ABSL_GUARDED_BY(mu_);
+    stat::StatisticsCollector<int32_t> queueing_delay_stat_ ABSL_GUARDED_BY(mu_);
     stat::StatisticsCollector<int32_t> dispatch_overhead_stat_ ABSL_GUARDED_BY(mu_);
 
     void StartInternal() override;
     void StopInternal() override;
     void OnConnectionClose(server::ConnectionBase* connection) override;
     bool OnEngineHandshake(uv_tcp_t* uv_handle, std::span<const char> data);
+    void DispatchFuncCall(std::shared_ptr<server::ConnectionBase> parent_connection,
+                          FuncCallContext* func_call_context, uint16_t node_id);
 
     DECLARE_UV_CONNECTION_CB_FOR_CLASS(HttpConnection);
     DECLARE_UV_CONNECTION_CB_FOR_CLASS(EngineConnection);

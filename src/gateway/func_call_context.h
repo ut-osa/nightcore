@@ -15,7 +15,8 @@ public:
         kCreated  = 0,
         kSuccess  = 1,
         kFailed   = 2,
-        kNotFound = 3
+        kNoNode   = 3,
+        kNotFound = 4
     };
 
     explicit FuncCallContext(server::ConnectionBase* connection)

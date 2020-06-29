@@ -281,6 +281,7 @@ void HttpConnection::OnFuncCallFinishedInternal() {
     case FuncCallContext::kNotFound:
         SendHttpResponse(HttpStatus::NOT_FOUND);
         break;
+    case FuncCallContext::kNoNode:
     case FuncCallContext::kFailed:
         SendHttpResponse(HttpStatus::INTERNAL_SERVER_ERROR);
         break;
