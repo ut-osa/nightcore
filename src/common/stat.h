@@ -191,6 +191,7 @@ public:
     }
 
     void AddSample(T sample) {
+#ifndef __FAAS_DISABLE_STAT
         samples_.push_back(sample);
         if (samples_.size() >= min_report_samples_ && report_timer_.Check()) {
             int duration_ms;
@@ -200,6 +201,7 @@ public:
             report_timer_.MarkReport(&duration_ms);
             report_callback_(duration_ms, n_samples, report);
         }
+#endif
     }
 
 private:
