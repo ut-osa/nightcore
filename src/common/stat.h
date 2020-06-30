@@ -211,7 +211,7 @@ private:
     ReportTimer report_timer_;
     std::vector<T> samples_;
 
-    inline Report BuildReport() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+    inline Report BuildReport() {
         std::sort(samples_.begin(), samples_.end());
         return {
             .p30 = percentile(0.3),
@@ -223,7 +223,7 @@ private:
         };
     }
 
-    inline T percentile(double p) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+    inline T percentile(double p) {
         size_t idx = gsl::narrow_cast<size_t>(samples_.size() * p + 0.5);
         if (idx < 0) idx = 0;
         if (idx >= samples_.size()) {

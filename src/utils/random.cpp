@@ -7,7 +7,6 @@ namespace faas {
 namespace utils {
 
 namespace {
-
 static thread_local std::mt19937_64 rd_gen(syscall(SYS_gettid));
 }
 
