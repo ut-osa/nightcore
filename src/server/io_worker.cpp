@@ -149,6 +149,9 @@ void IOWorker::OnConnectionClose(ConnectionBase* connection) {
         if (connections_for_random_pick_.contains(connection->type())) {
             connections_for_random_pick_.erase(connection->type());
         }
+        HLOG(INFO) << fmt::format("One connection of type {0} closed, total of type {0} is {1}",
+                                  connection->type(),
+                                  connections_by_type_[connection->type()].size());
     }
     uv_write_t* write_req = connection->uv_write_req_for_back_transfer();
     size_t buf_len = sizeof(void*);
