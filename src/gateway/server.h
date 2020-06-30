@@ -9,6 +9,7 @@
 #include "server/server_base.h"
 #include "gateway/func_call_context.h"
 #include "gateway/http_connection.h"
+#include "gateway/grpc_connection.h"
 #include "gateway/engine_connection.h"
 
 namespace faas {
@@ -25,6 +26,7 @@ public:
     void set_address(std::string_view address) { address_ = std::string(address); }
     void set_engine_conn_port(int port) { engine_conn_port_ = port; }
     void set_http_port(int port) { http_port_ = port; }
+    void set_grpc_port(int port) { grpc_port_ = port; }
     void set_listen_backlog(int value) { listen_backlog_ = value; }
     void set_num_io_workers(int value) { num_io_workers_ = value; }
     void set_func_config_file(std::string_view path) {
@@ -34,6 +36,8 @@ public:
 
     // Must be thread-safe
     void OnNewHttpFuncCall(HttpConnection* connection, FuncCallContext* func_call_context);
+    void OnNewGrpcFuncCall(GrpcConnection* connection, FuncCallContext* func_call_context);
+    void DiscardFuncCall(FuncCallContext* func_call_context);
     void OnRecvEngineMessage(EngineConnection* connection,
                              const protocol::GatewayMessage& message,
                              std::span<const char> payload);
@@ -42,6 +46,7 @@ private:
     std::string address_;
     int engine_conn_port_;
     int http_port_;
+    int grpc_port_;
     int listen_backlog_;
     int num_io_workers_;
     size_t max_running_requests_;
@@ -51,10 +56,13 @@ private:
 
     uv_tcp_t uv_engine_conn_handle_;
     uv_tcp_t uv_http_handle_;
+    uv_tcp_t uv_grpc_handle_;
     std::vector<server::IOWorker*> io_workers_;
 
     size_t next_http_conn_worker_id_;
+    size_t next_grpc_conn_worker_id_;
     int next_http_connection_id_;
+    int next_grpc_connection_id_;
 
     class OngoingEngineHandshake;
     friend class OngoingEngineHandshake;
@@ -71,16 +79,19 @@ private:
     size_t next_dispatch_node_idx_;
 
     struct FuncCallState {
-        int              connection_id;  // of HttpConnection
-        FuncCallContext* context;
-        int64_t          recv_timestamp;
-        int64_t          dispatch_timestamp;
+        protocol::FuncCall func_call;
+        int                connection_id;  // of HttpConnection or GrpcConnection
+        FuncCallContext*   context;
+        int64_t            recv_timestamp;
+        int64_t            dispatch_timestamp;
     };
 
     absl::BitGen random_bit_gen_ ABSL_GUARDED_BY(mu_);
     absl::flat_hash_map</* full_call_id */ uint64_t, FuncCallState>
         running_func_calls_ ABSL_GUARDED_BY(mu_);
     std::queue<FuncCallState> pending_func_calls_ ABSL_GUARDED_BY(mu_);
+    absl::flat_hash_set</* full_call_id */ uint64_t>
+        discarded_func_calls_ ABSL_GUARDED_BY(mu_);
     absl::flat_hash_map</* connection_id */ int,
                         std::shared_ptr<server::ConnectionBase>>
         connections_ ABSL_GUARDED_BY(mu_);
@@ -99,10 +110,15 @@ private:
     void StopInternal() override;
     void OnConnectionClose(server::ConnectionBase* connection) override;
     bool OnEngineHandshake(uv_tcp_t* uv_handle, std::span<const char> data);
+    void OnNewFuncCallCommon(std::shared_ptr<server::ConnectionBase> parent_connection,
+                             FuncCallContext* func_call_context);
     void DispatchFuncCall(std::shared_ptr<server::ConnectionBase> parent_connection,
                           FuncCallContext* func_call_context, uint16_t node_id);
+    void FinishFuncCall(std::shared_ptr<server::ConnectionBase> parent_connection,
+                        FuncCallContext* func_call_context);
 
     DECLARE_UV_CONNECTION_CB_FOR_CLASS(HttpConnection);
+    DECLARE_UV_CONNECTION_CB_FOR_CLASS(GrpcConnection);
     DECLARE_UV_CONNECTION_CB_FOR_CLASS(EngineConnection);
     DECLARE_UV_READ_CB_FOR_CLASS(ReadEngineHandshake);
 

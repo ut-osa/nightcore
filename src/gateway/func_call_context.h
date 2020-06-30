@@ -19,20 +19,20 @@ public:
         kNotFound = 4
     };
 
-    explicit FuncCallContext(server::ConnectionBase* connection)
-        : connection_id_(connection->id()) {}
+    explicit FuncCallContext() {}
     ~FuncCallContext() {}
 
     void set_func_name(std::string_view func_name) { func_name_.assign(func_name); }
     void set_method_name(std::string_view method_name) { method_name_.assign(method_name); }
+    void set_h2_stream_id(int32_t h2_stream_id) { h2_stream_id_ = h2_stream_id; }
     void set_func_call(const protocol::FuncCall& func_call) { func_call_ = func_call; }
     void append_input(std::span<const char> input) { input_.AppendData(input); }
     void append_output(std::span<const char> output) { output_.AppendData(output); }
     void set_status(Status status) { status_ = status; }
 
-    int connection_id() { return connection_id_; }
     std::string_view func_name() const { return func_name_; }
     std::string_view method_name() const { return method_name_; }
+    int32_t h2_stream_id() const { return h2_stream_id_; }
     protocol::FuncCall func_call() const { return func_call_; }
     std::span<const char> input() const { return input_.to_span(); }
     std::span<const char> output() const { return output_.to_span(); }
@@ -48,10 +48,10 @@ public:
     }
 
 private:
-    int connection_id_;
     Status status_;
     std::string func_name_;
     std::string method_name_;
+    int32_t h2_stream_id_;
     protocol::FuncCall func_call_;
     utils::AppendableBuffer input_;
     utils::AppendableBuffer output_;

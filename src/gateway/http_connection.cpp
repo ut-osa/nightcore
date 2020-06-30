@@ -11,7 +11,7 @@ namespace gateway {
 
 HttpConnection::HttpConnection(Server* server, int connection_id)
     : server::ConnectionBase(kTypeId), server_(server), io_worker_(nullptr), state_(kCreated),
-      log_header_(fmt::format("HttpConnection[{}]: ", connection_id)), func_call_context_(this) {
+      log_header_(fmt::format("HttpConnection[{}]: ", connection_id)) {
     http_parser_init(&http_parser_, HTTP_REQUEST);
     http_parser_.data = this;
     http_parser_settings_init(&http_parser_settings_);
@@ -217,12 +217,6 @@ void HttpConnection::OnNewHttpRequest(std::string_view method, std::string_view 
         return;
     }
     std::string_view func_name = absl::StripPrefix(path, "/function/");
-    const FuncConfig::Entry* func_entry = server_->func_config()->find_by_func_name(func_name);
-    if (func_entry == nullptr) {
-        SendHttpResponse(HttpStatus::NOT_FOUND);
-        return;
-    }
-
     func_call_context_.Reset();
     func_call_context_.set_func_name(func_name);
     func_call_context_.append_input(body_buffer_.to_span());

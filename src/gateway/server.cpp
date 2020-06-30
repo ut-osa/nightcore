@@ -32,11 +32,14 @@ using protocol::NewDispatchFuncCallGatewayMessage;
 Server::Server()
     : engine_conn_port_(-1),
       http_port_(-1),
+      grpc_port_(-1),
       listen_backlog_(kDefaultListenBackLog),
       num_io_workers_(kDefaultNumIOWorkers),
       max_running_requests_(absl::GetFlag(FLAGS_max_running_requests)),
       next_http_conn_worker_id_(0),
+      next_grpc_conn_worker_id_(0),
       next_http_connection_id_(0),
+      next_grpc_connection_id_(0),
       read_buffer_pool_("HandshakeRead", 128),
       next_call_id_(1),
       next_dispatch_node_idx_(0),
@@ -59,6 +62,8 @@ Server::Server()
     uv_engine_conn_handle_.data = this;
     UV_CHECK_OK(uv_tcp_init(uv_loop(), &uv_http_handle_));
     uv_http_handle_.data = this;
+    UV_CHECK_OK(uv_tcp_init(uv_loop(), &uv_grpc_handle_));
+    uv_grpc_handle_.data = this;
 }
 
 Server::~Server() {}
@@ -95,16 +100,25 @@ void Server::StartInternal() {
     UV_CHECK_OK(uv_listen(
         UV_AS_STREAM(&uv_http_handle_), listen_backlog_,
         &Server::HttpConnectionCallback));
+    // Listen on address:grpc_port for HTTP requests
+    UV_CHECK_OK(uv_ip4_addr(address_.c_str(), grpc_port_, &bind_addr));
+    UV_CHECK_OK(uv_tcp_bind(&uv_grpc_handle_, (const struct sockaddr *)&bind_addr, 0));
+    HLOG(INFO) << fmt::format("Listen on {}:{} for gRPC requests", address_, http_port_);
+    UV_CHECK_OK(uv_listen(
+        UV_AS_STREAM(&uv_grpc_handle_), listen_backlog_,
+        &Server::GrpcConnectionCallback));
 }
 
 void Server::StopInternal() {
     uv_close(UV_AS_HANDLE(&uv_engine_conn_handle_), nullptr);
     uv_close(UV_AS_HANDLE(&uv_http_handle_), nullptr);
+    uv_close(UV_AS_HANDLE(&uv_grpc_handle_), nullptr);
 }
 
 void Server::OnConnectionClose(server::ConnectionBase* connection) {
     DCHECK_IN_EVENT_LOOP_THREAD(uv_loop());
-    if (connection->type() == HttpConnection::kTypeId) {
+    if (connection->type() == HttpConnection::kTypeId
+          || connection->type() == GrpcConnection::kTypeId) {
         absl::MutexLock lk(&mu_);
         DCHECK(connections_.contains(connection->id()));
         connections_.erase(connection->id());
@@ -116,66 +130,45 @@ void Server::OnConnectionClose(server::ConnectionBase* connection) {
         DCHECK(engine_connections_.contains(connection->id()));
         engine_connections_.erase(connection->id());
     } else {
-        HLOG(ERROR) << "Unknown connection type!";
+        HLOG(FATAL) << "Unreachable";
     }
 }
 
 void Server::OnNewHttpFuncCall(HttpConnection* connection, FuncCallContext* func_call_context) {
     auto func_entry = func_config_.find_by_func_name(func_call_context->func_name());
-    DCHECK(func_entry != nullptr);
-    FuncCall func_call = NewFuncCall(func_entry->func_id, /* client_id= */ 0,
-                                     next_call_id_.fetch_add(1));
-    VLOG(1) << "OnNewHttpFuncCall: " << FuncCallDebugString(func_call);
-    func_call_context->set_func_call(func_call);
-    uint16_t node_id = 0;
-    bool server_overloaded = false;
-    bool no_connected_nodes = false;
-    {
-        absl::MutexLock lk(&mu_);
-        int64_t current_timestamp = GetMonotonicMicroTimestamp();
-        incoming_requests_stat_.Tick();
-        if (last_request_timestamp_ != -1) {
-            requests_instant_rps_stat_.AddSample(gsl::narrow_cast<float>(
-                1e6 / (current_timestamp - last_request_timestamp_)));
-            request_interval_stat_.AddSample(gsl::narrow_cast<int32_t>(
-                current_timestamp - last_request_timestamp_));
-        }
-        last_request_timestamp_ = current_timestamp;
-        if (connected_nodes_.size() == 0) {
-            no_connected_nodes = true;
-        } else {
-            FuncCallState state = {
-                .connection_id = connection->id(),
-                .context = func_call_context,
-                .recv_timestamp = current_timestamp,
-                .dispatch_timestamp = 0
-            };
-            if (max_running_requests_ > 0 && running_func_calls_.size() >= max_running_requests_) {
-                pending_func_calls_.push(std::move(state));
-                server_overloaded = true;
-            } else {
-                state.dispatch_timestamp = current_timestamp;
-                running_func_calls_[func_call.full_call_id] = std::move(state);
-                size_t idx = absl::Uniform<size_t>(random_bit_gen_, 0, connected_nodes_.size());
-                node_id = connected_nodes_[idx];
-                dispatched_requests_stat_[idx]->Tick();
-                running_requests_stat_.AddSample(
-                    gsl::narrow_cast<uint16_t>(running_func_calls_.size()));
-            }
-            inflight_requests_stat_.AddSample(
-                gsl::narrow_cast<uint16_t>(running_func_calls_.size() + pending_func_calls_.size()));
-        }
-    }
-    if (server_overloaded) {
+    if (func_entry == nullptr) {
+        func_call_context->set_status(FuncCallContext::kNotFound);
+        connection->OnFuncCallFinished(func_call_context);
         return;
     }
-    if (no_connected_nodes) {
-        HLOG(ERROR) << "There is no node connected";
-        func_call_context->set_status(FuncCallContext::kNoNode);
+    FuncCall func_call = NewFuncCall(gsl::narrow_cast<uint16_t>(func_entry->func_id),
+                                     /* client_id= */ 0, next_call_id_.fetch_add(1));
+    VLOG(1) << "OnNewHttpFuncCall: " << FuncCallDebugString(func_call);
+    func_call_context->set_func_call(func_call);
+    OnNewFuncCallCommon(connection->ref_self(), func_call_context);
+}
+
+void Server::OnNewGrpcFuncCall(GrpcConnection* connection, FuncCallContext* func_call_context) {
+    auto func_entry = func_config_.find_by_func_name(func_call_context->func_name());
+    std::string method_name(func_call_context->method_name());
+    if (func_entry == nullptr || !func_entry->is_grpc_service
+          || func_entry->grpc_method_ids.count(method_name) > 0) {
+        func_call_context->set_status(FuncCallContext::kNotFound);
         connection->OnFuncCallFinished(func_call_context);
-    } else {
-        DispatchFuncCall(connection->ref_self(), func_call_context, node_id);
+        return;
     }
+    FuncCall func_call = NewFuncCallWithMethod(
+        gsl::narrow_cast<uint16_t>(func_entry->func_id),
+        gsl::narrow_cast<uint16_t>(func_entry->grpc_method_ids.at(method_name)),
+        /* client_id= */ 0, next_call_id_.fetch_add(1));
+    VLOG(1) << "OnNewGrpcFuncCall: " << FuncCallDebugString(func_call);
+    func_call_context->set_func_call(func_call);
+    OnNewFuncCallCommon(connection->ref_self(), func_call_context);
+}
+
+void Server::DiscardFuncCall(FuncCallContext* func_call_context) {
+    absl::MutexLock lk(&mu_);
+    discarded_func_calls_.insert(func_call_context->func_call().full_call_id);
 }
 
 void Server::OnRecvEngineMessage(EngineConnection* connection, const GatewayMessage& message,
@@ -194,9 +187,13 @@ void Server::OnRecvEngineMessage(EngineConnection* connection, const GatewayMess
             if (running_func_calls_.contains(func_call.full_call_id)) {
                 const FuncCallState& full_call_state = running_func_calls_[func_call.full_call_id];
                 // Check if corresponding connection is still active
-                if (connections_.contains(full_call_state.connection_id)) {
+                if (connections_.contains(full_call_state.connection_id)
+                      && !discarded_func_calls_.contains(func_call.full_call_id)) {
                     connection = connections_[full_call_state.connection_id];
                     func_call_context = full_call_state.context;
+                }
+                if (discarded_func_calls_.contains(func_call.full_call_id)) {
+                    discarded_func_calls_.erase(func_call.full_call_id);
                 }
                 dispatch_overhead_stat_.AddSample(gsl::narrow_cast<int32_t>(
                     current_timestamp - full_call_state.dispatch_timestamp - message.processing_time));
@@ -205,6 +202,10 @@ void Server::OnRecvEngineMessage(EngineConnection* connection, const GatewayMess
                 while (!pending_func_calls_.empty()) {
                     state = std::move(pending_func_calls_.front());
                     pending_func_calls_.pop();
+                    if (discarded_func_calls_.contains(state.func_call.full_call_id)) {
+                        discarded_func_calls_.erase(state.func_call.full_call_id);
+                        continue;
+                    }
                     if (connections_.contains(state.connection_id)) {
                         next_connection = connections_[state.connection_id];
                         next_func_call = state.context;
@@ -234,13 +235,68 @@ void Server::OnRecvEngineMessage(EngineConnection* connection, const GatewayMess
             } else {
                 HLOG(FATAL) << "Unreachable";
             }
-            connection->as_ptr<HttpConnection>()->OnFuncCallFinished(func_call_context);
+            FinishFuncCall(std::move(connection), func_call_context);
         }
         if (next_func_call != nullptr) {
             DispatchFuncCall(std::move(next_connection), next_func_call, node_id);
         }
     } else {
         HLOG(ERROR) << "Unknown engine message type";
+    }
+}
+
+void Server::OnNewFuncCallCommon(std::shared_ptr<server::ConnectionBase> parent_connection,
+                                 FuncCallContext* func_call_context) {
+    FuncCall func_call = func_call_context->func_call();
+    uint16_t node_id = 0;
+    bool server_overloaded = false;
+    bool no_connected_nodes = false;
+    {
+        absl::MutexLock lk(&mu_);
+        int64_t current_timestamp = GetMonotonicMicroTimestamp();
+        incoming_requests_stat_.Tick();
+        if (last_request_timestamp_ != -1) {
+            requests_instant_rps_stat_.AddSample(gsl::narrow_cast<float>(
+                1e6 / (current_timestamp - last_request_timestamp_)));
+            request_interval_stat_.AddSample(gsl::narrow_cast<int32_t>(
+                current_timestamp - last_request_timestamp_));
+        }
+        last_request_timestamp_ = current_timestamp;
+        if (connected_nodes_.size() == 0) {
+            no_connected_nodes = true;
+        } else {
+            FuncCallState state = {
+                .func_call = func_call,
+                .connection_id = parent_connection->id(),
+                .context = func_call_context,
+                .recv_timestamp = current_timestamp,
+                .dispatch_timestamp = 0
+            };
+            if (max_running_requests_ > 0 && running_func_calls_.size() >= max_running_requests_) {
+                pending_func_calls_.push(std::move(state));
+                server_overloaded = true;
+            } else {
+                state.dispatch_timestamp = current_timestamp;
+                running_func_calls_[func_call.full_call_id] = std::move(state);
+                size_t idx = absl::Uniform<size_t>(random_bit_gen_, 0, connected_nodes_.size());
+                node_id = connected_nodes_[idx];
+                dispatched_requests_stat_[idx]->Tick();
+                running_requests_stat_.AddSample(
+                    gsl::narrow_cast<uint16_t>(running_func_calls_.size()));
+            }
+            inflight_requests_stat_.AddSample(
+                gsl::narrow_cast<uint16_t>(running_func_calls_.size() + pending_func_calls_.size()));
+        }
+    }
+    if (server_overloaded) {
+        return;
+    }
+    if (no_connected_nodes) {
+        HLOG(ERROR) << "There is no node connected";
+        func_call_context->set_status(FuncCallContext::kNoNode);
+        FinishFuncCall(std::move(parent_connection), func_call_context);
+    } else {
+        DispatchFuncCall(std::move(parent_connection), func_call_context, node_id);
     }
 }
 
@@ -260,10 +316,25 @@ void Server::DispatchFuncCall(std::shared_ptr<server::ConnectionBase> parent_con
         HLOG(WARNING) << "There is no engine connection for node_id=" << node_id;
         {
             absl::MutexLock lk(&mu_);
+            DCHECK(running_func_calls_.contains(func_call.full_call_id));
             running_func_calls_.erase(func_call.full_call_id);
         }
         func_call_context->set_status(FuncCallContext::kNotFound);
+        FinishFuncCall(std::move(parent_connection), func_call_context);
+    }
+}
+
+void Server::FinishFuncCall(std::shared_ptr<server::ConnectionBase> parent_connection,
+                            FuncCallContext* func_call_context) {
+    switch (parent_connection->type()) {
+    case HttpConnection::kTypeId:
         parent_connection->as_ptr<HttpConnection>()->OnFuncCallFinished(func_call_context);
+        break;
+    case GrpcConnection::kTypeId:
+        parent_connection->as_ptr<GrpcConnection>()->OnFuncCallFinished(func_call_context);
+        break;
+    default:
+        HLOG(FATAL) << "Unreachable";
     }
 }
 
@@ -322,6 +393,32 @@ UV_CONNECTION_CB_FOR_CLASS(Server, HttpConnection) {
         }
     } else {
         LOG(ERROR) << "Failed to accept new HTTP connection";
+        free(client);
+    }
+}
+
+UV_CONNECTION_CB_FOR_CLASS(Server, GrpcConnection) {
+    if (status != 0) {
+        HLOG(WARNING) << "Failed to open gRPC connection: " << uv_strerror(status);
+        return;
+    }
+    std::shared_ptr<server::ConnectionBase> connection(
+        new GrpcConnection(this, next_grpc_connection_id_++));
+    uv_tcp_t* client = reinterpret_cast<uv_tcp_t*>(malloc(sizeof(uv_tcp_t)));
+    UV_DCHECK_OK(uv_tcp_init(uv_loop(), client));
+    if (uv_accept(UV_AS_STREAM(&uv_grpc_handle_), UV_AS_STREAM(client)) == 0) {
+        DCHECK_LT(next_grpc_conn_worker_id_, io_workers_.size());
+        server::IOWorker* io_worker = io_workers_[next_grpc_conn_worker_id_];
+        next_grpc_conn_worker_id_ = (next_grpc_conn_worker_id_ + 1) % io_workers_.size();
+        RegisterConnection(io_worker, connection.get(), UV_AS_STREAM(client));
+        DCHECK_GE(connection->id(), 0);
+        {
+            absl::MutexLock lk(&mu_);
+            DCHECK(!connections_.contains(connection->id()));
+            connections_[connection->id()] = std::move(connection);
+        }
+    } else {
+        LOG(ERROR) << "Failed to accept new gRPC connection";
         free(client);
     }
 }
