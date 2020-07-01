@@ -556,8 +556,9 @@ int GrpcConnection::H2OnDataChunkRecv(uint8_t flags, int32_t stream_id,
         }
         context->body_size = ntohl(LOAD(uint32_t, data + 1));
         if (len > kGrpcLPMPrefixByteSize) {
-            context->body_buffer.AppendData(reinterpret_cast<const char*>(data + kGrpcLPMPrefixByteSize),
-                                            len - kGrpcLPMPrefixByteSize);
+            context->body_buffer.AppendData(
+                reinterpret_cast<const char*>(data + kGrpcLPMPrefixByteSize),
+                len - kGrpcLPMPrefixByteSize);
         }
         context->first_data_chunk = false;
     } else {

@@ -77,11 +77,14 @@ private:
 
     int H2OnFrameRecv(const nghttp2_frame* frame);
     int H2OnStreamClose(int32_t stream_id, uint32_t error_code);
-    int H2OnHeader(const nghttp2_frame* frame, std::string_view name, std::string_view value, uint8_t flags);
+    int H2OnHeader(const nghttp2_frame* frame, std::string_view name,
+                   std::string_view value, uint8_t flags);
     int H2OnBeginHeaders(const nghttp2_frame* frame);
     int H2OnDataChunkRecv(uint8_t flags, int32_t stream_id, const uint8_t* data, size_t len);
-    ssize_t H2DataSourceRead(H2StreamContext* stream_context, uint8_t* buf, size_t length, uint32_t* data_flags);
-    int H2SendData(H2StreamContext* stream_context, nghttp2_frame* frame, const uint8_t* framehd, size_t length);
+    ssize_t H2DataSourceRead(H2StreamContext* stream_context,
+                             uint8_t* buf, size_t length, uint32_t* data_flags);
+    int H2SendData(H2StreamContext* stream_context, nghttp2_frame* frame,
+                   const uint8_t* framehd, size_t length);
 
     static int H2ErrorCallback(nghttp2_session* session, int lib_error_code, const char* msg,
                                size_t len, void* user_data);
@@ -98,11 +101,11 @@ private:
     static int H2OnDataChunkRecvCallback(nghttp2_session* session, uint8_t flags, int32_t stream_id,
                                          const uint8_t* data, size_t len, void* user_data);
     static ssize_t H2DataSourceReadCallback(nghttp2_session* session, int32_t stream_id, uint8_t* buf,
-                                            size_t length, uint32_t* data_flags, nghttp2_data_source* source,
-                                            void* user_data);
+                                            size_t length, uint32_t* data_flags,
+                                            nghttp2_data_source* source, void* user_data);
     static int H2SendDataCallback(nghttp2_session* session, nghttp2_frame* frame,
-                                  const uint8_t* framehd, size_t length, nghttp2_data_source* source,
-                                  void* user_data);
+                                  const uint8_t* framehd, size_t length,
+                                  nghttp2_data_source* source, void* user_data);
 
     DISALLOW_COPY_AND_ASSIGN(GrpcConnection);
 };
