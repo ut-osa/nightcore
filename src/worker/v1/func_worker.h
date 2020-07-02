@@ -43,7 +43,7 @@ private:
 
     absl::Mutex mu_;
 
-    int gateway_sock_fd_;
+    int engine_sock_fd_;
     int input_pipe_fd_;
     int output_pipe_fd_;
 
@@ -70,7 +70,7 @@ private:
     std::atomic<uint64_t> current_func_call_id_;
 
     void MainServingLoop();
-    void HandshakeWithGateway();
+    void HandshakeWithEngine();
 
     void ExecuteFunc(void* worker_handle, const protocol::Message& dispatch_func_call_message);
     bool InvokeFunc(const char* func_name,

@@ -25,14 +25,20 @@ using protocol::NewFuncCallFailedMessage;
 
 FuncWorker::FuncWorker()
     : func_id_(-1), fprocess_id_(-1), client_id_(0), func_call_timeout_(kDefaultFuncCallTimeout),
-      gateway_sock_fd_(-1), input_pipe_fd_(-1), output_pipe_fd_(-1),
+      engine_sock_fd_(-1), input_pipe_fd_(-1), output_pipe_fd_(-1),
       buffer_pool_for_pipes_("Pipes", PIPE_BUF),
       next_call_id_(0), current_func_call_id_(0) {}
 
 FuncWorker::~FuncWorker() {
-    close(gateway_sock_fd_);
-    close(input_pipe_fd_);
-    close(output_pipe_fd_);
+    if (engine_sock_fd_ != -1) {
+        close(engine_sock_fd_);
+    }
+    if (input_pipe_fd_ != -1) {
+        close(input_pipe_fd_);
+    }
+    if (output_pipe_fd_ != -1) {
+        close(output_pipe_fd_);
+    }
 }
 
 void FuncWorker::Serve() {
@@ -52,9 +58,9 @@ void FuncWorker::Serve() {
         "faas_func_call");
     CHECK(init_fn_() == 0) << "Failed to initialize loaded library";
     // Connect to gateway via IPC path
-    gateway_sock_fd_ = utils::UnixDomainSocketConnect(ipc::GetEngineUnixSocketPath());
-    CHECK(gateway_sock_fd_ != -1) << "Failed to connect to engine socket";
-    HandshakeWithGateway();
+    engine_sock_fd_ = utils::UnixDomainSocketConnect(ipc::GetEngineUnixSocketPath());
+    CHECK(engine_sock_fd_ != -1) << "Failed to connect to engine socket";
+    HandshakeWithEngine();
     // Enter main serving loop
     MainServingLoop();
 }
@@ -84,20 +90,20 @@ void FuncWorker::MainServingLoop() {
         << "Failed to destroy function worker";
 }
 
-void FuncWorker::HandshakeWithGateway() {
+void FuncWorker::HandshakeWithEngine() {
     input_pipe_fd_ = ipc::FifoOpenForRead(ipc::GetFuncWorkerInputFifoName(client_id_));
     Message message = NewFuncWorkerHandshakeMessage(func_id_, client_id_);
-    PCHECK(io_utils::SendMessage(gateway_sock_fd_, message));
+    PCHECK(io_utils::SendMessage(engine_sock_fd_, message));
     Message response;
-    CHECK(io_utils::RecvMessage(gateway_sock_fd_, &response, nullptr))
-        << "Failed to receive handshake response from gateway";
+    CHECK(io_utils::RecvMessage(engine_sock_fd_, &response, nullptr))
+        << "Failed to receive handshake response from engine";
     CHECK(IsHandshakeResponseMessage(response))
         << "Receive invalid handshake response";
     size_t payload_size = response.payload_size;
     char* payload = new char[payload_size];
     auto reclaim_payload_buffer = gsl::finally([payload] { delete[] payload; });
-    CHECK(io_utils::RecvData(gateway_sock_fd_, payload, payload_size, nullptr))
-        << "Failed to receive payload data from gateway";
+    CHECK(io_utils::RecvData(engine_sock_fd_, payload, payload_size, nullptr))
+        << "Failed to receive payload data from engine";
     func_config_.Load(std::string_view(payload, payload_size));
     output_pipe_fd_ = ipc::FifoOpenForWrite(ipc::GetFuncWorkerOutputFifoName(client_id_));
     LOG(INFO) << "Handshake done";
@@ -128,7 +134,7 @@ void FuncWorker::ExecuteFunc(void* worker_handle, const Message& dispatch_func_c
     worker_lib::FuncCallFinished(
         func_call, /* success= */ ret == 0, func_output_buffer_.to_span(),
         processing_time, main_pipe_buf_, &response);
-    VLOG(1) << "Send response to gateway";
+    VLOG(1) << "Send response to engine";
     response.dispatch_delay = dispatch_delay;
     response.send_timestamp = GetMonotonicMicroTimestamp();
     PCHECK(io_utils::SendMessage(output_pipe_fd_, response));
