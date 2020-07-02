@@ -1,9 +1,8 @@
-package main
+package config
 
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"strings"
 )
@@ -20,13 +19,9 @@ type FuncConfig struct {
 	entriesByFuncName map[string]*FuncConfigEntry
 }
 
-func newFuncConfig(jsonPath string) (*FuncConfig, error) {
-	jsonContents, err := ioutil.ReadFile(jsonPath)
-	if err != nil {
-		return nil, fmt.Errorf("Failed to read from file %s: %v", jsonPath, err)
-	}
+func NewFuncConfig(jsonContents []byte) (*FuncConfig, error) {
 	fc := new(FuncConfig)
-	err = json.Unmarshal(jsonContents, &fc.entries)
+	err := json.Unmarshal(jsonContents, &fc.entries)
 	if err != nil {
 		return nil, fmt.Errorf("Failed to unmarshal json: %v", err)
 	}
@@ -54,15 +49,15 @@ func newFuncConfig(jsonPath string) (*FuncConfig, error) {
 	return fc, nil
 }
 
-func (fc *FuncConfig) findByFuncName(funcName string) *FuncConfigEntry {
+func (fc *FuncConfig) FindByFuncName(funcName string) *FuncConfigEntry {
 	return fc.entriesByFuncName[funcName]
 }
 
-func (fc *FuncConfig) findByFuncId(funcId uint16) *FuncConfigEntry {
+func (fc *FuncConfig) FindByFuncId(funcId uint16) *FuncConfigEntry {
 	return fc.entriesByFuncId[funcId]
 }
 
-func (fcEntry *FuncConfigEntry) findGrpcMethod(method string) int {
+func (fcEntry *FuncConfigEntry) FindGrpcMethod(method string) int {
 	for idx, methodName := range fcEntry.GrpcMethods {
 		if methodName == method {
 			return idx
