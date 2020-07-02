@@ -134,6 +134,9 @@ UV_ASYNC_CB_FOR_CLASS(Launcher, Stop) {
         return;
     }
     engine_connection_.ScheduleClose();
+    for (auto& func_process : func_processes_) {
+        func_process->ScheduleClose();
+    }
     uv_close(UV_AS_HANDLE(&stop_event_), nullptr);
     state_.store(kStopping);
 }
