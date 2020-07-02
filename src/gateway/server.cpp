@@ -103,7 +103,7 @@ void Server::StartInternal() {
     // Listen on address:grpc_port for HTTP requests
     UV_CHECK_OK(uv_ip4_addr(address_.c_str(), grpc_port_, &bind_addr));
     UV_CHECK_OK(uv_tcp_bind(&uv_grpc_handle_, (const struct sockaddr *)&bind_addr, 0));
-    HLOG(INFO) << fmt::format("Listen on {}:{} for gRPC requests", address_, http_port_);
+    HLOG(INFO) << fmt::format("Listen on {}:{} for gRPC requests", address_, grpc_port_);
     UV_CHECK_OK(uv_listen(
         UV_AS_STREAM(&uv_grpc_handle_), listen_backlog_,
         &Server::GrpcConnectionCallback));
@@ -152,7 +152,7 @@ void Server::OnNewGrpcFuncCall(GrpcConnection* connection, FuncCallContext* func
     auto func_entry = func_config_.find_by_func_name(func_call_context->func_name());
     std::string method_name(func_call_context->method_name());
     if (func_entry == nullptr || !func_entry->is_grpc_service
-          || func_entry->grpc_method_ids.count(method_name) > 0) {
+          || func_entry->grpc_method_ids.count(method_name) == 0) {
         func_call_context->set_status(FuncCallContext::kNotFound);
         connection->OnFuncCallFinished(func_call_context);
         return;

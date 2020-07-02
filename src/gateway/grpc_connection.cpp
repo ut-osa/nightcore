@@ -405,7 +405,7 @@ void GrpcConnection::OnNewGrpcCall(H2StreamContext* context) {
 
     FuncCallContext* func_call_context = func_call_contexts_.Get();
     func_call_context->Reset();
-    func_call_context->set_func_name(context->service_name);
+    func_call_context->set_func_name(absl::StrCat("grpc:", context->service_name));
     func_call_context->set_method_name(context->method_name);
     func_call_context->set_h2_stream_id(context->stream_id);
     func_call_context->append_input(context->body_buffer.to_span());
