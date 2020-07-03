@@ -39,7 +39,7 @@ func Serve(factory types.FuncHandlerFactory) {
 			}
 			maxProcs := runtime.GOMAXPROCS(0)
 			runtime.GOMAXPROCS(maxProcs + 1)
-			log.Printf("[INFO] Current GOMAXPROCS is %d", maxProcs + 1)
+			log.Printf("[INFO] Current GOMAXPROCS is %d", maxProcs+1)
 			go func(w *worker.FuncWorker) {
 				w.Run()
 			}(w)
