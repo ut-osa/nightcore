@@ -77,7 +77,8 @@ private:
 
     void HttpParserOnNewHeader();
     void ResetHttpParser();
-    void OnNewHttpRequest(std::string_view method, std::string_view path);
+    void OnNewHttpRequest(std::string_view method, std::string_view path,
+                          std::string_view qs = std::string_view{});
     void SendHttpResponse(HttpStatus status, std::span<const char> body = std::span<const char>());
     void OnFuncCallFinishedInternal();
 

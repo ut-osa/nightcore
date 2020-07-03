@@ -3,6 +3,9 @@
 #include "common/time.h"
 #include "gateway/server.h"
 
+#include <nlohmann/json.hpp>
+using json = nlohmann::json;
+
 #define HLOG(l) LOG(l) << log_header_
 #define HVLOG(l) VLOG(l) << log_header_
 
@@ -172,6 +175,78 @@ static bool ReadParsedUrlField(const http_parser_url* parsed_url, http_parser_ur
         return true;
     }
 }
+
+static int to_hex(char ch) {
+    if ('0' <= ch && ch <= '9') {
+        return ch - '0';
+    } else if ('A' <= ch && ch <= 'F') {
+        return ch - 'A' + 10;
+    } else if ('a' <= ch && ch <= 'f') {
+        return ch - 'a' + 10;
+    } else {
+        return -1;
+    }
+}
+
+static bool ParseQueryStringPart(std::string_view data, std::string* field, std::string* value) {
+    field->clear();
+    value->clear();
+    std::string* current = field;
+    for (size_t i = 0; i < data.size(); i++) {
+        char ch = data[i];
+        if (ch == '=') {
+            if (current == field) {
+                current = value;
+                continue;
+            } else {
+                return false;
+            }
+        }
+        if (('A' <= ch && ch <= 'Z') || ('a' <= ch && ch <= 'z')
+              || ('0' <= ch && ch <= '9')
+              || ch == '~' || ch == '-' || ch == '.' || ch == '_') {
+            current->push_back(ch);
+            continue;
+        }
+        if (ch == '+') {
+            current->push_back(' ');
+            continue;
+        }
+        if (ch == '%') {
+            if (i + 2 >= data.size()) {
+                return false;
+            }
+            int a = to_hex(data[i+1]);
+            int b = to_hex(data[i+2]);
+            if (a == -1 || b == -1) {
+                return false;
+            }
+            current->push_back(gsl::narrow_cast<char>(a * 16 + b));
+            i += 2;
+            continue;
+        }
+        return false;
+    }
+    if (current != value) {
+        return false;
+    }
+    return true;
+}
+
+static std::string QueryStringToJSON(std::string_view qs) {
+    json data;
+    std::string field;
+    std::string value;
+    std::vector<std::string_view> parts = absl::StrSplit(qs, '&', absl::SkipEmpty());
+    for (std::string_view part : parts) {
+        if (!ParseQueryStringPart(part, &field, &value)) {
+            LOG(WARNING) << "Invalid query string part: " << part;
+        } else {
+            data[field] = value;
+        }
+    }
+    return std::string(data.dump());
+}
 }
 
 void HttpConnection::HttpParserOnMessageComplete() {
@@ -189,7 +264,12 @@ void HttpConnection::HttpParserOnMessageComplete() {
         ScheduleClose();
         return;
     }
-    OnNewHttpRequest(http_method_str(static_cast<http_method>(http_parser_.method)), path);
+    std::string_view qs;
+    if (ReadParsedUrlField(&parsed_url, UF_QUERY, url_buffer_.data(), &qs)) {
+        OnNewHttpRequest(http_method_str(static_cast<http_method>(http_parser_.method)), path, qs);
+    } else {
+        OnNewHttpRequest(http_method_str(static_cast<http_method>(http_parser_.method)), path);
+    }
     ResetHttpParser();   
 }
 
@@ -208,18 +288,34 @@ void HttpConnection::ResetHttpParser() {
     http_parser_init(&http_parser_, HTTP_REQUEST);
 }
 
-void HttpConnection::OnNewHttpRequest(std::string_view method, std::string_view path) {
+void HttpConnection::OnNewHttpRequest(std::string_view method, std::string_view path,
+                                      std::string_view qs) {
     DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
     HVLOG(1) << "New HTTP request: " << method << " " << path;
 
-    if (method != "POST" || !absl::StartsWith(path, "/function/")) {
+    if (!(method == "GET" || method == "POST") || !absl::StartsWith(path, "/function/")) {
         SendHttpResponse(HttpStatus::NOT_FOUND);
         return;
     }
     std::string_view func_name = absl::StripPrefix(path, "/function/");
+    auto func_entry = server_->func_config()->find_by_func_name(func_name);
+    if (func_entry == nullptr || (!func_entry->allow_http_get && method == "GET")) {
+        SendHttpResponse(HttpStatus::NOT_FOUND);
+        return;
+    }
+
     func_call_context_.Reset();
     func_call_context_.set_func_name(func_name);
-    func_call_context_.append_input(body_buffer_.to_span());
+    if (func_entry->qs_as_input) {
+        if (body_buffer_.length() > 0) {
+            HLOG(WARNING) << "Body not empty, but qsAsInput is set for func " << func_name;
+        }
+        std::string encoded_json(QueryStringToJSON(qs));
+        func_call_context_.append_input(std::span<const char>(encoded_json.data(),
+                                                              encoded_json.length()));
+    } else {
+        func_call_context_.append_input(body_buffer_.to_span());
+    }
     server_->OnNewHttpFuncCall(this, &func_call_context_);
 }
 

@@ -18,6 +18,8 @@ public:
         int func_id;
         int min_workers;
         int max_workers;
+        bool allow_http_get;
+        bool qs_as_input;
         bool is_grpc_service;
         std::string grpc_service_name;
         std::vector<std::string> grpc_methods;
