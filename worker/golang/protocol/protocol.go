@@ -38,6 +38,7 @@ const (
 	MessageType_INVALID               uint16 = 0
 	MessageType_FUNC_WORKER_HANDSHAKE uint16 = 3
 	MessageType_HANDSHAKE_RESPONSE    uint16 = 4
+	MessageType_CREATE_FUNC_WORKER    uint16 = 5
 	MessageType_INVOKE_FUNC           uint16 = 6
 	MessageType_DISPATCH_FUNC_CALL    uint16 = 7
 	MessageType_FUNC_CALL_COMPLETE    uint16 = 8
@@ -65,6 +66,10 @@ func getMessageType(buffer []byte) uint16 {
 
 func IsHandshakeResponseMessage(buffer []byte) bool {
 	return getMessageType(buffer) == MessageType_HANDSHAKE_RESPONSE
+}
+
+func IsCreateFuncWorkerMessage(buffer []byte) bool {
+	return getMessageType(buffer) == MessageType_CREATE_FUNC_WORKER
 }
 
 func IsDispatchFuncCallMessage(buffer []byte) bool {
@@ -105,6 +110,10 @@ func NewFuncCallFailedMessage(funcCall FuncCall) []byte {
 	tmp := (funcCall.FullCallId() << MessageTypeBits) + uint64(MessageType_FUNC_CALL_FAILED)
 	binary.LittleEndian.PutUint64(buffer[0:8], tmp)
 	return buffer
+}
+
+func GetClientIdFromMessage(buffer []byte) uint16 {
+	return GetFuncCallFromMessage(buffer).ClientId
 }
 
 func GetSendTimestampFromMessage(buffer []byte) int64 {

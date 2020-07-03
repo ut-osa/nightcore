@@ -489,9 +489,9 @@ UV_ALLOC_CB_FOR_CLASS(Server::OngoingEngineHandshake, BufferAlloc) {
 }
 
 UV_READ_CB_FOR_CLASS(Server::OngoingEngineHandshake, ReadMessage) {
-    auto reclaim_resource = gsl::finally([this, buf] {
+    auto reclaim_resource = gsl::finally([server = server_, buf] {
         if (buf->base != 0) {
-            server_->read_buffer_pool_.Return(buf);
+            server->read_buffer_pool_.Return(buf);
         }
     });
     if (nread < 0) {

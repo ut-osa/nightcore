@@ -4,9 +4,9 @@
 
 #include <absl/flags/flag.h>
 
-ABSL_FLAG(bool, engine_conn_enable_nodelay, false,
+ABSL_FLAG(bool, engine_conn_enable_nodelay, true,
           "Enable TCP_NODELAY for connections to engines");
-ABSL_FLAG(bool, engine_conn_enable_keepalive, false,
+ABSL_FLAG(bool, engine_conn_enable_keepalive, true,
           "Enable TCP keep-alive for connections to engines");
 
 #define HLOG(l) LOG(l) << log_header_

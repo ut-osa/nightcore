@@ -11,11 +11,13 @@
 namespace faas {
 namespace launcher {
 
-FuncProcess::FuncProcess(Launcher* launcher, int id, uint16_t initial_client_id)
+FuncProcess::FuncProcess(Launcher* launcher, int id, int initial_client_id)
     : state_(kCreated), launcher_(launcher), id_(id),
       initial_client_id_(initial_client_id),
       log_header_(fmt::format("FuncProcess[{}]: ", id)),
-      subprocess_(launcher->fprocess()) {}
+      subprocess_(launcher->fprocess()) {
+    message_pipe_fd_ = subprocess_.CreateReadablePipe();
+}
 
 FuncProcess::~FuncProcess() {
     DCHECK(state_ == kCreated || state_ == kClosed);
@@ -27,7 +29,10 @@ bool FuncProcess::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool)
     read_buffer_pool_ = read_buffer_pool;
     subprocess_.AddEnvVariable("FAAS_FUNC_ID", launcher_->func_id());
     subprocess_.AddEnvVariable("FAAS_FPROCESS_ID", id_);
-    subprocess_.AddEnvVariable("FAAS_CLIENT_ID", initial_client_id_);
+    if (initial_client_id_ >= 0) {
+        subprocess_.AddEnvVariable("FAAS_CLIENT_ID", initial_client_id_);
+    }
+    subprocess_.AddEnvVariable("FAAS_MSG_PIPE_FD", message_pipe_fd_);
     subprocess_.AddEnvVariable("FAAS_ROOT_PATH_FOR_IPC", ipc::GetRootPathForIpc());
     if (!launcher_->fprocess_output_dir().empty()) {
         std::string_view func_name = launcher_->func_name();
@@ -43,15 +48,27 @@ bool FuncProcess::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool)
     if (!launcher_->fprocess_working_dir().empty()) {
         subprocess_.SetWorkingDir(launcher_->fprocess_working_dir());
     }
-    if (launcher_->fprocess_multi_worker_mode()) {
-        HLOG(FATAL) << "Multi worker mode not implemented yet";
-    }
     if (!subprocess_.Start(uv_loop, read_buffer_pool,
                            absl::bind_front(&FuncProcess::OnSubprocessExit, this))) {
         return false;
     }
+    message_pipe_ = subprocess_.GetPipe(message_pipe_fd_);
+    message_pipe_->data = this;
     state_ = kRunning;
     return true;
+}
+
+void FuncProcess::SendMessage(const protocol::Message& message) {
+    DCHECK_IN_EVENT_LOOP_THREAD(uv_loop_);
+    uv_buf_t buf;
+    launcher_->NewWriteBuffer(&buf);
+    DCHECK_LE(sizeof(protocol::Message), buf.len);
+    memcpy(buf.base, &message, sizeof(protocol::Message));
+    buf.len = sizeof(protocol::Message);
+    uv_write_t* write_req = launcher_->NewWriteRequest();
+    write_req->data = buf.base;
+    UV_DCHECK_OK(uv_write(write_req, UV_AS_STREAM(message_pipe_),
+                          &buf, 1, &FuncProcess::SendMessageCallback));
 }
 
 void FuncProcess::ScheduleClose() {
@@ -77,6 +94,18 @@ void FuncProcess::OnSubprocessExit(int exit_status, std::span<const char> stdout
     }
     state_ = kClosed;
     launcher_->OnFuncProcessExit(this);
+}
+
+UV_WRITE_CB_FOR_CLASS(FuncProcess, SendMessage) {
+    auto reclaim_resource = gsl::finally([this, req] {
+        launcher_->ReturnWriteBuffer(reinterpret_cast<char*>(req->data));
+        launcher_->ReturnWriteRequest(req);
+    });
+    if (status != 0) {
+        HLOG(WARNING) << "Failed to send message, will kill this func process: "
+                      << uv_strerror(status);
+        ScheduleClose();
+    }
 }
 
 }  // namespace launcher

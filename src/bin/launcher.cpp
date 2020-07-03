@@ -14,9 +14,8 @@ ABSL_FLAG(std::string, fprocess_working_dir, "",
 ABSL_FLAG(std::string, fprocess_output_dir, "",
           "If not empty, stdout and stderr of function processes will be saved "
           "in the given directory");
-ABSL_FLAG(bool, fprocess_multi_worker_mode, false,
-          "If true, one function process can act as multiple function workers. "
-          "In this case, the launcher will create message pipes to function processes.");
+ABSL_FLAG(std::string, fprocess_mode, "cpp",
+          "Operating mode of fprocess. Valid options are cpp, and go.");
 
 static std::atomic<faas::launcher::Launcher*> launcher_ptr(nullptr);
 void SignalHandlerToStopLauncher(int signal) {
@@ -36,7 +35,15 @@ int main(int argc, char* argv[]) {
     launcher->set_fprocess(absl::GetFlag(FLAGS_fprocess));
     launcher->set_fprocess_working_dir(absl::GetFlag(FLAGS_fprocess_working_dir));
     launcher->set_fprocess_output_dir(absl::GetFlag(FLAGS_fprocess_output_dir));
-    launcher->set_fprocess_multi_worker_mode(absl::GetFlag(FLAGS_fprocess_multi_worker_mode));
+
+    std::string fprocess_mode = absl::GetFlag(FLAGS_fprocess_mode);
+    if (fprocess_mode == "cpp") {
+        launcher->set_fprocess_mode(faas::launcher::Launcher::kCppMode);
+    } else if (fprocess_mode == "go") {
+        launcher->set_fprocess_mode(faas::launcher::Launcher::kGoMode);
+    } else {
+        LOG(FATAL) << "Invalid fprocess_mode: " << fprocess_mode;
+    }
 
     launcher->Start();
     launcher_ptr.store(launcher.get());

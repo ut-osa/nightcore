@@ -20,9 +20,10 @@ using protocol::SetInlineDataInMessage;
 using protocol::ComputeMessageDelay;
 
 Launcher::Launcher()
-    : state_(kCreated), func_id_(-1), fprocess_multi_worker_mode_(false),
+    : state_(kCreated), func_id_(-1), fprocess_mode_(kInvalidMode),
       event_loop_thread_("Launcher/EL",
                          absl::bind_front(&Launcher::EventLoopThreadMain, this)),
+      buffer_pool_("Launcher", kBufferSize),
       engine_connection_(this),
       engine_message_delay_stat_(
           stat::StatisticsCollector<int32_t>::StandardReportCallback("engine_message_delay")) {
@@ -47,8 +48,6 @@ void Launcher::Start() {
     DCHECK(state_.load() == kCreated);
     CHECK(func_id_ != -1);
     CHECK(!fprocess_.empty());
-    buffer_pool_for_subprocess_pipes_ = std::make_unique<utils::BufferPool>(
-        "SubprocessPipe", kSubprocessPipeBufferSize);
     // Connect to engine via IPC path
     uv_pipe_t* pipe_handle = engine_connection_.uv_pipe_handle();
     UV_DCHECK_OK(uv_pipe_init(&uv_loop_, pipe_handle, 0));
@@ -76,6 +75,9 @@ void Launcher::OnEngineConnectionClose() {
 }
 
 void Launcher::OnFuncProcessExit(FuncProcess* func_process) {
+    if (fprocess_mode_ == kGoMode) {
+        HLOG(FATAL) << "Golang fprocess exited";
+    }
     int id = func_process->id();
     HLOG(WARNING) << "Function process " << id << " terminated";
     DCHECK_GE(id, 0);
@@ -115,17 +117,62 @@ void Launcher::OnRecvMessage(const protocol::Message& message) {
     DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
     engine_message_delay_stat_.AddSample(ComputeMessageDelay(message));
     if (IsCreateFuncWorkerMessage(message)) {
-        uint16_t client_id = message.client_id;
-        auto func_process = std::make_unique<FuncProcess>(
-            this, func_processes_.size(), client_id);
-        if (func_process->Start(&uv_loop_, buffer_pool_for_subprocess_pipes_.get())) {
-            func_processes_.push_back(std::move(func_process));
+        if (fprocess_mode_ == kCppMode) {
+            auto func_process = std::make_unique<FuncProcess>(
+                this, /* id= */ func_processes_.size(),
+                /* initial_client_id= */ message.client_id);
+            if (func_process->Start(&uv_loop_, &buffer_pool_)) {
+                func_processes_.push_back(std::move(func_process));
+            } else {
+                HLOG(FATAL) << "Failed to start function process!";
+            }
+        } else if (fprocess_mode_ == kGoMode) {
+            if (func_processes_.empty()) {
+                auto func_process = std::make_unique<FuncProcess>(this, /* id= */ 0);
+                if (func_process->Start(&uv_loop_, &buffer_pool_)) {
+                    func_processes_.push_back(std::move(func_process));
+                } else {
+                    HLOG(FATAL) << "Failed to start function process!";
+                }
+            }
+            FuncProcess* func_process = func_processes_[0].get();
+            func_process->SendMessage(message);
         } else {
-            HLOG(FATAL) << "Failed to start function process!";
+            HLOG(FATAL) << "Unreachable";
         }
     } else {
         HLOG(ERROR) << "Unknown message type!";
     }
+}
+
+void Launcher::NewReadBuffer(size_t suggested_size, uv_buf_t* buf) {
+    DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
+    buffer_pool_.Get(buf);
+}
+
+void Launcher::ReturnReadBuffer(const uv_buf_t* buf) {
+    DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
+    buffer_pool_.Return(buf);
+}
+
+void Launcher::NewWriteBuffer(uv_buf_t* buf) {
+    DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
+    buffer_pool_.Get(buf);
+}
+
+void Launcher::ReturnWriteBuffer(char* buf) {
+    DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
+    buffer_pool_.Return(buf);
+}
+
+uv_write_t* Launcher::NewWriteRequest() {
+    DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
+    return write_req_pool_.Get();
+}
+
+void Launcher::ReturnWriteRequest(uv_write_t* write_req) {
+    DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
+    write_req_pool_.Return(write_req);
 }
 
 UV_ASYNC_CB_FOR_CLASS(Launcher, Stop) {

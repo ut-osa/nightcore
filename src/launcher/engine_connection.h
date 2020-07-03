@@ -14,9 +14,6 @@ class Launcher;
 
 class EngineConnection : public uv::Base {
 public:
-    static constexpr size_t kBufferSize = 4096;
-    static_assert(sizeof(protocol::Message) <= kBufferSize, "kBufferSize is too small");
-
     explicit EngineConnection(Launcher* launcher);
     ~EngineConnection();
 
@@ -36,10 +33,8 @@ private:
     uv_connect_t connect_req_;
     uv_pipe_t uv_pipe_handle_;
 
-    utils::BufferPool buffer_pool_;
     utils::AppendableBuffer message_buffer_;
     protocol::Message handshake_message_;
-    utils::SimpleObjectPool<uv_write_t> write_req_pool_;
 
     void RecvHandshakeResponse();
 

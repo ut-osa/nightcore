@@ -1,4 +1,4 @@
-#include "launcher/gateway_connection.h"
+#include "launcher/engine_connection.h"
 
 #include "launcher/launcher.h"
 
@@ -11,8 +11,7 @@ namespace launcher {
 using protocol::Message;
 
 EngineConnection::EngineConnection(Launcher* launcher)
-    : launcher_(launcher), state_(kCreated),
-      buffer_pool_("EngineConnection", kBufferSize) {}
+    : launcher_(launcher), state_(kCreated) {}
 
 EngineConnection::~EngineConnection() {
     DCHECK(state_ == kCreated || state_ == kClosed);
@@ -52,11 +51,11 @@ void EngineConnection::RecvHandshakeResponse() {
 void EngineConnection::WriteMessage(const Message& message) {
     DCHECK_IN_EVENT_LOOP_THREAD(uv_pipe_handle_.loop);
     uv_buf_t buf;
-    buffer_pool_.Get(&buf);
+    launcher_->NewWriteBuffer(&buf);
     DCHECK_LE(sizeof(Message), buf.len);
     memcpy(buf.base, &message, sizeof(Message));
     buf.len = sizeof(Message);
-    uv_write_t* write_req = write_req_pool_.Get();
+    uv_write_t* write_req = launcher_->NewWriteRequest();
     write_req->data = buf.base;
     UV_DCHECK_OK(uv_write(write_req, UV_AS_STREAM(&uv_pipe_handle_),
                           &buf, 1, &EngineConnection::WriteMessageCallback));
@@ -74,18 +73,18 @@ UV_CONNECT_CB_FOR_CLASS(EngineConnection, Connect) {
         .base = reinterpret_cast<char*>(&handshake_message_),
         .len = sizeof(Message)
     };
-    UV_DCHECK_OK(uv_write(write_req_pool_.Get(), UV_AS_STREAM(&uv_pipe_handle_),
+    UV_DCHECK_OK(uv_write(launcher_->NewWriteRequest(), UV_AS_STREAM(&uv_pipe_handle_),
                           &buf, 1, &EngineConnection::WriteHandshakeCallback));
 }
 
 UV_ALLOC_CB_FOR_CLASS(EngineConnection, BufferAlloc) {
-    buffer_pool_.Get(buf);
+    launcher_->NewReadBuffer(suggested_size, buf);
 }
 
 UV_READ_CB_FOR_CLASS(EngineConnection, ReadHandshakeResponse) {
     auto reclaim_resource = gsl::finally([this, buf] {
         if (buf->base != 0) {
-            buffer_pool_.Return(buf);
+            launcher_->ReturnReadBuffer(buf);
         }
     });
     if (nread < 0) {
@@ -116,7 +115,7 @@ UV_READ_CB_FOR_CLASS(EngineConnection, ReadHandshakeResponse) {
 
 UV_WRITE_CB_FOR_CLASS(EngineConnection, WriteHandshake) {
     auto reclaim_resource = gsl::finally([this, req] {
-        write_req_pool_.Return(req);
+        launcher_->ReturnWriteRequest(req);
     });
     if (status != 0) {
         HLOG(WARNING) << "Failed to write handshake message, will close the connection: "
@@ -132,7 +131,7 @@ UV_WRITE_CB_FOR_CLASS(EngineConnection, WriteHandshake) {
 UV_READ_CB_FOR_CLASS(EngineConnection, ReadMessage) {
     auto reclaim_resource = gsl::finally([this, buf] {
         if (buf->base != 0) {
-            buffer_pool_.Return(buf);
+            launcher_->ReturnReadBuffer(buf);
         }
     });
     if (nread < 0) {
@@ -154,8 +153,8 @@ UV_READ_CB_FOR_CLASS(EngineConnection, ReadMessage) {
 
 UV_WRITE_CB_FOR_CLASS(EngineConnection, WriteMessage) {
     auto reclaim_resource = gsl::finally([this, req] {
-        buffer_pool_.Return(reinterpret_cast<char*>(req->data));
-        write_req_pool_.Return(req);
+        launcher_->ReturnWriteBuffer(reinterpret_cast<char*>(req->data));
+        launcher_->ReturnWriteRequest(req);
     });
     if (status != 0) {
         HLOG(WARNING) << "Failed to write response, will close the connection: "
