@@ -41,7 +41,7 @@ void GatewayConnection::Start(server::IOWorker* io_worker) {
         UV_DCHECK_OK(uv_tcp_nodelay(&uv_tcp_handle_, 1));
     }
     if (absl::GetFlag(FLAGS_gateway_conn_enable_keepalive)) {
-        UV_DCHECK_OK(uv_tcp_keepalive(&uv_tcp_handle_, 1, 0));
+        UV_DCHECK_OK(uv_tcp_keepalive(&uv_tcp_handle_, 1, 1));
     }
     handshake_message_ = NewEngineHandshakeGatewayMessage(engine_->node_id(), conn_id_);
     uv_buf_t buf = {

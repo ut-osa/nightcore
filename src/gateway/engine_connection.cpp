@@ -43,7 +43,7 @@ void EngineConnection::Start(server::IOWorker* io_worker) {
         UV_DCHECK_OK(uv_tcp_nodelay(&uv_tcp_handle_, 1));
     }
     if (absl::GetFlag(FLAGS_engine_conn_enable_keepalive)) {
-        UV_DCHECK_OK(uv_tcp_keepalive(&uv_tcp_handle_, 1, 0));
+        UV_DCHECK_OK(uv_tcp_keepalive(&uv_tcp_handle_, 1, 1));
     }
     UV_DCHECK_OK(uv_read_start(UV_AS_STREAM(&uv_tcp_handle_),
                                &EngineConnection::BufferAllocCallback,
