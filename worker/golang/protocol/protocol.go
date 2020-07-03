@@ -4,8 +4,6 @@ import (
 	"encoding/binary"
 )
 
-const PIPE_BUF = 4096
-
 type FuncCall struct {
 	FuncId   uint16
 	MethodId uint16

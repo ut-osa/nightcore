@@ -6,6 +6,14 @@ import (
 	"syscall"
 )
 
+func FifoCreate(name string) error {
+	return syscall.Mkfifo(fmt.Sprintf("%s/fifo/%s", rootPathForIpc, name), fileCreatMode)
+}
+
+func FifoRemove(name string) {
+	os.Remove(fmt.Sprintf("%s/fifo/%s", rootPathForIpc, name))
+}
+
 func FifoOpenForRead(name string, nonblocking bool) (*os.File, error) {
 	fifoPath := fmt.Sprintf("%s/fifo/%s", rootPathForIpc, name)
 	flags := syscall.O_RDONLY

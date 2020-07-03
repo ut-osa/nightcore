@@ -14,7 +14,7 @@ type ShmRegion struct {
 
 func ShmCreate(name string, size int) (*ShmRegion, error) {
 	flags := syscall.O_CREAT | syscall.O_EXCL | syscall.O_RDWR
-	fd, err := syscall.Open(shmFullPath(name), flags, 0664)
+	fd, err := syscall.Open(shmFullPath(name), flags, fileCreatMode)
 	if err != nil {
 		return nil, fmt.Errorf("open failed: %v", err)
 	}

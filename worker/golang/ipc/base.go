@@ -6,6 +6,8 @@ import (
 
 var rootPathForIpc string
 
+const fileCreatMode = 0664
+
 func SetRootPathForIpc(path string) {
 	rootPathForIpc = path
 }
