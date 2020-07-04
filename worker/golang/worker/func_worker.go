@@ -23,13 +23,15 @@ const PIPE_BUF = 4096
 type FuncWorker struct {
 	funcId      uint16
 	clientId    uint16
-	handler     types.FuncHandler
+	factory     types.FuncHandlerFactory
 	funcConfig  *config.FuncConfig
 	configEntry *config.FuncConfigEntry
 	isGrpcSrv   bool
 	engineConn  net.Conn
 	inputPipe   *os.File
 	outputPipe  *os.File // protected by mux
+	handler     types.FuncHandler
+	grpcHandler types.GrpcFuncHandler
 	nextCallId  uint32
 	currentCall uint64
 	mux         sync.Mutex
@@ -39,14 +41,10 @@ func NewFuncWorker(funcId uint16, clientId uint16, factory types.FuncHandlerFact
 	w := &FuncWorker{
 		funcId:      funcId,
 		clientId:    clientId,
+		factory:     factory,
 		nextCallId:  0,
 		currentCall: 0,
 	}
-	handler, err := factory.New(w)
-	if err != nil {
-		return nil, err
-	}
-	w.handler = handler
 	return w, nil
 }
 
@@ -108,6 +106,20 @@ func (w *FuncWorker) doHandshake() error {
 		return fmt.Errorf("Invalid funcId: %d", w.funcId)
 	}
 	w.isGrpcSrv = strings.HasPrefix(w.configEntry.FuncName, "grpc:")
+
+	if w.isGrpcSrv {
+		handler, err := w.factory.GrpcNew(w, strings.TrimPrefix(w.configEntry.FuncName, "grpc:"))
+		if err != nil {
+			return err
+		}
+		w.grpcHandler = handler
+	} else {
+		handler, err := w.factory.New(w, w.configEntry.FuncName)
+		if err != nil {
+			return err
+		}
+		w.handler = handler
+	}
 
 	op, err := ipc.FifoOpenForWrite(ipc.GetFuncWorkerOutputFifoName(w.clientId), false)
 	if err != nil {
@@ -176,7 +188,7 @@ func (w *FuncWorker) executeFunc(dispatchFuncMessage []byte) {
 	atomic.StoreUint64(&w.currentCall, funcCall.FullCallId())
 	startTimestamp := common.GetMonotonicMicroTimestamp()
 	if w.isGrpcSrv {
-		output, err = w.handler.GrpcCall(context.Background(), methodName, input)
+		output, err = w.grpcHandler.Call(context.Background(), methodName, input)
 	} else {
 		output, err = w.handler.Call(context.Background(), input)
 	}
