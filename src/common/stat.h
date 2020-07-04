@@ -49,7 +49,7 @@ private:
     DISALLOW_COPY_AND_ASSIGN(ReportTimer);
 };
 
-#ifndef __FAAS_USE_OLD_STAT_COLLECTOR
+#ifdef __FAAS_USE_NEW_STAT_COLLECTOR
 
 template<class T>
 class StatisticsCollector {
@@ -151,7 +151,7 @@ private:
     DISALLOW_COPY_AND_ASSIGN(StatisticsCollector);
 };
 
-#else
+#else  // __FAAS_USE_NEW_STAT_COLLECTOR
 
 template<class T>
 class StatisticsCollector {
@@ -235,7 +235,7 @@ private:
     DISALLOW_COPY_AND_ASSIGN(StatisticsCollector);
 };
 
-#endif
+#endif  // __FAAS_USE_NEW_STAT_COLLECTOR
 
 class Counter {
 public:

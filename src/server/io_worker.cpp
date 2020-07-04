@@ -131,10 +131,8 @@ void IOWorker::ScheduleFunction(ConnectionBase* owner, std::function<void()> fn)
     function->fn = fn;
     absl::MutexLock lk(&scheduled_function_mu_);
     scheduled_functions_.push_back(std::move(function));
-#ifdef __FAAS_ENABLE_PROFILING
     int64_t empty = 0;
     async_event_recv_timestamp_.compare_exchange_strong(empty, GetMonotonicMicroTimestamp());
-#endif
     UV_DCHECK_OK(uv_async_send(&run_fn_event_));
 }
 
@@ -238,13 +236,11 @@ UV_ASYNC_CB_FOR_CLASS(IOWorker, RunScheduledFunctions) {
     if (state_.load(std::memory_order_consume) != kRunning) {
         return;
     }
-#ifdef __FAAS_ENABLE_PROFILING
     int64_t async_event_recv_timestamp = async_event_recv_timestamp_.fetch_and(0);
     if (async_event_recv_timestamp != 0) {
         uv_async_delay_stat_.AddSample(gsl::narrow_cast<int32_t>(
             GetMonotonicMicroTimestamp() - async_event_recv_timestamp));
     }
-#endif
     absl::InlinedVector<std::unique_ptr<ScheduledFunction>, 16> functions;
     {
         absl::MutexLock lk(&scheduled_function_mu_);

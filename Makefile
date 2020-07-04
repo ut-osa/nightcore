@@ -32,10 +32,10 @@ DLINK_FLAGS =
 #### END PROJECT SETTINGS ####
 
 # These options can be overridden in config.mk
-ENABLE_PROFILING = 0
 DISABLE_STAT = 0
-USE_OLD_STAT_COLLECTOR = 0
+USE_NEW_STAT_COLLECTOR = 0
 DEBUG_BUILD = 0
+BUILD_BENCH = 0
 
 ifneq ("$(wildcard config.mk)","")
     include config.mk
@@ -45,16 +45,12 @@ ifeq ($(CXX),clang++)
     COMPILE_FLAGS += -Wthread-safety -Wno-unused-private-field
 endif
 
-ifeq ($(ENABLE_PROFILING),1)
-    COMPILE_FLAGS += -D__FAAS_ENABLE_PROFILING
-endif
-
 ifeq ($(DISABLE_STAT),1)
     COMPILE_FLAGS += -D__FAAS_DISABLE_STAT
 endif
 
-ifeq ($(USE_OLD_STAT_COLLECTOR),1)
-    COMPILE_FLAGS += -D__FAAS_USE_OLD_STAT_COLLECTOR
+ifeq ($(USE_NEW_STAT_COLLECTOR),1)
+    COMPILE_FLAGS += -D__FAAS_USE_NEW_STAT_COLLECTOR
 endif
 
 # Function used to check variables. Use on the command line:
@@ -96,6 +92,8 @@ SOURCES = $(shell find $(SRC_PATH) -name '*.$(SRC_EXT)' -printf '%T@\t%p\n' \
             | sort -k 1nr | cut -f2-)
 BIN_SOURCES = $(shell find $(SRC_PATH)/bin -name '*.$(SRC_EXT)' -printf '%T@\t%p\n' \
                 | sort -k 1nr | cut -f2-)
+BENCH_BIN_SOURCES = $(shell find $(SRC_PATH)/bin -name 'bench_*.$(SRC_EXT)' -printf '%T@\t%p\n' \
+                      | sort -k 1nr | cut -f2-)
 
 # Set the object file names, with the source directory stripped
 # from the path, and the build path prepended in its place
@@ -106,8 +104,14 @@ DEPS = $(OBJECTS:.o=.d)
 BIN_OBJECTS = $(BIN_SOURCES:$(SRC_PATH)/%.$(SRC_EXT)=$(BUILD_PATH)/%.o)
 NON_BIN_OBJECTS = $(filter-out $(BIN_OBJECTS),$(OBJECTS))
 
-BIN_NAMES = $(BIN_OBJECTS:$(BUILD_PATH)/%.o=%)
+BENCH_BIN_OUTPUTS = $(BENCH_BIN_SOURCES:$(SRC_PATH)/bin/%.$(SRC_EXT)=$(BIN_PATH)/%)
 BIN_OUTPUTS = $(BIN_OBJECTS:$(BUILD_PATH)/bin/%.o=$(BIN_PATH)/%)
+
+ifeq ($(BUILD_BENCH),1)
+    TARGET_BINS = $(BIN_OUTPUTS)
+else
+    TARGET_BINS = $(filter-out $(BENCH_BIN_OUTPUTS),$(BIN_OUTPUTS))
+endif
 
 TIME_FILE = $(dir $@).$(notdir $@)_time
 START_TIME = date '+%s' > $(TIME_FILE)
@@ -136,7 +140,7 @@ clean:
 	@echo "Deleting directories"
 	@$(RM) -r build bin
 
-binary: $(BIN_OUTPUTS)
+binary: $(TARGET_BINS)
 
 # Link the executable
 $(BIN_PATH)/%: $(BUILD_PATH)/bin/%.o $(NON_BIN_OBJECTS)
