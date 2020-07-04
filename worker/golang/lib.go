@@ -1,14 +1,14 @@
 package faas
 
 import (
+	"encoding/binary"
 	"log"
 	"os"
 	"runtime"
 	"strconv"
-	"encoding/binary"
 
-	ipc "cs.utexas.edu/zjia/faas/ipc"
 	config "cs.utexas.edu/zjia/faas/config"
+	ipc "cs.utexas.edu/zjia/faas/ipc"
 	protocol "cs.utexas.edu/zjia/faas/protocol"
 	types "cs.utexas.edu/zjia/faas/types"
 	worker "cs.utexas.edu/zjia/faas/worker"
