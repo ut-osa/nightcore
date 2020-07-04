@@ -171,8 +171,14 @@ bool Engine::OnNewHandshake(MessageConnection* connection,
     if (!success) {
         return false;
     }
-    *response = NewHandshakeResponseMessage(func_config_json_.size());
-    *response_payload = std::span<const char>(func_config_json_.data(), func_config_json_.size());
+    if (IsLauncherHandshakeMessage(handshake_message)) {
+        *response = NewHandshakeResponseMessage(func_config_json_.size());
+        *response_payload = std::span<const char>(func_config_json_.data(),
+                                                  func_config_json_.size());
+    } else {
+        *response = NewHandshakeResponseMessage(0);
+        *response_payload = std::span<const char>();
+    }
     return true;
 }
 

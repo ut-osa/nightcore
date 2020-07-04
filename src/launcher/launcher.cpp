@@ -110,6 +110,7 @@ bool Launcher::OnRecvHandshakeResponse(const Message& handshake_response,
         engine_connection_.ScheduleClose();
         return false;
     }
+    func_config_json_.assign(payload.data(), payload.size());
     return true;
 }
 
@@ -128,15 +129,17 @@ void Launcher::OnRecvMessage(const protocol::Message& message) {
             }
         } else if (fprocess_mode_ == kGoMode) {
             if (func_processes_.empty()) {
-                auto func_process = std::make_unique<FuncProcess>(this, /* id= */ 0);
+                auto func_process = std::make_unique<FuncProcess>(
+                    this, /* id= */ 0, /* initial_client_id= */ message.client_id);
                 if (func_process->Start(&uv_loop_, &buffer_pool_)) {
                     func_processes_.push_back(std::move(func_process));
                 } else {
                     HLOG(FATAL) << "Failed to start function process!";
                 }
+            } else {
+                FuncProcess* func_process = func_processes_[0].get();
+                func_process->SendMessage(message);
             }
-            FuncProcess* func_process = func_processes_[0].get();
-            func_process->SendMessage(message);
         } else {
             HLOG(FATAL) << "Unreachable";
         }

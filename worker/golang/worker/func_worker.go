@@ -24,7 +24,6 @@ type FuncWorker struct {
 	funcId      uint16
 	clientId    uint16
 	factory     types.FuncHandlerFactory
-	funcConfig  *config.FuncConfig
 	configEntry *config.FuncConfigEntry
 	isGrpcSrv   bool
 	engineConn  net.Conn
@@ -49,6 +48,7 @@ func NewFuncWorker(funcId uint16, clientId uint16, factory types.FuncHandlerFact
 }
 
 func (w *FuncWorker) Run() {
+	log.Printf("[INFO] Start new FuncWorker with client id %d", w.clientId)
 	err := w.doHandshake()
 	if err != nil {
 		log.Fatalf("[FATAL] Handshake failed: %v", err)
@@ -84,24 +84,8 @@ func (w *FuncWorker) doHandshake() error {
 	} else if !protocol.IsHandshakeResponseMessage(response) {
 		return fmt.Errorf("Unexpcted type of response")
 	}
-	payloadSize := protocol.GetPayloadSizeFromMessage(response)
-	if payloadSize <= 0 {
-		return fmt.Errorf("Unexpcted payload size of response")
-	}
-	payload := make([]byte, payloadSize)
-	n, err = w.engineConn.Read(payload)
-	if err != nil {
-		return err
-	} else if n != int(payloadSize) {
-		return fmt.Errorf("Failed to read payload of handshake")
-	}
-	fc, err := config.NewFuncConfig(payload)
-	if err != nil {
-		return err
-	}
-	w.funcConfig = fc
 
-	w.configEntry = fc.FindByFuncId(w.funcId)
+	w.configEntry = config.FindByFuncId(w.funcId)
 	if w.configEntry == nil {
 		return fmt.Errorf("Invalid funcId: %d", w.funcId)
 	}
@@ -365,7 +349,7 @@ func (w *FuncWorker) newFuncCallCommon(funcCall protocol.FuncCall, input []byte)
 
 // Implement types.Environment
 func (w *FuncWorker) InvokeFunc(ctx context.Context, funcName string, input []byte) ([]byte, error) {
-	entry := w.funcConfig.FindByFuncName(funcName)
+	entry := config.FindByFuncName(funcName)
 	if entry == nil {
 		return nil, fmt.Errorf("Invalid function name: %s", funcName)
 	}
@@ -380,7 +364,7 @@ func (w *FuncWorker) InvokeFunc(ctx context.Context, funcName string, input []by
 
 // Implement types.Environment
 func (w *FuncWorker) GrpcCall(ctx context.Context, service string, method string, request []byte) ([]byte, error) {
-	entry := w.funcConfig.FindByFuncName("grpc:" + service)
+	entry := config.FindByFuncName("grpc:" + service)
 	if entry == nil {
 		return nil, fmt.Errorf("Invalid gRPC service: %s", service)
 	}

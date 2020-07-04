@@ -52,6 +52,7 @@ public:
         const FuncConfig::Entry* entry = func_config_.find_by_func_id(func_id_);
         return entry->func_name;
     }
+    std::string_view func_config_json() const { return func_config_json_; }
 
     void Start();
     void ScheduleStop();
@@ -88,6 +89,7 @@ private:
     utils::SimpleObjectPool<uv_write_t> write_req_pool_;
 
     FuncConfig func_config_;
+    std::string func_config_json_;
     EngineConnection engine_connection_;
     std::vector<std::unique_ptr<FuncProcess>> func_processes_;
 

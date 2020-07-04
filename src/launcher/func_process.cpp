@@ -54,6 +54,21 @@ bool FuncProcess::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool)
     }
     message_pipe_ = subprocess_.GetPipe(message_pipe_fd_);
     message_pipe_->data = this;
+    std::string_view func_config_json = launcher_->func_config_json();
+    initial_payload_size_ = gsl::narrow_cast<uint32_t>(func_config_json.size());
+    uv_buf_t bufs[2];
+    bufs[0] = {
+        .base = reinterpret_cast<char*>(&initial_payload_size_),
+        .len = sizeof(uint32_t)
+    };
+    bufs[1] = {
+        .base = const_cast<char*>(func_config_json.data()),
+        .len = func_config_json.size()
+    };
+    uv_write_t* write_req = launcher_->NewWriteRequest();
+    write_req->data = nullptr;
+    UV_DCHECK_OK(uv_write(write_req, UV_AS_STREAM(message_pipe_),
+                          bufs, 2, &FuncProcess::SendMessageCallback));
     state_ = kRunning;
     return true;
 }
@@ -98,7 +113,9 @@ void FuncProcess::OnSubprocessExit(int exit_status, std::span<const char> stdout
 
 UV_WRITE_CB_FOR_CLASS(FuncProcess, SendMessage) {
     auto reclaim_resource = gsl::finally([this, req] {
-        launcher_->ReturnWriteBuffer(reinterpret_cast<char*>(req->data));
+        if (req->data != nullptr) {
+            launcher_->ReturnWriteBuffer(reinterpret_cast<char*>(req->data));
+        }
         launcher_->ReturnWriteRequest(req);
     });
     if (status != 0) {

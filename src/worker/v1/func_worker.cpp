@@ -24,7 +24,8 @@ using protocol::NewFuncCallCompleteMessage;
 using protocol::NewFuncCallFailedMessage;
 
 FuncWorker::FuncWorker()
-    : func_id_(-1), fprocess_id_(-1), client_id_(0), func_call_timeout_(kDefaultFuncCallTimeout),
+    : func_id_(-1), fprocess_id_(-1), client_id_(0), message_pipe_fd_(-1),
+      func_call_timeout_(kDefaultFuncCallTimeout),
       engine_sock_fd_(-1), input_pipe_fd_(-1), output_pipe_fd_(-1),
       buffer_pool_for_pipes_("Pipes", PIPE_BUF),
       next_call_id_(0), current_func_call_id_(0) {}
@@ -57,6 +58,16 @@ void FuncWorker::Serve() {
     func_call_fn_ = func_library_->LoadSymbol<faas_func_call_fn_t>(
         "faas_func_call");
     CHECK(init_fn_() == 0) << "Failed to initialize loaded library";
+    // Initialize function configs
+    uint32_t payload_size;
+    CHECK(io_utils::RecvData(message_pipe_fd_, reinterpret_cast<char*>(&payload_size),
+                             sizeof(uint32_t), /* eof= */ nullptr))
+        << "Failed to receive payload size from launcher";
+    char* payload = reinterpret_cast<char*>(malloc(payload_size));
+    auto reclaim_payload_buffer = gsl::finally([payload] { free(payload); });
+    CHECK(io_utils::RecvData(message_pipe_fd_, payload, payload_size, /* eof= */ nullptr))
+        << "Failed to receive payload data from launcher";
+    func_config_.Load(std::string_view(payload, payload_size));
     // Connect to gateway via IPC path
     engine_sock_fd_ = utils::UnixDomainSocketConnect(ipc::GetEngineUnixSocketPath());
     CHECK(engine_sock_fd_ != -1) << "Failed to connect to engine socket";
@@ -99,12 +110,6 @@ void FuncWorker::HandshakeWithEngine() {
         << "Failed to receive handshake response from engine";
     CHECK(IsHandshakeResponseMessage(response))
         << "Receive invalid handshake response";
-    size_t payload_size = response.payload_size;
-    char* payload = new char[payload_size];
-    auto reclaim_payload_buffer = gsl::finally([payload] { delete[] payload; });
-    CHECK(io_utils::RecvData(engine_sock_fd_, payload, payload_size, nullptr))
-        << "Failed to receive payload data from engine";
-    func_config_.Load(std::string_view(payload, payload_size));
     output_pipe_fd_ = ipc::FifoOpenForWrite(ipc::GetFuncWorkerOutputFifoName(client_id_));
     LOG(INFO) << "Handshake done";
 }

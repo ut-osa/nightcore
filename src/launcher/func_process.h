@@ -30,6 +30,7 @@ private:
     Launcher* launcher_;
     int id_;
     int initial_client_id_;
+    uint32_t initial_payload_size_;
 
     std::string log_header_;
 

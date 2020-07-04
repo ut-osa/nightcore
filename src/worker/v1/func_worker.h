@@ -28,6 +28,7 @@ public:
     void set_func_id(int value) { func_id_ = value; }
     void set_fprocess_id(int value) { fprocess_id_ = value; }
     void set_client_id(int value) { client_id_ = gsl::narrow_cast<uint16_t>(value); }
+    void set_message_pipe_fd(int fd) { message_pipe_fd_ = fd; }
     void set_func_library_path(std::string_view path) {
         func_library_path_ = std::string(path);
     }
@@ -38,6 +39,7 @@ private:
     int func_id_;
     int fprocess_id_;
     uint16_t client_id_;
+    int message_pipe_fd_;
     std::string func_library_path_;
     absl::Duration func_call_timeout_;
 

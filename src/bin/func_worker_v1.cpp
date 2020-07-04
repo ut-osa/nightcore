@@ -20,6 +20,8 @@ int main(int argc, char* argv[]) {
         faas::utils::GetEnvVariableAsInt("FAAS_FPROCESS_ID", -1));
     func_worker->set_client_id(
         faas::utils::GetEnvVariableAsInt("FAAS_CLIENT_ID", 0));
+    func_worker->set_message_pipe_fd(
+        faas::utils::GetEnvVariableAsInt("FAAS_MSG_PIPE_FD", -1));
     func_worker->set_func_library_path(positional_args[0]);
     func_worker->Serve();
 

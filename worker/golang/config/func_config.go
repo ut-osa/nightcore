@@ -13,27 +13,25 @@ type FuncConfigEntry struct {
 	GrpcMethods []string `json:"grpcMethods"`
 }
 
-type FuncConfig struct {
-	entries           []*FuncConfigEntry
-	entriesByFuncId   map[uint16]*FuncConfigEntry
-	entriesByFuncName map[string]*FuncConfigEntry
-}
+var entries []*FuncConfigEntry
+var entriesByFuncId map[uint16]*FuncConfigEntry
+var entriesByFuncName map[string]*FuncConfigEntry
 
-func NewFuncConfig(jsonContents []byte) (*FuncConfig, error) {
-	fc := new(FuncConfig)
-	err := json.Unmarshal(jsonContents, &fc.entries)
+func InitFuncConfig(jsonContents []byte) error {
+	entries = make([]*FuncConfigEntry, 0)
+	err := json.Unmarshal(jsonContents, &entries)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to unmarshal json: %v", err)
+		return fmt.Errorf("Failed to unmarshal json: %v", err)
 	}
-	fc.entriesByFuncId = make(map[uint16]*FuncConfigEntry)
-	fc.entriesByFuncName = make(map[string]*FuncConfigEntry)
-	for _, entry := range fc.entries {
-		if fc.entriesByFuncId[entry.FuncId] != nil {
-			return nil, fmt.Errorf("Duplicate func_id %d", entry.FuncId)
+	entriesByFuncId = make(map[uint16]*FuncConfigEntry)
+	entriesByFuncName = make(map[string]*FuncConfigEntry)
+	for _, entry := range entries {
+		if entriesByFuncId[entry.FuncId] != nil {
+			return fmt.Errorf("Duplicate func_id %d", entry.FuncId)
 		}
-		fc.entriesByFuncId[entry.FuncId] = entry
-		if fc.entriesByFuncName[entry.FuncName] != nil {
-			return nil, fmt.Errorf("Duplicate func_name %d", entry.FuncName)
+		entriesByFuncId[entry.FuncId] = entry
+		if entriesByFuncName[entry.FuncName] != nil {
+			return fmt.Errorf("Duplicate func_name %d", entry.FuncName)
 		}
 		if strings.HasPrefix(entry.FuncName, "grpc:") {
 			serviceName := strings.TrimPrefix(entry.FuncName, "grpc:")
@@ -44,17 +42,17 @@ func NewFuncConfig(jsonContents []byte) (*FuncConfig, error) {
 		} else {
 			log.Printf("[INFO] Load configuration for function %s[%d]", entry.FuncName, entry.FuncId)
 		}
-		fc.entriesByFuncName[entry.FuncName] = entry
+		entriesByFuncName[entry.FuncName] = entry
 	}
-	return fc, nil
+	return nil
 }
 
-func (fc *FuncConfig) FindByFuncName(funcName string) *FuncConfigEntry {
-	return fc.entriesByFuncName[funcName]
+func FindByFuncName(funcName string) *FuncConfigEntry {
+	return entriesByFuncName[funcName]
 }
 
-func (fc *FuncConfig) FindByFuncId(funcId uint16) *FuncConfigEntry {
-	return fc.entriesByFuncId[funcId]
+func FindByFuncId(funcId uint16) *FuncConfigEntry {
+	return entriesByFuncId[funcId]
 }
 
 func (fcEntry *FuncConfigEntry) FindGrpcMethod(method string) int {

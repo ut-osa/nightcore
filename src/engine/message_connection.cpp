@@ -162,17 +162,26 @@ void MessageConnection::RecvHandshakeMessage() {
     } else {
         HLOG(FATAL) << "Unknown handshake message type";
     }
-    uv_buf_t bufs[2];
-    bufs[0] = {
-        .base = reinterpret_cast<char*>(&handshake_response_),
-        .len = sizeof(Message)
-    };
-    bufs[1] = {
-        .base = const_cast<char*>(payload.data()),
-        .len = payload.size()
-    };
-    UV_DCHECK_OK(uv_write(io_worker_->NewWriteRequest(), UV_AS_STREAM(&uv_pipe_handle_),
-                          bufs, 2, &MessageConnection::WriteHandshakeResponseCallback));
+    if (payload.size() > 0) {
+        uv_buf_t bufs[2];
+        bufs[0] = {
+            .base = reinterpret_cast<char*>(&handshake_response_),
+            .len = sizeof(Message)
+        };
+        bufs[1] = {
+            .base = const_cast<char*>(payload.data()),
+            .len = payload.size()
+        };
+        UV_DCHECK_OK(uv_write(io_worker_->NewWriteRequest(), UV_AS_STREAM(&uv_pipe_handle_),
+                              bufs, 2, &MessageConnection::WriteHandshakeResponseCallback));
+    } else {
+        uv_buf_t buf = {
+            .base = reinterpret_cast<char*>(&handshake_response_),
+            .len = sizeof(Message)
+        };
+        UV_DCHECK_OK(uv_write(io_worker_->NewWriteRequest(), UV_AS_STREAM(&uv_pipe_handle_),
+                              &buf, 1, &MessageConnection::WriteHandshakeResponseCallback));
+    }
     handshake_done_ = true;
     state_ = kRunning;
     SendPendingMessages();

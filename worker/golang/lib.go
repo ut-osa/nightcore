@@ -5,8 +5,10 @@ import (
 	"os"
 	"runtime"
 	"strconv"
+	"encoding/binary"
 
 	ipc "cs.utexas.edu/zjia/faas/ipc"
+	config "cs.utexas.edu/zjia/faas/config"
 	protocol "cs.utexas.edu/zjia/faas/protocol"
 	types "cs.utexas.edu/zjia/faas/types"
 	worker "cs.utexas.edu/zjia/faas/worker"
@@ -19,12 +21,39 @@ func Serve(factory types.FuncHandlerFactory) {
 	if err != nil {
 		log.Fatal("[FATAL] Failed to parse FAAS_FUNC_ID")
 	}
+	clientId, err := strconv.Atoi(os.Getenv("FAAS_CLIENT_ID"))
+	if err != nil {
+		log.Fatal("[FATAL] Failed to parse FAAS_CLIENT_ID")
+	}
 	msgPipeFd, err := strconv.Atoi(os.Getenv("FAAS_MSG_PIPE_FD"))
 	if err != nil {
 		log.Fatal("[FATAL] Failed to parse FAAS_MSG_PIPE_FD")
 	}
 
 	msgPipe := os.NewFile(uintptr(msgPipeFd), "msg_pipe")
+	payloadSizeBuf := make([]byte, 4)
+	nread, err := msgPipe.Read(payloadSizeBuf)
+	if err != nil || nread != len(payloadSizeBuf) {
+		log.Fatal("[FATAL] Failed to read payload size")
+	}
+	payloadSize := binary.LittleEndian.Uint32(payloadSizeBuf)
+	payload := make([]byte, payloadSize)
+	nread, err = msgPipe.Read(payload)
+	if err != nil || nread != len(payload) {
+		log.Fatal("[FATAL] Failed to read payload")
+	}
+	err = config.InitFuncConfig(payload)
+	if err != nil {
+		log.Fatal("[FATAL] InitFuncConfig failed: %s", err)
+	}
+	w, err := worker.NewFuncWorker(uint16(funcId), uint16(clientId), factory)
+	if err != nil {
+		log.Fatal("[FATAL] Failed to create FuncWorker: ", err)
+	}
+	go func(w *worker.FuncWorker) {
+		w.Run()
+	}(w)
+
 	for {
 		message := protocol.NewEmptyMessage()
 		nread, err := msgPipe.Read(message)
