@@ -33,7 +33,7 @@ IntType GetEnvVariableAsInt(std::string_view name,
 
 #else
 
-int GetEnvVariableAsInt(std::string_view name, int default_value = 0) {
+inline int GetEnvVariableAsInt(std::string_view name, int default_value = 0) {
     char* value = getenv(std::string(name).c_str());
     if (value == nullptr) {
         return default_value;

@@ -26,7 +26,6 @@
 #else  // __FAAS_SRC
 
 #include <sys/syscall.h>
-#include "base/absl_mutex_polyfill.h"
 
 static pid_t gettid() {
     return syscall(SYS_gettid);
@@ -125,10 +124,14 @@ LogMessageFatal::~LogMessageFatal() {
     exit(EXIT_FAILURE);
 }
 
+#ifdef __FAAS_SRC
 absl::Mutex stderr_mu;
+#endif
 
 void LogMessage::SendToLog(const std::string& message_text) {
+#ifdef __FAAS_SRC
     absl::MutexLock lk(&stderr_mu);
+#endif
     fprintf(stderr, "%s\n", message_text.c_str());
     fflush(stderr);
 }

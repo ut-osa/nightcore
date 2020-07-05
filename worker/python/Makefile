@@ -46,10 +46,13 @@ LDFLAGS := $(LDFLAGS) $(LINK_FLAGS)
 SOURCES = module.cpp \
 	src/base/logging.cpp \
 	src/common/func_config.cpp \
-	src/common/stat.cpp \
-	src/utils/shared_memory.cpp \
+	src/ipc/base.cpp \
+	src/ipc/fifo.cpp \
+	src/ipc/shm_region.cpp \
 	src/utils/fs.cpp \
-	src/worker/lib/manager.cpp
+	src/utils/socket.cpp \
+	src/worker/worker_lib.cpp \
+	src/worker/event_driven_worker.cpp
 
 # Set the object file names, with the source directory stripped
 # from the path, and the build path prepended in its place

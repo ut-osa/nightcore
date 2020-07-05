@@ -1,3 +1,4 @@
+#define __FAAS_USED_IN_BINDING
 #include "ipc/fifo.h"
 
 #include "ipc/base.h"

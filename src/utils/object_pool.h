@@ -1,10 +1,10 @@
 #pragma once
 
-#ifndef __FAAS_SRC
-#error utils/object_pool.h cannot be included outside
-#endif
-
 #include "base/common.h"
+
+#ifdef __FAAS_HAVE_ABSL
+#include <absl/container/inlined_vector.h>
+#endif
 
 namespace faas {
 namespace utils {
@@ -41,8 +41,13 @@ public:
 
 private:
     std::function<T*()> object_constructor_;
+#ifdef __FAAS_HAVE_ABSL
     absl::InlinedVector<std::unique_ptr<T>, 16> objs_;
     absl::InlinedVector<T*, 16> free_objs_;
+#else
+    std::vector<std::unique_ptr<T>> objs_;
+    std::vector<T*> free_objs_;
+#endif
 
     DISALLOW_COPY_AND_ASSIGN(SimpleObjectPool);
 };

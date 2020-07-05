@@ -20,7 +20,6 @@ using protocol::GetFuncCallFromMessage;
 using protocol::IsHandshakeResponseMessage;
 using protocol::IsDispatchFuncCallMessage;
 using protocol::NewFuncWorkerHandshakeMessage;
-using protocol::NewFuncCallCompleteMessage;
 using protocol::NewFuncCallFailedMessage;
 
 FuncWorker::FuncWorker()
@@ -67,8 +66,9 @@ void FuncWorker::Serve() {
     auto reclaim_payload_buffer = gsl::finally([payload] { free(payload); });
     CHECK(io_utils::RecvData(message_pipe_fd_, payload, payload_size, /* eof= */ nullptr))
         << "Failed to receive payload data from launcher";
-    func_config_.Load(std::string_view(payload, payload_size));
-    // Connect to gateway via IPC path
+    CHECK(func_config_.Load(std::string_view(payload, payload_size)))
+        << "Failed to load function configs from payload";
+    // Connect to engine via IPC path
     engine_sock_fd_ = utils::UnixDomainSocketConnect(ipc::GetEngineUnixSocketPath());
     CHECK(engine_sock_fd_ != -1) << "Failed to connect to engine socket";
     HandshakeWithEngine();
@@ -89,7 +89,7 @@ void FuncWorker::MainServingLoop() {
     while (true) {
         Message message;
         CHECK(io_utils::RecvMessage(input_pipe_fd_, &message, nullptr))
-            << "Failed to receive message from gateway";
+            << "Failed to receive message from engine";
         if (IsDispatchFuncCallMessage(message)) {
             ExecuteFunc(func_worker, message);
         } else {
@@ -184,13 +184,13 @@ bool FuncWorker::InvokeFunc(const char* func_name, const char* input_data, size_
             PLOG(ERROR) << "close failed";
         }
     });
-    // Send message to gateway (dispatcher)
+    // Send message to engine (dispatcher)
     {
         absl::MutexLock lk(&mu_);
         invoke_func_message.send_timestamp = GetMonotonicMicroTimestamp();
         PCHECK(io_utils::SendMessage(output_pipe_fd_, invoke_func_message));
     }
-    VLOG(1) << "InvokeFuncMessage sent to gateway";
+    VLOG(1) << "InvokeFuncMessage sent to engine";
     int timeout_ms = -1;
     if (func_call_timeout_ != absl::InfiniteDuration()) {
         timeout_ms = gsl::narrow_cast<int>(absl::ToInt64Milliseconds(func_call_timeout_));

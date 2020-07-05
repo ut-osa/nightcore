@@ -87,4 +87,3 @@
 #include "base/macro.h"
 #include "base/logging.h"
 #include "base/std_span_polyfill.h"
-#include "base/absl_mutex_polyfill.h"

@@ -1,5 +1,9 @@
 #pragma once
 
+#ifndef __FAAS_SRC
+#error common/subprocess.h cannot be included outside
+#endif
+
 #include "base/common.h"
 #include "common/uv.h"
 #include "utils/appendable_buffer.h"

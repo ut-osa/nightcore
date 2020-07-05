@@ -1,5 +1,9 @@
 #pragma once
 
+#ifndef __FAAS_SRC
+#error utils/perf_event.h cannot be included outside
+#endif
+
 #include "base/common.h"
 
 #include <linux/perf_event.h>
