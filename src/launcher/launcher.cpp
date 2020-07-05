@@ -78,6 +78,12 @@ void Launcher::OnFuncProcessExit(FuncProcess* func_process) {
     if (fprocess_mode_ == kGoMode) {
         HLOG(FATAL) << "Golang fprocess exited";
     }
+    if (fprocess_mode_ == kNodeJsMode) {
+        HLOG(FATAL) << "Node.js fprocess exited";
+    }
+    if (fprocess_mode_ == kPythonMode) {
+        HLOG(FATAL) << "Python fprocess exited";
+    }
     int id = func_process->id();
     HLOG(WARNING) << "Function process " << id << " terminated";
     DCHECK_GE(id, 0);

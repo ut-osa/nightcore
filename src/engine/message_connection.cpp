@@ -159,6 +159,7 @@ void MessageConnection::RecvHandshakeMessage() {
         // Use FIFOs for sending and receiving messages
         pipe_for_read_message_ = &uv_out_fifo_handle_;
         pipe_for_write_message_ = &uv_in_fifo_handle_;
+        pipe_for_write_fd_.store(in_fifo_fd);
     } else {
         HLOG(FATAL) << "Unknown handshake message type";
     }
@@ -191,7 +192,7 @@ void MessageConnection::WriteMessage(const Message& message) {
     if (is_func_worker_connection() && absl::GetFlag(FLAGS_func_worker_pipe_direct_write)) {
         int fd = pipe_for_write_fd_.load();
         if (fd != -1) {
-            ssize_t ret = write(pipe_for_write_fd_, &message, sizeof(Message));
+            ssize_t ret = write(fd, &message, sizeof(Message));
             if (ret > 0) {
                 if (gsl::narrow_cast<size_t>(ret) == sizeof(Message)) {
                     // All good
@@ -199,6 +200,8 @@ void MessageConnection::WriteMessage(const Message& message) {
                 } else {
                     HLOG(FATAL) << "This should not happen given atomic property of pipe";
                 }
+            } else if (ret < 0) {
+                PLOG(WARNING) << "Pipe write failed"
             }
         }
         HLOG(INFO) << "Fallback to original WriteMessage";
@@ -289,12 +292,6 @@ UV_WRITE_CB_FOR_CLASS(MessageConnection, WriteMessage) {
         HLOG(ERROR) << "Failed to write response, will close this connection: "
                     << uv_strerror(status);
         ScheduleClose();
-    } else {
-        if (!is_launcher_connection() && absl::GetFlag(FLAGS_func_worker_pipe_direct_write)) {
-            int fd = -1;
-            UV_DCHECK_OK(uv_fileno(UV_AS_HANDLE(pipe_for_write_message_), &fd));
-            pipe_for_write_fd_.store(fd);
-        }
     }
 }
 
