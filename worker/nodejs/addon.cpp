@@ -1,8 +1,23 @@
-#include <nan.h>
-#include "worker_manager.h"
+#define __FAAS_NODE_ADDON_SRC
+#include "base/logging.h"
+#include "utils/env_variables.h"
+#include "engine.h"
 
-void InitAll(v8::Local<v8::Object> exports) {
-    WorkerManager::Init(exports);
+#include <napi.h>
+
+namespace faas {
+namespace nodejs {
+
+Napi::Object InitModule(Napi::Env env, Napi::Object exports) {
+    logging::Init(utils::GetEnvVariableAsInt("FAAS_VLOG_LEVEL", 0));
+    return Engine::Init(env, exports);
 }
 
-NODE_MODULE(NODE_GYP_MODULE_NAME, InitAll)
+}  // namespace nodejs
+}  // namespace faas
+
+Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
+    return faas::nodejs::InitModule(env, exports);
+}
+
+NODE_API_MODULE(addon, InitAll)
