@@ -15,7 +15,7 @@ ABSL_FLAG(std::string, fprocess_output_dir, "",
           "If not empty, stdout and stderr of function processes will be saved "
           "in the given directory");
 ABSL_FLAG(std::string, fprocess_mode, "cpp",
-          "Operating mode of fprocess. Valid options are cpp, and go.");
+          "Operating mode of fprocess. Valid options are cpp, go, nodejs, and python.");
 
 static std::atomic<faas::launcher::Launcher*> launcher_ptr(nullptr);
 void SignalHandlerToStopLauncher(int signal) {
@@ -41,6 +41,10 @@ int main(int argc, char* argv[]) {
         launcher->set_fprocess_mode(faas::launcher::Launcher::kCppMode);
     } else if (fprocess_mode == "go") {
         launcher->set_fprocess_mode(faas::launcher::Launcher::kGoMode);
+    } else if (fprocess_mode == "nodejs") {
+        launcher->set_fprocess_mode(faas::launcher::Launcher::kNodeJsMode);
+    } else if (fprocess_mode == "python") {
+        launcher->set_fprocess_mode(faas::launcher::Launcher::kPythonMode);
     } else {
         LOG(FATAL) << "Invalid fprocess_mode: " << fprocess_mode;
     }

@@ -127,7 +127,9 @@ void Launcher::OnRecvMessage(const protocol::Message& message) {
             } else {
                 HLOG(FATAL) << "Failed to start function process!";
             }
-        } else if (fprocess_mode_ == kGoMode) {
+        } else if (fprocess_mode_ == kGoMode
+                   || fprocess_mode_ == kNodeJsMode
+                   || fprocess_mode_ == kPythonMode) {
             if (func_processes_.empty()) {
                 auto func_process = std::make_unique<FuncProcess>(
                     this, /* id= */ 0, /* initial_client_id= */ message.client_id);

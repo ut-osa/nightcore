@@ -20,8 +20,10 @@ public:
 
     enum Mode {
         kInvalidMode = 0,
-        kCppMode = 1,
-        kGoMode = 2
+        kCppMode     = 1,
+        kGoMode      = 2,
+        kNodeJsMode  = 3,
+        kPythonMode  = 4
     };
 
     Launcher();
