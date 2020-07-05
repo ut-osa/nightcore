@@ -201,7 +201,7 @@ void MessageConnection::WriteMessage(const Message& message) {
                     HLOG(FATAL) << "This should not happen given atomic property of pipe";
                 }
             } else if (ret < 0) {
-                PLOG(WARNING) << "Pipe write failed"
+                PLOG(WARNING) << "Pipe write failed";
             }
         }
         HLOG(INFO) << "Fallback to original WriteMessage";
