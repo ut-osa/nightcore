@@ -75,6 +75,10 @@ Tracer::FuncCallInfo* Tracer::OnNewFuncCall(const FuncCall& func_call,
     PerFuncStatistics* per_func_stat = per_func_stats_[func_id];
     {
         absl::MutexLock lk(&per_func_stat->mu);
+        int64_t current_timestamp = GetMonotonicMicroTimestamp();
+        if (current_timestamp <= per_func_stat->last_request_timestamp) {
+            current_timestamp = per_func_stat->last_request_timestamp + 1;
+        }
         if (per_func_stat->last_request_timestamp != -1) {
             double instant_rps = gsl::narrow_cast<double>(
                 1e6 / (current_timestamp - per_func_stat->last_request_timestamp));

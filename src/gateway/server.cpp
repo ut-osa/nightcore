@@ -35,7 +35,7 @@ Server::Server()
       grpc_port_(-1),
       listen_backlog_(kDefaultListenBackLog),
       num_io_workers_(kDefaultNumIOWorkers),
-      max_running_requests_(absl::GetFlag(FLAGS_max_running_requests)),
+      max_running_requests_(0),
       next_http_conn_worker_id_(0),
       next_grpc_conn_worker_id_(0),
       next_http_connection_id_(0),
@@ -245,6 +245,29 @@ void Server::OnRecvEngineMessage(EngineConnection* connection, const GatewayMess
     }
 }
 
+Server::PerFuncStat::PerFuncStat(uint16_t func_id)
+    : last_request_timestamp(-1),
+      incoming_requests_stat(stat::Counter::StandardReportCallback(
+          fmt::format("incoming_requests[{}]", func_id))),
+      request_interval_stat(stat::StatisticsCollector<int32_t>::StandardReportCallback(
+          fmt::format("request_interval[{}]", func_id))) {}
+
+void Server::TickNewFuncCall(uint16_t func_id, int64_t current_timestamp) {
+    if (!per_func_stats_.contains(func_id)) {
+        per_func_stats_[func_id] = std::unique_ptr<PerFuncStat>(new PerFuncStat(func_id));
+    }
+    PerFuncStat* per_func_stat = per_func_stats_[func_id].get();
+    per_func_stat->incoming_requests_stat.Tick();
+    if (current_timestamp <= per_func_stat->last_request_timestamp) {
+        current_timestamp = per_func_stat->last_request_timestamp + 1;
+    }
+    if (last_request_timestamp_ != -1) {
+        per_func_stat->request_interval_stat.AddSample(gsl::narrow_cast<int32_t>(
+            current_timestamp - per_func_stat->last_request_timestamp));
+    }
+    per_func_stat->last_request_timestamp = current_timestamp;
+}
+
 void Server::OnNewFuncCallCommon(std::shared_ptr<server::ConnectionBase> parent_connection,
                                  FuncCallContext* func_call_context) {
     FuncCall func_call = func_call_context->func_call();
@@ -255,6 +278,9 @@ void Server::OnNewFuncCallCommon(std::shared_ptr<server::ConnectionBase> parent_
         absl::MutexLock lk(&mu_);
         int64_t current_timestamp = GetMonotonicMicroTimestamp();
         incoming_requests_stat_.Tick();
+        if (current_timestamp <= last_request_timestamp_) {
+            current_timestamp = last_request_timestamp_ + 1;
+        }
         if (last_request_timestamp_ != -1) {
             requests_instant_rps_stat_.AddSample(gsl::narrow_cast<float>(
                 1e6 / (current_timestamp - last_request_timestamp_)));
@@ -262,6 +288,7 @@ void Server::OnNewFuncCallCommon(std::shared_ptr<server::ConnectionBase> parent_
                 current_timestamp - last_request_timestamp_));
         }
         last_request_timestamp_ = current_timestamp;
+        TickNewFuncCall(func_call.func_id, current_timestamp);
         if (connected_nodes_.size() == 0) {
             no_connected_nodes = true;
         } else {
@@ -359,6 +386,7 @@ bool Server::OnEngineHandshake(uv_tcp_t* uv_handle, std::span<const char> data) 
         dispatched_requests_stat_.emplace_back(new stat::Counter(
             stat::Counter::StandardReportCallback(fmt::format("dispatched_requests[{}]", node_id))));
         HLOG(INFO) << "Number of connected nodes: " << connected_nodes_.size();
+        max_running_requests_ = absl::GetFlag(FLAGS_max_running_requests) * connected_nodes_.size();
     }
     size_t worker_id = conn_id % io_workers_.size();
     HLOG(INFO) << fmt::format("New engine connection (node_id={}, conn_id={}) assigned to IO worker {}",

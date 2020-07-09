@@ -86,6 +86,13 @@ private:
         int64_t            dispatch_timestamp;
     };
 
+    struct PerFuncStat {
+        int64_t last_request_timestamp;
+        stat::Counter incoming_requests_stat;
+        stat::StatisticsCollector<int32_t> request_interval_stat;
+        explicit PerFuncStat(uint16_t func_id);
+    };
+
     absl::BitGen random_bit_gen_ ABSL_GUARDED_BY(mu_);
     absl::flat_hash_map</* full_call_id */ uint64_t, FuncCallState>
         running_func_calls_ ABSL_GUARDED_BY(mu_);
@@ -105,6 +112,8 @@ private:
     std::vector<std::unique_ptr<stat::Counter>> dispatched_requests_stat_ ABSL_GUARDED_BY(mu_);
     stat::StatisticsCollector<int32_t> queueing_delay_stat_ ABSL_GUARDED_BY(mu_);
     stat::StatisticsCollector<int32_t> dispatch_overhead_stat_ ABSL_GUARDED_BY(mu_);
+    absl::flat_hash_map</* func_id */ uint16_t, std::unique_ptr<PerFuncStat>>
+        per_func_stats_ ABSL_GUARDED_BY(mu_);
 
     void StartInternal() override;
     void StopInternal() override;
@@ -116,6 +125,8 @@ private:
                           FuncCallContext* func_call_context, uint16_t node_id);
     void FinishFuncCall(std::shared_ptr<server::ConnectionBase> parent_connection,
                         FuncCallContext* func_call_context);
+    void TickNewFuncCall(uint16_t func_id, int64_t current_timestamp)
+        ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
 
     DECLARE_UV_CONNECTION_CB_FOR_CLASS(HttpConnection);
     DECLARE_UV_CONNECTION_CB_FOR_CLASS(GrpcConnection);

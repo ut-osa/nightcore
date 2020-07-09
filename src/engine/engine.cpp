@@ -302,6 +302,9 @@ void Engine::OnExternalFuncCall(const FuncCall& func_call, std::span<const char>
         absl::MutexLock lk(&mu_);
         incoming_external_requests_stat_.Tick();
         int64_t current_timestamp = GetMonotonicMicroTimestamp();
+        if (current_timestamp <= last_external_request_timestamp_) {
+            current_timestamp = last_external_request_timestamp_ + 1;
+        }
         if (last_external_request_timestamp_ != -1) {
             external_requests_instant_rps_stat_.AddSample(gsl::narrow_cast<float>(
                 1e6 / (current_timestamp - last_external_request_timestamp_)));

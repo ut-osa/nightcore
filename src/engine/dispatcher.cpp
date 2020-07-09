@@ -259,11 +259,11 @@ size_t Dispatcher::DetermineConcurrencyLimit() {
         estimated_concurrency_stat_.AddSample(gsl::narrow_cast<float>(estimated_concurrency));
         result = gsl::narrow_cast<size_t>(0.5 + estimated_concurrency);
     }
-    if (func_config_entry_->min_workers > 0) {
-        result = std::max(result, gsl::narrow_cast<size_t>(func_config_entry_->min_workers));
-    }
     if (func_config_entry_->max_workers > 0) {
         result = std::min(result, gsl::narrow_cast<size_t>(func_config_entry_->max_workers));
+    }
+    if (func_config_entry_->min_workers > 0) {
+        result = std::max(result, gsl::narrow_cast<size_t>(func_config_entry_->min_workers));
     }
     return result;
 }
