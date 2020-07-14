@@ -11,6 +11,7 @@
 #define HLOG(l) LOG(l) << log_header_
 #define HVLOG(l) VLOG(l) << log_header_
 
+ABSL_FLAG(bool, func_worker_use_socket, false, "");
 ABSL_FLAG(bool, func_worker_pipe_direct_write, false, "");
 
 namespace faas {
@@ -132,34 +133,42 @@ void MessageConnection::RecvHandshakeMessage() {
     if (IsLauncherHandshakeMessage(*message)) {
         pipe_for_read_message_ = &uv_pipe_handle_;
         pipe_for_write_message_ = &uv_pipe_handle_;
+        if (absl::GetFlag(FLAGS_func_worker_use_socket)) {
+            handshake_response_.flags |= protocol::kFuncWorkerUseEngineSocketFlag;
+        }
     } else if (IsFuncWorkerHandshakeMessage(*message)) {
-        // Open input FIFO
-        UV_DCHECK_OK(uv_pipe_init(uv_pipe_handle_.loop, &uv_in_fifo_handle_, 0));
-        uv_in_fifo_handle_.data = this;
-        int in_fifo_fd = ipc::FifoOpenForWrite(ipc::GetFuncWorkerInputFifoName(client_id_));
-        if (in_fifo_fd == -1) {
-            HLOG(ERROR) << "FifoOpenForWrite failed";
-            ScheduleClose();
-            return;
+        if (absl::GetFlag(FLAGS_func_worker_use_socket)) {
+            pipe_for_read_message_ = &uv_pipe_handle_;
+            pipe_for_write_message_ = &uv_pipe_handle_;
+        } else {
+            // Open input FIFO
+            UV_DCHECK_OK(uv_pipe_init(uv_pipe_handle_.loop, &uv_in_fifo_handle_, 0));
+            uv_in_fifo_handle_.data = this;
+            int in_fifo_fd = ipc::FifoOpenForWrite(ipc::GetFuncWorkerInputFifoName(client_id_));
+            if (in_fifo_fd == -1) {
+                HLOG(ERROR) << "FifoOpenForWrite failed";
+                ScheduleClose();
+                return;
+            }
+            ipc::FifoUnsetNonblocking(in_fifo_fd);
+            UV_DCHECK_OK(uv_pipe_open(&uv_in_fifo_handle_, in_fifo_fd));
+            handle_scope_.AddHandle(&uv_in_fifo_handle_);
+            // Open output FIFO
+            UV_DCHECK_OK(uv_pipe_init(uv_pipe_handle_.loop, &uv_out_fifo_handle_, 0));
+            uv_out_fifo_handle_.data = this;
+            int out_fifo_fd = ipc::FifoOpenForRead(ipc::GetFuncWorkerOutputFifoName(client_id_));
+            if (out_fifo_fd == -1) {
+                HLOG(ERROR) << "FifoOpenForRead failed";
+                ScheduleClose();
+                return;
+            }
+            UV_DCHECK_OK(uv_pipe_open(&uv_out_fifo_handle_, out_fifo_fd));
+            handle_scope_.AddHandle(&uv_out_fifo_handle_);
+            // Use FIFOs for sending and receiving messages
+            pipe_for_read_message_ = &uv_out_fifo_handle_;
+            pipe_for_write_message_ = &uv_in_fifo_handle_;
+            pipe_for_write_fd_.store(in_fifo_fd);
         }
-        ipc::FifoUnsetNonblocking(in_fifo_fd);
-        UV_DCHECK_OK(uv_pipe_open(&uv_in_fifo_handle_, in_fifo_fd));
-        handle_scope_.AddHandle(&uv_in_fifo_handle_);
-        // Open output FIFO
-        UV_DCHECK_OK(uv_pipe_init(uv_pipe_handle_.loop, &uv_out_fifo_handle_, 0));
-        uv_out_fifo_handle_.data = this;
-        int out_fifo_fd = ipc::FifoOpenForRead(ipc::GetFuncWorkerOutputFifoName(client_id_));
-        if (out_fifo_fd == -1) {
-            HLOG(ERROR) << "FifoOpenForRead failed";
-            ScheduleClose();
-            return;
-        }
-        UV_DCHECK_OK(uv_pipe_open(&uv_out_fifo_handle_, out_fifo_fd));
-        handle_scope_.AddHandle(&uv_out_fifo_handle_);
-        // Use FIFOs for sending and receiving messages
-        pipe_for_read_message_ = &uv_out_fifo_handle_;
-        pipe_for_write_message_ = &uv_in_fifo_handle_;
-        pipe_for_write_fd_.store(in_fifo_fd);
     } else {
         HLOG(FATAL) << "Unknown handshake message type";
     }
@@ -189,7 +198,9 @@ void MessageConnection::RecvHandshakeMessage() {
 }
 
 void MessageConnection::WriteMessage(const Message& message) {
-    if (is_func_worker_connection() && absl::GetFlag(FLAGS_func_worker_pipe_direct_write)) {
+    if (is_func_worker_connection()
+          && absl::GetFlag(FLAGS_func_worker_pipe_direct_write)
+          && !absl::GetFlag(FLAGS_func_worker_use_socket)) {
         int fd = pipe_for_write_fd_.load();
         if (fd != -1) {
             ssize_t ret = write(fd, &message, sizeof(Message));

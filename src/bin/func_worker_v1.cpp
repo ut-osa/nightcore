@@ -22,6 +22,9 @@ int main(int argc, char* argv[]) {
         faas::utils::GetEnvVariableAsInt("FAAS_CLIENT_ID", 0));
     func_worker->set_message_pipe_fd(
         faas::utils::GetEnvVariableAsInt("FAAS_MSG_PIPE_FD", -1));
+    if (faas::utils::GetEnvVariableAsInt("FAAS_USE_ENGINE_SOCKET", 0) == 1) {
+        func_worker->enable_use_engine_socket();
+    }
     func_worker->set_func_library_path(positional_args[0]);
     func_worker->Serve();
 

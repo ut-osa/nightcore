@@ -7,6 +7,7 @@
 #include "utils/socket.h"
 #include "worker/worker_lib.h"
 
+#include <absl/flags/flag.h>
 #include <fcntl.h>
 
 namespace faas {
@@ -24,7 +25,7 @@ using protocol::NewFuncCallFailedMessage;
 
 FuncWorker::FuncWorker()
     : func_id_(-1), fprocess_id_(-1), client_id_(0), message_pipe_fd_(-1),
-      func_call_timeout_(kDefaultFuncCallTimeout),
+      use_engine_socket_(false), func_call_timeout_(kDefaultFuncCallTimeout),
       engine_sock_fd_(-1), input_pipe_fd_(-1), output_pipe_fd_(-1),
       buffer_pool_for_pipes_("Pipes", PIPE_BUF),
       next_call_id_(0), current_func_call_id_(0) {}
@@ -33,10 +34,10 @@ FuncWorker::~FuncWorker() {
     if (engine_sock_fd_ != -1) {
         close(engine_sock_fd_);
     }
-    if (input_pipe_fd_ != -1) {
+    if (input_pipe_fd_ != -1 && !use_engine_socket_) {
         close(input_pipe_fd_);
     }
-    if (output_pipe_fd_ != -1) {
+    if (output_pipe_fd_ != -1 && !use_engine_socket_) {
         close(output_pipe_fd_);
     }
 }
@@ -102,7 +103,13 @@ void FuncWorker::MainServingLoop() {
 }
 
 void FuncWorker::HandshakeWithEngine() {
-    input_pipe_fd_ = ipc::FifoOpenForRead(ipc::GetFuncWorkerInputFifoName(client_id_));
+    if (use_engine_socket_) {
+        LOG(INFO) << "Use engine socket for messages";
+        input_pipe_fd_ = engine_sock_fd_;
+    } else {
+        LOG(INFO) << "Use extra pipes for messages";
+        input_pipe_fd_ = ipc::FifoOpenForRead(ipc::GetFuncWorkerInputFifoName(client_id_));
+    }
     Message message = NewFuncWorkerHandshakeMessage(func_id_, client_id_);
     PCHECK(io_utils::SendMessage(engine_sock_fd_, message));
     Message response;
@@ -110,7 +117,11 @@ void FuncWorker::HandshakeWithEngine() {
         << "Failed to receive handshake response from engine";
     CHECK(IsHandshakeResponseMessage(response))
         << "Receive invalid handshake response";
-    output_pipe_fd_ = ipc::FifoOpenForWrite(ipc::GetFuncWorkerOutputFifoName(client_id_));
+    if (use_engine_socket_) {
+        output_pipe_fd_ = engine_sock_fd_;
+    } else {
+        output_pipe_fd_ = ipc::FifoOpenForWrite(ipc::GetFuncWorkerOutputFifoName(client_id_));
+    }
     LOG(INFO) << "Handshake done";
 }
 

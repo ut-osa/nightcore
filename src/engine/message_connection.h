@@ -9,6 +9,10 @@
 #include "server/io_worker.h"
 #include "server/connection_base.h"
 
+#include <absl/flags/flag.h>
+
+ABSL_DECLARE_FLAG(bool, func_worker_use_socket);
+
 namespace faas {
 namespace engine {
 

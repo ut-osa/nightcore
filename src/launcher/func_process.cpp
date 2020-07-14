@@ -34,6 +34,9 @@ bool FuncProcess::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool)
     }
     subprocess_.AddEnvVariable("FAAS_MSG_PIPE_FD", message_pipe_fd_);
     subprocess_.AddEnvVariable("FAAS_ROOT_PATH_FOR_IPC", ipc::GetRootPathForIpc());
+    if (launcher_->func_worker_use_engine_socket()) {
+        subprocess_.AddEnvVariable("FAAS_USE_ENGINE_SOCKET", "1");
+    }
     if (!launcher_->fprocess_output_dir().empty()) {
         std::string_view func_name = launcher_->func_name();
         subprocess_.SetStandardFile(

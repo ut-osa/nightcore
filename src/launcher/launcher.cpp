@@ -24,6 +24,7 @@ Launcher::Launcher()
       event_loop_thread_("Launcher/EL",
                          absl::bind_front(&Launcher::EventLoopThreadMain, this)),
       buffer_pool_("Launcher", kBufferSize),
+      func_worker_use_engine_socket_(false),
       engine_connection_(this),
       engine_message_delay_stat_(
           stat::StatisticsCollector<int32_t>::StandardReportCallback("engine_message_delay")) {
@@ -110,6 +111,9 @@ bool Launcher::OnRecvHandshakeResponse(const Message& handshake_response,
         HLOG(ERROR) << "Invalid handshake response, will close the connection";
         engine_connection_.ScheduleClose();
         return false;
+    }
+    if (handshake_response.flags & protocol::kFuncWorkerUseEngineSocketFlag) {
+        func_worker_use_engine_socket_ = true;
     }
     if (!func_config_.Load(std::string_view(payload.data(), payload.size()))) {
         HLOG(ERROR) << "Failed to load function config from handshake response, will close the connection";

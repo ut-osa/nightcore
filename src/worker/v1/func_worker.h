@@ -32,6 +32,7 @@ public:
     void set_func_library_path(std::string_view path) {
         func_library_path_ = std::string(path);
     }
+    void enable_use_engine_socket() { use_engine_socket_ = true; }
 
     void Serve();
 
@@ -41,6 +42,7 @@ private:
     uint16_t client_id_;
     int message_pipe_fd_;
     std::string func_library_path_;
+    bool use_engine_socket_;
     absl::Duration func_call_timeout_;
 
     absl::Mutex mu_;

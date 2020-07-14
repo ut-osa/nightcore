@@ -76,6 +76,8 @@ enum class MessageType : uint16_t {
     FUNC_CALL_FAILED      = 9
 };
 
+constexpr uint32_t kFuncWorkerUseEngineSocketFlag = 1;
+
 struct Message {
     struct {
         uint16_t message_type : 4;
@@ -93,8 +95,9 @@ struct Message {
     };
     int64_t send_timestamp;
     int32_t payload_size;  // Used in HANDSHAKE_RESPONSE, INVOKE_FUNC, FUNC_CALL_COMPLETE
+    uint32_t flags;
 
-    char padding[__FAAS_CACHE_LINE_SIZE - 28];
+    char padding[__FAAS_CACHE_LINE_SIZE - 32];
     char inline_data[__FAAS_MESSAGE_SIZE - __FAAS_CACHE_LINE_SIZE]
         __attribute__ ((aligned (__FAAS_CACHE_LINE_SIZE)));
 };
