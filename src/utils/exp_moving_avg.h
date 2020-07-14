@@ -20,9 +20,17 @@ public:
             return;
         }
         if (n_samples_ < min_samples_) {
-            avg_ += std::pow(static_cast<double>(sample), p_) / min_samples_;
+            if (p_ == 0) {
+                avg_ += std::log(static_cast<double>(sample)) / min_samples_;
+            } else {
+                avg_ += std::pow(static_cast<double>(sample), p_) / min_samples_;
+            }
         } else {
-            avg_ = alpha_ * avg_ + (1 - alpha_) * std::pow(static_cast<double>(sample), p_);
+            if (p_ == 0) {
+                avg_ = alpha_ * avg_ + (1 - alpha_) * std::log(static_cast<double>(sample));
+            } else {
+                avg_ = alpha_ * avg_ + (1 - alpha_) * std::pow(static_cast<double>(sample), p_);
+            }
         }
         n_samples_++;
     }
@@ -31,7 +39,11 @@ public:
         if (n_samples_ < min_samples_) {
             return 0;
         } else {
-            return std::pow(avg_, 1.0 / p_);
+            if (p_ == 0) {
+                return std::exp(avg_);
+            } else {
+                return std::pow(avg_, 1.0 / p_);
+            }
         }
     }
 

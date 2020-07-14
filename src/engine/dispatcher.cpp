@@ -12,6 +12,7 @@ ABSL_FLAG(double, max_relative_queueing_delay, 0.0, "");
 ABSL_FLAG(double, concurrency_limit_coef, 1.0, "");
 ABSL_FLAG(double, expected_concurrency_coef, 1.0, "");
 ABSL_FLAG(int, min_worker_request_interval_ms, 200, "");
+ABSL_FLAG(bool, always_request_worker_if_possible, false, "");
 
 namespace faas {
 namespace engine {
@@ -26,6 +27,7 @@ using protocol::NewDispatchFuncCallMessage;
 
 Dispatcher::Dispatcher(Engine* engine, uint16_t func_id)
     : engine_(engine), func_id_(func_id),
+      min_workers_(0), max_workers_(std::numeric_limits<size_t>::max()),
       log_header_(fmt::format("Dispatcher[{}]: ", func_id)),
       last_request_worker_timestamp_(-1),
       idle_workers_stat_(stat::StatisticsCollector<uint16_t>::StandardReportCallback(
@@ -40,10 +42,12 @@ Dispatcher::Dispatcher(Engine* engine, uint16_t func_id)
     DCHECK(func_entry != nullptr);
     func_config_entry_ = func_entry;
     if (func_config_entry_->min_workers > 0) {
-        HLOG(INFO) << "min_workers=" << func_config_entry_->min_workers;
+        min_workers_ = gsl::narrow_cast<size_t>(func_config_entry_->min_workers);
+        HLOG(INFO) << "min_workers=" << min_workers_;
     }
     if (func_config_entry_->max_workers > 0) {
-        HLOG(INFO) << "max_workers=" << func_config_entry_->max_workers;
+        max_workers_ = gsl::narrow_cast<size_t>(func_config_entry_->max_workers);
+        HLOG(INFO) << "max_workers=" << max_workers_;
     }
 }
 
@@ -259,37 +263,35 @@ size_t Dispatcher::DetermineConcurrencyLimit() {
         estimated_concurrency_stat_.AddSample(gsl::narrow_cast<float>(estimated_concurrency));
         result = gsl::narrow_cast<size_t>(0.5 + estimated_concurrency);
     }
-    if (func_config_entry_->max_workers > 0) {
-        result = std::min(result, gsl::narrow_cast<size_t>(func_config_entry_->max_workers));
-    }
-    if (func_config_entry_->min_workers > 0) {
-        result = std::max(result, gsl::narrow_cast<size_t>(func_config_entry_->min_workers));
-    }
-    return result;
+    return std::clamp(result, min_workers_, max_workers_);
 }
 
 void Dispatcher::MayRequestNewFuncWorker() {
-    size_t estimated_concurrency = DetermineExpectedConcurrency();
-    size_t max_workers = std::numeric_limits<size_t>::max();
-    if (func_config_entry_->max_workers > 0) {
-        max_workers = gsl::narrow_cast<size_t>(func_config_entry_->max_workers);
+    if (workers_.size() + requested_workers_.size() >= max_workers_) {
+        return;
     }
     int64_t current_timestamp = GetMonotonicMicroTimestamp();
     int min_worker_request_interval_ms = absl::GetFlag(FLAGS_min_worker_request_interval_ms);
-    if (estimated_concurrency > 0
-            && workers_.size() + requested_workers_.size() < max_workers
-            && workers_.size() + requested_workers_.size() < estimated_concurrency
-            && (last_request_worker_timestamp_ == -1
-                || current_timestamp > last_request_worker_timestamp_
-                                       + min_worker_request_interval_ms * 1000)) {
-        HLOG(INFO) << "Request new FuncWorker: estimated_concurrency=" << estimated_concurrency;
-        uint16_t client_id;
-        if (engine_->worker_manager()->RequestNewFuncWorker(func_id_, &client_id)) {
-            requested_workers_[client_id] = current_timestamp;
-            last_request_worker_timestamp_ = current_timestamp;
-        } else {
-            HLOG(ERROR) << "Failed to request new FuncWorker";
+    if (last_request_worker_timestamp_ != -1 && min_worker_request_interval_ms > 0
+          && current_timestamp > last_request_worker_timestamp_
+                                 + min_worker_request_interval_ms * 1000) {
+        return;
+    }
+    if (absl::GetFlag(FLAGS_always_request_worker_if_possible)) {
+        HLOG(INFO) << "Request new FuncWorker under always_request_worker_if_possible flag";
+    } else {
+        size_t expected_concurrency = DetermineExpectedConcurrency();
+        if (workers_.size() + requested_workers_.size() >= expected_concurrency) {
+            return;
         }
+        HLOG(INFO) << "Request new FuncWorker: expected_concurrency=" << expected_concurrency;
+    }
+    uint16_t client_id;
+    if (engine_->worker_manager()->RequestNewFuncWorker(func_id_, &client_id)) {
+        requested_workers_[client_id] = current_timestamp;
+        last_request_worker_timestamp_ = current_timestamp;
+    } else {
+        HLOG(ERROR) << "Failed to request new FuncWorker";
     }
 }
 

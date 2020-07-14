@@ -34,6 +34,8 @@ private:
     Engine* engine_;
     uint16_t func_id_;
     const FuncConfig::Entry* func_config_entry_;
+    size_t min_workers_;
+    size_t max_workers_;
     absl::Mutex mu_;
 
     std::string log_header_;
