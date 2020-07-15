@@ -2,6 +2,8 @@
 
 #include "launcher/launcher.h"
 #include "ipc/base.h"
+#include "utils/socket.h"
+#include "utils/env_variables.h"
 
 #define HLOG(l) LOG(l) << "EngineConnection: "
 #define HVLOG(l) VLOG(l) << "EngineConnection: "
@@ -36,7 +38,10 @@ void EngineConnection::Start(uv_loop_t* uv_loop, int engine_tcp_port,
         UV_DCHECK_OK(uv_tcp_init(uv_loop, tcp_handle));
         tcp_handle->data = this;
         struct sockaddr_in addr;
-        UV_DCHECK_OK(uv_ip4_addr("127.0.0.1", engine_tcp_port, &addr));
+        std::string host(utils::GetEnvVariable("FAAS_ENGINE_HOST", "127.0.0.1"));
+        if (!utils::FillTcpSocketAddr(&addr, host, engine_tcp_port)) {
+            HLOG(FATAL) << "Failed to fill socker address for " << host;
+        }
         uv_tcp_connect(&connect_req_, tcp_handle, (const struct sockaddr *)&addr,
                        &EngineConnection::ConnectCallback);
         engine_conn_ = UV_AS_STREAM(tcp_handle);

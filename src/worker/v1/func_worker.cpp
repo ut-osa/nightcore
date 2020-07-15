@@ -75,7 +75,8 @@ void FuncWorker::Serve() {
     if (engine_tcp_port_ == -1) {
         engine_sock_fd_ = utils::UnixDomainSocketConnect(ipc::GetEngineUnixSocketPath());
     } else {
-        engine_sock_fd_ = utils::TcpSocketConnect("127.0.0.1", engine_tcp_port_);
+        std::string host(utils::GetEnvVariable("FAAS_ENGINE_HOST", "127.0.0.1"));
+        engine_sock_fd_ = utils::TcpSocketConnect(host.c_str(), engine_tcp_port_);
     }
     CHECK(engine_sock_fd_ != -1) << "Failed to connect to engine socket";
     HandshakeWithEngine();
