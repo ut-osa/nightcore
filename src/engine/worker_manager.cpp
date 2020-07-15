@@ -120,7 +120,7 @@ bool WorkerManager::RequestNewFuncWorkerInternal(MessageConnection* launcher_con
     CHECK_LE(client_id, protocol::kMaxClientId) << "Reach maximum number of clients!";
     HLOG(INFO) << fmt::format("Request new FuncWorker for func_id {} with client_id {}",
                               launcher_connection->func_id(), client_id);
-    if (!absl::GetFlag(FLAGS_func_worker_use_socket)) {
+    if (!engine_->func_worker_use_engine_socket()) {
         CHECK(ipc::FifoCreate(ipc::GetFuncWorkerInputFifoName(client_id)))
             << "FifoCreate failed";
         CHECK(ipc::FifoCreate(ipc::GetFuncWorkerOutputFifoName(client_id)))

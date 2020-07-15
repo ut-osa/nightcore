@@ -12,6 +12,7 @@
 #include <absl/flags/flag.h>
 
 ABSL_FLAG(bool, disable_monitor, false, "");
+ABSL_FLAG(bool, func_worker_use_engine_socket, false, "");
 
 #define HLOG(l) LOG(l) << "Engine: "
 #define HVLOG(l) VLOG(l) << "Engine: "
@@ -40,6 +41,7 @@ Engine::Engine()
       listen_backlog_(kDefaultListenBackLog),
       num_io_workers_(kDefaultNumIOWorkers),
       gateway_conn_per_worker_(kDefaultGatewayConnPerWorker),
+      func_worker_use_engine_socket_(absl::GetFlag(FLAGS_func_worker_use_engine_socket)),
       next_gateway_conn_worker_id_(0),
       next_ipc_conn_worker_id_(0),
       next_gateway_conn_id_(0),
@@ -173,6 +175,9 @@ bool Engine::OnNewHandshake(MessageConnection* connection,
     }
     if (IsLauncherHandshakeMessage(handshake_message)) {
         *response = NewHandshakeResponseMessage(func_config_json_.size());
+        if (func_worker_use_engine_socket_) {
+            response->flags |= protocol::kFuncWorkerUseEngineSocketFlag;
+        }
         *response_payload = std::span<const char>(func_config_json_.data(),
                                                   func_config_json_.size());
     } else {

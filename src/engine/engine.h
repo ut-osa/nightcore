@@ -39,6 +39,7 @@ public:
 
     uint16_t node_id() const { return node_id_; }
     FuncConfig* func_config() { return &func_config_; }
+    bool func_worker_use_engine_socket() { return func_worker_use_engine_socket_; }
     WorkerManager* worker_manager() { return worker_manager_.get(); }
     Monitor* monitor() { return monitor_.get(); }
     Tracer* tracer() { return tracer_.get(); }
@@ -67,6 +68,7 @@ private:
     std::string func_config_file_;
     std::string func_config_json_;
     FuncConfig func_config_;
+    bool func_worker_use_engine_socket_;
 
     uv_pipe_t uv_ipc_handle_;
 

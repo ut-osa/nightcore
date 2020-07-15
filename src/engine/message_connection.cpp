@@ -8,11 +8,10 @@
 
 #include <absl/flags/flag.h>
 
+ABSL_FLAG(bool, func_worker_pipe_direct_write, false, "");
+
 #define HLOG(l) LOG(l) << log_header_
 #define HVLOG(l) VLOG(l) << log_header_
-
-ABSL_FLAG(bool, func_worker_use_socket, false, "");
-ABSL_FLAG(bool, func_worker_pipe_direct_write, false, "");
 
 namespace faas {
 namespace engine {
@@ -133,11 +132,8 @@ void MessageConnection::RecvHandshakeMessage() {
     if (IsLauncherHandshakeMessage(*message)) {
         pipe_for_read_message_ = &uv_pipe_handle_;
         pipe_for_write_message_ = &uv_pipe_handle_;
-        if (absl::GetFlag(FLAGS_func_worker_use_socket)) {
-            handshake_response_.flags |= protocol::kFuncWorkerUseEngineSocketFlag;
-        }
     } else if (IsFuncWorkerHandshakeMessage(*message)) {
-        if (absl::GetFlag(FLAGS_func_worker_use_socket)) {
+        if (engine_->func_worker_use_engine_socket()) {
             pipe_for_read_message_ = &uv_pipe_handle_;
             pipe_for_write_message_ = &uv_pipe_handle_;
         } else {
@@ -200,7 +196,7 @@ void MessageConnection::RecvHandshakeMessage() {
 void MessageConnection::WriteMessage(const Message& message) {
     if (is_func_worker_connection()
           && absl::GetFlag(FLAGS_func_worker_pipe_direct_write)
-          && !absl::GetFlag(FLAGS_func_worker_use_socket)) {
+          && !engine_->func_worker_use_engine_socket()) {
         int fd = pipe_for_write_fd_.load();
         if (fd != -1) {
             ssize_t ret = write(fd, &message, sizeof(Message));
