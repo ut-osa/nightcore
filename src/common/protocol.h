@@ -77,6 +77,7 @@ enum class MessageType : uint16_t {
 };
 
 constexpr uint32_t kFuncWorkerUseEngineSocketFlag = 1;
+constexpr uint32_t kUseNaiveNestedCallFlag = 2;
 
 struct Message {
     struct {

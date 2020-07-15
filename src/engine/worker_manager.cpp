@@ -114,6 +114,16 @@ bool WorkerManager::RequestNewFuncWorker(uint16_t func_id, uint16_t* client_id) 
     return RequestNewFuncWorkerInternal(connection->as_ptr<MessageConnection>(), client_id);
 }
 
+std::shared_ptr<FuncWorker> WorkerManager::GetFuncWorker(uint16_t client_id) {
+    absl::MutexLock lk(&mu_);
+    if (!func_workers_.contains(client_id)) {
+        HLOG(WARNING) << fmt::format("FuncWorker of client_id {} does not exist", client_id);
+        return nullptr;
+    } else {
+        return func_workers_[client_id];
+    }
+}
+
 bool WorkerManager::RequestNewFuncWorkerInternal(MessageConnection* launcher_connection,
                                                  uint16_t* out_client_id) {
     uint16_t client_id = next_client_id_.fetch_add(1);
@@ -139,9 +149,9 @@ FuncWorker::FuncWorker(MessageConnection* message_connection)
 
 FuncWorker::~FuncWorker() {}
 
-void FuncWorker::DispatchFuncCall(Message* dispatch_func_call_message) {
-    dispatch_func_call_message->send_timestamp = GetMonotonicMicroTimestamp();
-    message_connection_->as_ptr<MessageConnection>()->WriteMessage(*dispatch_func_call_message);
+void FuncWorker::SendMessage(Message* message) {
+    message->send_timestamp = GetMonotonicMicroTimestamp();
+    message_connection_->as_ptr<MessageConnection>()->WriteMessage(*message);
 }
 
 }  // namespace engine

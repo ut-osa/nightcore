@@ -43,6 +43,7 @@ private:
     int message_pipe_fd_;
     std::string func_library_path_;
     bool use_engine_socket_;
+    bool use_naive_nested_call_;
     absl::Duration func_call_timeout_;
 
     absl::Mutex mu_;
@@ -53,6 +54,7 @@ private:
 
     FuncConfig func_config_;
     std::unique_ptr<utils::DynamicLibrary> func_library_;
+    void* worker_handle_;
 
     faas_init_fn_t init_fn_;
     faas_create_func_worker_fn_t create_func_worker_fn_;
@@ -67,6 +69,7 @@ private:
 
     std::vector<InvokeFuncResource> invoke_func_resources_ ABSL_GUARDED_BY(mu_);
     utils::BufferPool buffer_pool_for_pipes_ ABSL_GUARDED_BY(mu_);
+    bool ongoing_invoke_func_ ABSL_GUARDED_BY(mu_);
     utils::AppendableBuffer func_output_buffer_;
     char main_pipe_buf_[PIPE_BUF];
 
@@ -76,10 +79,14 @@ private:
     void MainServingLoop();
     void HandshakeWithEngine();
 
-    void ExecuteFunc(void* worker_handle, const protocol::Message& dispatch_func_call_message);
+    void ExecuteFunc(const protocol::Message& dispatch_func_call_message);
     bool InvokeFunc(const char* func_name,
                     const char* input_data, size_t input_length,
                     const char** output_data, size_t* output_length);
+    bool WaitInvokeFunc(protocol::Message* invoke_func_message,
+                        const char** output_data, size_t* output_length);
+    bool NaiveWaitInvokeFunc(protocol::Message* invoke_func_message,
+                             const char** output_data, size_t* output_length);
     void ReclaimInvokeFuncResources();
 
     // Assume caller_context is an instance of FuncWorker

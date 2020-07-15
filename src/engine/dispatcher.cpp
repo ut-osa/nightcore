@@ -210,7 +210,7 @@ void Dispatcher::DispatchFuncCall(FuncWorker* func_worker, Message* dispatch_fun
     engine_->tracer()->OnFuncCallDispatched(func_call, func_worker);
     assigned_workers_[func_call.full_call_id] = client_id;
     running_workers_[client_id] = func_call;
-    func_worker->DispatchFuncCall(dispatch_func_call_message);
+    func_worker->SendMessage(dispatch_func_call_message);
     message_pool_.Return(dispatch_func_call_message);
 }
 

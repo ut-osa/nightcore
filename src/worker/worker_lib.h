@@ -16,6 +16,10 @@ void FuncCallFinished(const protocol::FuncCall& func_call,
                       bool success, std::span<const char> output, int32_t processing_time,
                       char* pipe_buf, protocol::Message* response);
 
+void NaiveFuncCallFinished(const protocol::FuncCall& func_call,
+                           bool success, std::span<const char> output, int32_t processing_time,
+                           protocol::Message* response);
+
 bool PrepareNewFuncCall(const protocol::FuncCall& func_call, uint64_t parent_func_call,
                         std::span<const char> input,
                         std::unique_ptr<ipc::ShmRegion>* shm_region,

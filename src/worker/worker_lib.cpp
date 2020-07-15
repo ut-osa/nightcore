@@ -128,6 +128,25 @@ void FuncCallFinished(const FuncCall& func_call,
     }
 }
 
+void NaiveFuncCallFinished(const protocol::FuncCall& func_call,
+                           bool success, std::span<const char> output, int32_t processing_time,
+                           protocol::Message* response) {
+    if (success) {
+        *response = NewFuncCallCompleteMessage(func_call, processing_time);
+        if (output.size() <= MESSAGE_INLINE_DATA_SIZE) {
+            SetInlineDataInMessage(response, output);
+        } else {
+            if (WriteOutputToShm(func_call, output)) {
+                response->payload_size = -gsl::narrow_cast<int32_t>(output.size());
+            } else {
+                *response = NewFuncCallFailedMessage(func_call);
+            }
+        }
+    } else {
+        *response = NewFuncCallFailedMessage(func_call);
+    }
+}
+
 bool PrepareNewFuncCall(const FuncCall& func_call, uint64_t parent_func_call,
                         std::span<const char> input,
                         std::unique_ptr<ipc::ShmRegion>* shm_region,

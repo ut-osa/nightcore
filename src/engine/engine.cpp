@@ -13,6 +13,7 @@
 
 ABSL_FLAG(bool, disable_monitor, false, "");
 ABSL_FLAG(bool, func_worker_use_engine_socket, false, "");
+ABSL_FLAG(bool, use_naive_nested_call, false, "");
 
 #define HLOG(l) LOG(l) << "Engine: "
 #define HVLOG(l) VLOG(l) << "Engine: "
@@ -42,6 +43,7 @@ Engine::Engine()
       num_io_workers_(kDefaultNumIOWorkers),
       gateway_conn_per_worker_(kDefaultGatewayConnPerWorker),
       func_worker_use_engine_socket_(absl::GetFlag(FLAGS_func_worker_use_engine_socket)),
+      use_naive_nested_call_(absl::GetFlag(FLAGS_use_naive_nested_call)),
       next_gateway_conn_worker_id_(0),
       next_ipc_conn_worker_id_(0),
       next_gateway_conn_id_(0),
@@ -182,6 +184,9 @@ bool Engine::OnNewHandshake(MessageConnection* connection,
                                                   func_config_json_.size());
     } else {
         *response = NewHandshakeResponseMessage(0);
+        if (use_naive_nested_call_) {
+            response->flags |= protocol::kUseNaiveNestedCallFlag;
+        }
         *response_payload = std::span<const char>();
     }
     return true;
@@ -253,9 +258,10 @@ void Engine::OnRecvMessage(MessageConnection* connection, const Message& message
             }
             dispatcher = GetOrCreateDispatcherLocked(func_call.func_id);
         }
+        bool success = false;
         if (dispatcher != nullptr) {
             if (IsFuncCallCompleteMessage(message)) {
-                bool success = dispatcher->OnFuncCallCompleted(
+                success = dispatcher->OnFuncCallCompleted(
                     func_call, message.processing_time, message.dispatch_delay,
                     /* output_size= */ gsl::narrow_cast<size_t>(std::abs(message.payload_size)));
                 if (success && func_call.client_id == 0) {
@@ -275,11 +281,15 @@ void Engine::OnRecvMessage(MessageConnection* connection, const Message& message
                     }
                 }
             } else {
-                bool success = dispatcher->OnFuncCallFailed(func_call, message.dispatch_delay);
+                success = dispatcher->OnFuncCallFailed(func_call, message.dispatch_delay);
                 if (success && func_call.client_id == 0) {
                     ExternalFuncCallFailed(func_call);
                 }
             }
+        }
+        if (success && func_call.client_id > 0 && use_naive_nested_call_) {
+            Message message_copy = message;
+            worker_manager_->GetFuncWorker(func_call.client_id)->SendMessage(&message_copy);
         }
     } else {
         LOG(ERROR) << "Unknown message type!";

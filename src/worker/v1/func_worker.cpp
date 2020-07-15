@@ -7,7 +7,6 @@
 #include "utils/socket.h"
 #include "worker/worker_lib.h"
 
-#include <absl/flags/flag.h>
 #include <fcntl.h>
 
 namespace faas {
@@ -20,14 +19,17 @@ using protocol::Message;
 using protocol::GetFuncCallFromMessage;
 using protocol::IsHandshakeResponseMessage;
 using protocol::IsDispatchFuncCallMessage;
+using protocol::IsFuncCallCompleteMessage;
+using protocol::IsFuncCallFailedMessage;
 using protocol::NewFuncWorkerHandshakeMessage;
 using protocol::NewFuncCallFailedMessage;
 
 FuncWorker::FuncWorker()
     : func_id_(-1), fprocess_id_(-1), client_id_(0), message_pipe_fd_(-1),
-      use_engine_socket_(false), func_call_timeout_(kDefaultFuncCallTimeout),
+      use_engine_socket_(false), use_naive_nested_call_(false),
+      func_call_timeout_(kDefaultFuncCallTimeout),
       engine_sock_fd_(-1), input_pipe_fd_(-1), output_pipe_fd_(-1),
-      buffer_pool_for_pipes_("Pipes", PIPE_BUF),
+      buffer_pool_for_pipes_("Pipes", PIPE_BUF), ongoing_invoke_func_(false),
       next_call_id_(0), current_func_call_id_(0) {}
 
 FuncWorker::~FuncWorker() {
@@ -78,27 +80,28 @@ void FuncWorker::Serve() {
 }
 
 void FuncWorker::MainServingLoop() {
-    void* func_worker;
     CHECK(create_func_worker_fn_(this,
                                  &FuncWorker::InvokeFuncWrapper,
                                  &FuncWorker::AppendOutputWrapper,
-                                 &func_worker) == 0)
+                                 &worker_handle_) == 0)
         << "Failed to create function worker";
 
-    ipc::FifoUnsetNonblocking(input_pipe_fd_);
+    if (!use_engine_socket_) {
+        ipc::FifoUnsetNonblocking(input_pipe_fd_);
+    }
 
     while (true) {
         Message message;
         CHECK(io_utils::RecvMessage(input_pipe_fd_, &message, nullptr))
             << "Failed to receive message from engine";
         if (IsDispatchFuncCallMessage(message)) {
-            ExecuteFunc(func_worker, message);
+            ExecuteFunc(message);
         } else {
             LOG(FATAL) << "Unknown message type";
         }
     }
 
-    CHECK(destroy_func_worker_fn_(func_worker) == 0)
+    CHECK(destroy_func_worker_fn_(worker_handle_) == 0)
         << "Failed to destroy function worker";
 }
 
@@ -122,10 +125,14 @@ void FuncWorker::HandshakeWithEngine() {
     } else {
         output_pipe_fd_ = ipc::FifoOpenForWrite(ipc::GetFuncWorkerOutputFifoName(client_id_));
     }
+    if (response.flags & protocol::kUseNaiveNestedCallFlag) {
+        LOG(INFO) << "Use naive approach for handling nested call";
+        use_naive_nested_call_ = true;
+    }
     LOG(INFO) << "Handshake done";
 }
 
-void FuncWorker::ExecuteFunc(void* worker_handle, const Message& dispatch_func_call_message) {
+void FuncWorker::ExecuteFunc(const Message& dispatch_func_call_message) {
     int32_t dispatch_delay = gsl::narrow_cast<int32_t>(
         GetMonotonicMicroTimestamp() - dispatch_func_call_message.send_timestamp);
     FuncCall func_call = GetFuncCallFromMessage(dispatch_func_call_message);
@@ -141,15 +148,21 @@ void FuncWorker::ExecuteFunc(void* worker_handle, const Message& dispatch_func_c
     func_output_buffer_.Reset();
     current_func_call_id_.store(func_call.full_call_id);
     int64_t start_timestamp = GetMonotonicMicroTimestamp();
-    int ret = func_call_fn_(worker_handle, input.data(), input.size());
+    int ret = func_call_fn_(worker_handle_, input.data(), input.size());
     int32_t processing_time = gsl::narrow_cast<int32_t>(
         GetMonotonicMicroTimestamp() - start_timestamp);
     ReclaimInvokeFuncResources();
     VLOG(1) << "Finish executing func_call " << FuncCallDebugString(func_call);
     Message response;
-    worker_lib::FuncCallFinished(
-        func_call, /* success= */ ret == 0, func_output_buffer_.to_span(),
-        processing_time, main_pipe_buf_, &response);
+    if (use_naive_nested_call_) {
+        worker_lib::NaiveFuncCallFinished(
+            func_call, /* success= */ ret == 0, func_output_buffer_.to_span(),
+            processing_time, &response);
+    } else {
+        worker_lib::FuncCallFinished(
+            func_call, /* success= */ ret == 0, func_output_buffer_.to_span(),
+            processing_time, main_pipe_buf_, &response);
+    }
     VLOG(1) << "Send response to engine";
     response.dispatch_delay = dispatch_delay;
     response.send_timestamp = GetMonotonicMicroTimestamp();
@@ -176,6 +189,16 @@ bool FuncWorker::InvokeFunc(const char* func_name, const char* input_data, size_
             &input_region, &invoke_func_message)) {
         return false;
     }
+    if (use_naive_nested_call_) {
+        return NaiveWaitInvokeFunc(&invoke_func_message, output_data, output_length);
+    } else {
+        return WaitInvokeFunc(&invoke_func_message, output_data, output_length);
+    }
+}
+
+bool FuncWorker::WaitInvokeFunc(Message* invoke_func_message,
+                                const char** output_data, size_t* output_length) {
+    FuncCall func_call = GetFuncCallFromMessage(*invoke_func_message);
     // Create fifo for output
     if (!ipc::FifoCreate(ipc::GetFuncCallOutputFifoName(func_call.full_call_id))) {
         LOG(ERROR) << "FifoCreate failed";
@@ -198,8 +221,8 @@ bool FuncWorker::InvokeFunc(const char* func_name, const char* input_data, size_
     // Send message to engine (dispatcher)
     {
         absl::MutexLock lk(&mu_);
-        invoke_func_message.send_timestamp = GetMonotonicMicroTimestamp();
-        PCHECK(io_utils::SendMessage(output_pipe_fd_, invoke_func_message));
+        invoke_func_message->send_timestamp = GetMonotonicMicroTimestamp();
+        PCHECK(io_utils::SendMessage(output_pipe_fd_, *invoke_func_message));
     }
     VLOG(1) << "InvokeFuncMessage sent to engine";
     int timeout_ms = -1;
@@ -251,6 +274,71 @@ bool FuncWorker::InvokeFunc(const char* func_name, const char* input_data, size_
         buffer_pool_for_pipes_.Return(pipe_buffer);
         return false;
     }
+}
+
+bool FuncWorker::NaiveWaitInvokeFunc(Message* invoke_func_message,
+                                     const char** output_data, size_t* output_length) {
+    FuncCall func_call = GetFuncCallFromMessage(*invoke_func_message);
+    // Send message to engine (dispatcher)
+    {
+        absl::MutexLock lk(&mu_);
+        if (ongoing_invoke_func_) {
+            // TODO: fix this
+            LOG(FATAL) << "NaiveWaitInvokeFunc cannot execute concurrently";
+        }
+        ongoing_invoke_func_ = true;
+        invoke_func_message->send_timestamp = GetMonotonicMicroTimestamp();
+        PCHECK(io_utils::SendMessage(output_pipe_fd_, *invoke_func_message));
+    }
+    VLOG(1) << "InvokeFuncMessage sent to engine";
+    Message result_message;
+    CHECK(io_utils::RecvMessage(input_pipe_fd_, &result_message, nullptr));
+    if (IsFuncCallFailedMessage(result_message)) {
+        absl::MutexLock lk(&mu_);
+        ongoing_invoke_func_ = false;
+        return false;
+    } else if (!IsFuncCallCompleteMessage(result_message)) {
+        LOG(FATAL) << "Unknown message type";
+    }
+    InvokeFuncResource invoke_func_resource = {
+        .func_call = func_call,
+        .output_region = nullptr,
+        .pipe_buffer = nullptr
+    };
+    if (result_message.payload_size < 0) {
+        auto output_region = ipc::ShmOpen(
+            ipc::GetFuncCallOutputShmName(func_call.full_call_id));
+        if (output_region == nullptr) {
+            LOG(ERROR) << "ShmOpen failed";
+            return false;
+        }
+        output_region->EnableRemoveOnDestruction();
+        if (output_region->size() != gsl::narrow_cast<size_t>(-result_message.payload_size)) {
+            LOG(ERROR) << "Output size mismatch";
+            return false;
+        }
+        invoke_func_resource.output_region = std::move(output_region);
+        *output_data = output_region->base();
+        *output_length = output_region->size();
+        absl::MutexLock lk(&mu_);
+        invoke_func_resources_.push_back(std::move(invoke_func_resource));
+        ongoing_invoke_func_ = false;
+    } else {
+        absl::MutexLock lk(&mu_);
+        char* buffer;
+        size_t size;
+        buffer_pool_for_pipes_.Get(&buffer, &size);
+        CHECK(size >= sizeof(Message));
+        memcpy(buffer, &result_message, sizeof(Message));
+        Message* message_copy = reinterpret_cast<Message*>(buffer);
+        std::span<const char> output = GetInlineDataFromMessage(*message_copy);
+        invoke_func_resource.pipe_buffer = buffer;
+        *output_data = output.data();
+        *output_length = output.size();
+        invoke_func_resources_.push_back(std::move(invoke_func_resource));
+        ongoing_invoke_func_ = false;
+    }
+    return true;
 }
 
 void FuncWorker::ReclaimInvokeFuncResources() {
