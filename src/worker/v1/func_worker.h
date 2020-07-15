@@ -33,6 +33,7 @@ public:
         func_library_path_ = std::string(path);
     }
     void enable_use_engine_socket() { use_engine_socket_ = true; }
+    void set_engine_tcp_port(int port) { engine_tcp_port_ = port; }
 
     void Serve();
 
@@ -43,6 +44,7 @@ private:
     int message_pipe_fd_;
     std::string func_library_path_;
     bool use_engine_socket_;
+    int engine_tcp_port_;
     bool use_naive_nested_call_;
     absl::Duration func_call_timeout_;
 

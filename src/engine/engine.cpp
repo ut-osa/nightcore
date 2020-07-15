@@ -42,8 +42,10 @@ Engine::Engine()
       listen_backlog_(kDefaultListenBackLog),
       num_io_workers_(kDefaultNumIOWorkers),
       gateway_conn_per_worker_(kDefaultGatewayConnPerWorker),
+      engine_tcp_port_(-1),
       func_worker_use_engine_socket_(absl::GetFlag(FLAGS_func_worker_use_engine_socket)),
       use_naive_nested_call_(absl::GetFlag(FLAGS_use_naive_nested_call)),
+      uv_handle_(nullptr),
       next_gateway_conn_worker_id_(0),
       next_ipc_conn_worker_id_(0),
       next_gateway_conn_id_(0),
@@ -63,11 +65,13 @@ Engine::Engine()
       input_use_shm_stat_(stat::Counter::StandardReportCallback("input_use_shm")),
       output_use_shm_stat_(stat::Counter::StandardReportCallback("output_use_shm")),
       discarded_func_call_stat_(stat::Counter::StandardReportCallback("discarded_func_call")) {
-    UV_CHECK_OK(uv_pipe_init(uv_loop(), &uv_ipc_handle_, 0));
-    uv_ipc_handle_.data = this;
 }
 
-Engine::~Engine() {}
+Engine::~Engine() {
+    if (uv_handle_ != nullptr) {
+        free(uv_handle_);
+    }
+}
 
 void Engine::StartInternal() {
     // Load function config file
@@ -100,21 +104,33 @@ void Engine::StartInternal() {
                                    &Engine::GatewayConnectCallback));
     }
     // Listen on ipc_path
-    std::string ipc_path(ipc::GetEngineUnixSocketPath());
-    if (fs_utils::Exists(ipc_path)) {
-        PCHECK(fs_utils::Remove(ipc_path));
+    if (engine_tcp_port_ == -1) {
+        uv_pipe_t* pipe_handle = reinterpret_cast<uv_pipe_t*>(malloc(sizeof(uv_pipe_t)));
+        UV_CHECK_OK(uv_pipe_init(uv_loop(), pipe_handle, 0));
+        pipe_handle->data = this;
+        std::string ipc_path(ipc::GetEngineUnixSocketPath());
+        if (fs_utils::Exists(ipc_path)) {
+            PCHECK(fs_utils::Remove(ipc_path));
+        }
+        UV_CHECK_OK(uv_pipe_bind(pipe_handle, ipc_path.c_str()));
+        HLOG(INFO) << fmt::format("Listen on {} for IPC connections", ipc_path);
+        uv_handle_ = UV_AS_STREAM(pipe_handle);
+    } else {
+        uv_tcp_t* tcp_handle = reinterpret_cast<uv_tcp_t*>(malloc(sizeof(uv_tcp_t)));
+        UV_CHECK_OK(uv_tcp_init(uv_loop(), tcp_handle));
+        tcp_handle->data = this;
+        UV_CHECK_OK(uv_ip4_addr("0.0.0.0", engine_tcp_port_, &addr));
+        UV_CHECK_OK(uv_tcp_bind(tcp_handle, (const struct sockaddr *)&addr, 0));
+        HLOG(INFO) << fmt::format("Listen on 0.0.0.0:{} for IPC connections", engine_tcp_port_);
+        uv_handle_ = UV_AS_STREAM(tcp_handle);
     }
-    UV_CHECK_OK(uv_pipe_bind(&uv_ipc_handle_, ipc_path.c_str()));
-    HLOG(INFO) << "Listen on " << ipc_path << " for IPC connections";
-    UV_CHECK_OK(uv_listen(
-        UV_AS_STREAM(&uv_ipc_handle_), listen_backlog_,
-        &Engine::MessageConnectionCallback));
+    UV_CHECK_OK(uv_listen(uv_handle_, listen_backlog_, &Engine::MessageConnectionCallback));
     // Initialize tracer
     tracer_->Init();
 }
 
 void Engine::StopInternal() {
-    uv_close(UV_AS_HANDLE(&uv_ipc_handle_), nullptr);
+    uv_close(UV_AS_HANDLE(uv_handle_), nullptr);
 }
 
 void Engine::OnConnectionClose(server::ConnectionBase* connection) {
@@ -482,13 +498,19 @@ UV_CONNECTION_CB_FOR_CLASS(Engine, MessageConnection) {
     }
     HLOG(INFO) << "New message connection";
     std::shared_ptr<server::ConnectionBase> connection(new MessageConnection(this));
-    uv_pipe_t* client = reinterpret_cast<uv_pipe_t*>(malloc(sizeof(uv_pipe_t)));
-    UV_DCHECK_OK(uv_pipe_init(uv_loop(), client, 0));
-    if (uv_accept(UV_AS_STREAM(&uv_ipc_handle_), UV_AS_STREAM(client)) == 0) {
+    uv_stream_t* client;
+    if (engine_tcp_port_ == -1) {
+        client = UV_AS_STREAM(malloc(sizeof(uv_pipe_t)));
+        UV_DCHECK_OK(uv_pipe_init(uv_loop(), reinterpret_cast<uv_pipe_t*>(client), 0));
+    } else {
+        client = UV_AS_STREAM(malloc(sizeof(uv_tcp_t)));
+        UV_DCHECK_OK(uv_tcp_init(uv_loop(), reinterpret_cast<uv_tcp_t*>(client)));
+    }
+    if (uv_accept(uv_handle_, client) == 0) {
         DCHECK_LT(next_ipc_conn_worker_id_, io_workers_.size());
         server::IOWorker* io_worker = io_workers_[next_ipc_conn_worker_id_];
         next_ipc_conn_worker_id_ = (next_ipc_conn_worker_id_ + 1) % io_workers_.size();
-        RegisterConnection(io_worker, connection.get(), UV_AS_STREAM(client));
+        RegisterConnection(io_worker, connection.get(), client);
         DCHECK_GE(connection->id(), 0);
         DCHECK(!message_connections_.contains(connection->id()));
         message_connections_[connection->id()] = std::move(connection);

@@ -43,12 +43,12 @@ private:
     uint16_t func_id_;
     uint16_t client_id_;
     bool handshake_done_;
-    uv_pipe_t uv_pipe_handle_;
+    uv_stream_t* uv_handle_;
 
-    uv_pipe_t uv_in_fifo_handle_;
-    uv_pipe_t uv_out_fifo_handle_;
-    uv_pipe_t* pipe_for_read_message_;
-    uv_pipe_t* pipe_for_write_message_;
+    uv_pipe_t in_fifo_handle_;
+    uv_pipe_t out_fifo_handle_;
+    uv_stream_t* handle_for_read_message_;
+    uv_stream_t* handle_for_write_message_;
     uv::HandleScope handle_scope_;
     std::atomic<int> pipe_for_write_fd_;
 

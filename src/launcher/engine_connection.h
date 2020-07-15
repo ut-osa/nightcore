@@ -17,9 +17,8 @@ public:
     explicit EngineConnection(Launcher* launcher);
     ~EngineConnection();
 
-    uv_pipe_t* uv_pipe_handle() { return &uv_pipe_handle_; }
-
-    void Start(std::string_view ipc_path, const protocol::Message& handshake_message);
+    void Start(uv_loop_t* uv_loop, int engine_tcp_port,
+               const protocol::Message& handshake_message);
     void ScheduleClose();
 
     void WriteMessage(const protocol::Message& message);
@@ -31,7 +30,8 @@ private:
     State state_;
 
     uv_connect_t connect_req_;
-    uv_pipe_t uv_pipe_handle_;
+    uv_loop_t* uv_loop_;
+    uv_stream_t* engine_conn_;
 
     utils::AppendableBuffer message_buffer_;
     protocol::Message handshake_message_;

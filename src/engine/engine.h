@@ -36,9 +36,13 @@ public:
     void set_func_config_file(std::string_view path) {
         func_config_file_ = std::string(path);
     }
+    void set_engine_tcp_port(int port) {
+        engine_tcp_port_ = port;
+    }
 
     uint16_t node_id() const { return node_id_; }
     FuncConfig* func_config() { return &func_config_; }
+    int engine_tcp_port() const { return engine_tcp_port_; }
     bool func_worker_use_engine_socket() { return func_worker_use_engine_socket_; }
     WorkerManager* worker_manager() { return worker_manager_.get(); }
     Monitor* monitor() { return monitor_.get(); }
@@ -64,6 +68,7 @@ private:
     int listen_backlog_;
     int num_io_workers_;
     int gateway_conn_per_worker_;
+    int engine_tcp_port_;
     uint16_t node_id_;
     std::string func_config_file_;
     std::string func_config_json_;
@@ -71,7 +76,7 @@ private:
     bool func_worker_use_engine_socket_;
     bool use_naive_nested_call_;
 
-    uv_pipe_t uv_ipc_handle_;
+    uv_stream_t* uv_handle_;
 
     std::vector<server::IOWorker*> io_workers_;
     size_t next_gateway_conn_worker_id_;

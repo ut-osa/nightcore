@@ -11,6 +11,8 @@
 
 ABSL_FLAG(std::string, gateway_addr, "127.0.0.1", "Gateway address");
 ABSL_FLAG(int, gateway_port, 10007, "Gataway port");
+ABSL_FLAG(int, engine_tcp_port, -1,
+          "If set, Launcher and FuncWorker will communicate with engine via localhost TCP socket");
 ABSL_FLAG(int, num_io_workers, 1, "Number of IO workers.");
 ABSL_FLAG(int, gateway_conn_per_worker, 2, "Number of gateway connections per IO worker.");
 ABSL_FLAG(int, node_id, -1,
@@ -54,6 +56,7 @@ int main(int argc, char* argv[]) {
     auto engine = std::make_unique<faas::engine::Engine>();
     engine->set_gateway_addr_port(absl::GetFlag(FLAGS_gateway_addr),
                                   absl::GetFlag(FLAGS_gateway_port));
+    engine->set_engine_tcp_port(absl::GetFlag(FLAGS_engine_tcp_port));
     engine->set_num_io_workers(absl::GetFlag(FLAGS_num_io_workers));
     engine->set_gateway_conn_per_worker(absl::GetFlag(FLAGS_gateway_conn_per_worker));
     int node_id = absl::GetFlag(FLAGS_node_id);

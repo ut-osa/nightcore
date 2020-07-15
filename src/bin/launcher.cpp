@@ -16,6 +16,7 @@ ABSL_FLAG(std::string, fprocess_output_dir, "",
           "in the given directory");
 ABSL_FLAG(std::string, fprocess_mode, "cpp",
           "Operating mode of fprocess. Valid options are cpp, go, nodejs, and python.");
+ABSL_FLAG(int, engine_tcp_port, -1, "If set, will connect to engine via localhost TCP socket");
 
 static std::atomic<faas::launcher::Launcher*> launcher_ptr(nullptr);
 void SignalHandlerToStopLauncher(int signal) {
@@ -35,6 +36,7 @@ int main(int argc, char* argv[]) {
     launcher->set_fprocess(absl::GetFlag(FLAGS_fprocess));
     launcher->set_fprocess_working_dir(absl::GetFlag(FLAGS_fprocess_working_dir));
     launcher->set_fprocess_output_dir(absl::GetFlag(FLAGS_fprocess_output_dir));
+    launcher->set_engine_tcp_port(absl::GetFlag(FLAGS_engine_tcp_port));
 
     std::string fprocess_mode = absl::GetFlag(FLAGS_fprocess_mode);
     if (fprocess_mode == "cpp") {

@@ -20,7 +20,7 @@ using protocol::SetInlineDataInMessage;
 using protocol::ComputeMessageDelay;
 
 Launcher::Launcher()
-    : state_(kCreated), func_id_(-1), fprocess_mode_(kInvalidMode),
+    : state_(kCreated), func_id_(-1), fprocess_mode_(kInvalidMode), engine_tcp_port_(-1),
       event_loop_thread_("Launcher/EL",
                          absl::bind_front(&Launcher::EventLoopThreadMain, this)),
       buffer_pool_("Launcher", kBufferSize),
@@ -50,14 +50,12 @@ void Launcher::Start() {
     CHECK(func_id_ != -1);
     CHECK(!fprocess_.empty());
     // Connect to engine via IPC path
-    uv_pipe_t* pipe_handle = engine_connection_.uv_pipe_handle();
-    UV_DCHECK_OK(uv_pipe_init(&uv_loop_, pipe_handle, 0));
     Message handshake_message = NewLauncherHandshakeMessage(func_id_);
     std::string self_container_id = docker_utils::GetSelfContainerId();
     DCHECK_EQ(self_container_id.size(), docker_utils::kContainerIdLength);
     SetInlineDataInMessage(&handshake_message, std::span<const char>(self_container_id.data(),
                                                                      self_container_id.size()));
-    engine_connection_.Start(ipc::GetEngineUnixSocketPath(), handshake_message);
+    engine_connection_.Start(&uv_loop_, engine_tcp_port_, handshake_message);
     // Start thread for running event loop
     event_loop_thread_.Start();
     state_.store(kRunning);

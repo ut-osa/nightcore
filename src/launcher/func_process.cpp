@@ -37,6 +37,9 @@ bool FuncProcess::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool)
     if (launcher_->func_worker_use_engine_socket()) {
         subprocess_.AddEnvVariable("FAAS_USE_ENGINE_SOCKET", "1");
     }
+    if (launcher_->engine_tcp_port() != -1) {
+        subprocess_.AddEnvVariable("FAAS_ENGINE_TCP_PORT", launcher_->engine_tcp_port());
+    }
     if (!launcher_->fprocess_output_dir().empty()) {
         std::string_view func_name = launcher_->func_name();
         subprocess_.SetStandardFile(

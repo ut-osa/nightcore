@@ -25,6 +25,8 @@ int main(int argc, char* argv[]) {
     if (faas::utils::GetEnvVariableAsInt("FAAS_USE_ENGINE_SOCKET", 0) == 1) {
         func_worker->enable_use_engine_socket();
     }
+    func_worker->set_engine_tcp_port(
+        faas::utils::GetEnvVariableAsInt("FAAS_ENGINE_TCP_PORT", -1));
     func_worker->set_func_library_path(positional_args[0]);
     func_worker->Serve();
 

@@ -26,7 +26,7 @@ using protocol::NewFuncCallFailedMessage;
 
 FuncWorker::FuncWorker()
     : func_id_(-1), fprocess_id_(-1), client_id_(0), message_pipe_fd_(-1),
-      use_engine_socket_(false), use_naive_nested_call_(false),
+      use_engine_socket_(false), engine_tcp_port_(-1), use_naive_nested_call_(false),
       func_call_timeout_(kDefaultFuncCallTimeout),
       engine_sock_fd_(-1), input_pipe_fd_(-1), output_pipe_fd_(-1),
       buffer_pool_for_pipes_("Pipes", PIPE_BUF), ongoing_invoke_func_(false),
@@ -72,7 +72,11 @@ void FuncWorker::Serve() {
     CHECK(func_config_.Load(std::string_view(payload, payload_size)))
         << "Failed to load function configs from payload";
     // Connect to engine via IPC path
-    engine_sock_fd_ = utils::UnixDomainSocketConnect(ipc::GetEngineUnixSocketPath());
+    if (engine_tcp_port_ == -1) {
+        engine_sock_fd_ = utils::UnixDomainSocketConnect(ipc::GetEngineUnixSocketPath());
+    } else {
+        engine_sock_fd_ = utils::TcpSocketConnect("127.0.0.1", engine_tcp_port_);
+    }
     CHECK(engine_sock_fd_ != -1) << "Failed to connect to engine socket";
     HandshakeWithEngine();
     // Enter main serving loop
