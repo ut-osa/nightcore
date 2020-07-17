@@ -26,7 +26,7 @@ using protocol::NewFuncCallFailedMessage;
 
 FuncWorker::FuncWorker()
     : func_id_(-1), fprocess_id_(-1), client_id_(0), message_pipe_fd_(-1),
-      use_engine_socket_(false), engine_tcp_port_(-1), use_naive_nested_call_(false),
+      use_engine_socket_(false), engine_tcp_port_(-1), use_fifo_for_nested_call_(false),
       func_call_timeout_(kDefaultFuncCallTimeout),
       engine_sock_fd_(-1), input_pipe_fd_(-1), output_pipe_fd_(-1),
       buffer_pool_for_pipes_("Pipes", PIPE_BUF), ongoing_invoke_func_(false),
@@ -130,9 +130,9 @@ void FuncWorker::HandshakeWithEngine() {
     } else {
         output_pipe_fd_ = ipc::FifoOpenForWrite(ipc::GetFuncWorkerOutputFifoName(client_id_));
     }
-    if (response.flags & protocol::kUseNaiveNestedCallFlag) {
-        LOG(INFO) << "Use naive approach for handling nested call";
-        use_naive_nested_call_ = true;
+    if (response.flags & protocol::kUseFifoForNestedCallFlag) {
+        LOG(INFO) << "Use extra FIFOs for handling nested call";
+        use_fifo_for_nested_call_ = true;
     }
     LOG(INFO) << "Handshake done";
 }
@@ -159,14 +159,14 @@ void FuncWorker::ExecuteFunc(const Message& dispatch_func_call_message) {
     ReclaimInvokeFuncResources();
     VLOG(1) << "Finish executing func_call " << FuncCallDebugString(func_call);
     Message response;
-    if (use_naive_nested_call_) {
-        worker_lib::NaiveFuncCallFinished(
+    if (use_fifo_for_nested_call_) {
+        worker_lib::FifoFuncCallFinished(
             func_call, /* success= */ ret == 0, func_output_buffer_.to_span(),
-            processing_time, &response);
+            processing_time, main_pipe_buf_, &response);
     } else {
         worker_lib::FuncCallFinished(
             func_call, /* success= */ ret == 0, func_output_buffer_.to_span(),
-            processing_time, main_pipe_buf_, &response);
+            processing_time, &response);
     }
     VLOG(1) << "Send response to engine";
     response.dispatch_delay = dispatch_delay;
@@ -194,8 +194,8 @@ bool FuncWorker::InvokeFunc(const char* func_name, const char* input_data, size_
             &input_region, &invoke_func_message)) {
         return false;
     }
-    if (use_naive_nested_call_) {
-        return NaiveWaitInvokeFunc(&invoke_func_message, output_data, output_length);
+    if (use_fifo_for_nested_call_) {
+        return FifoWaitInvokeFunc(&invoke_func_message, output_data, output_length);
     } else {
         return WaitInvokeFunc(&invoke_func_message, output_data, output_length);
     }
@@ -203,86 +203,6 @@ bool FuncWorker::InvokeFunc(const char* func_name, const char* input_data, size_
 
 bool FuncWorker::WaitInvokeFunc(Message* invoke_func_message,
                                 const char** output_data, size_t* output_length) {
-    FuncCall func_call = GetFuncCallFromMessage(*invoke_func_message);
-    // Create fifo for output
-    if (!ipc::FifoCreate(ipc::GetFuncCallOutputFifoName(func_call.full_call_id))) {
-        LOG(ERROR) << "FifoCreate failed";
-        return false;
-    }
-    auto remove_output_fifo = gsl::finally([func_call] {
-        ipc::FifoRemove(ipc::GetFuncCallOutputFifoName(func_call.full_call_id));
-    });
-    int output_fifo = ipc::FifoOpenForReadWrite(
-        ipc::GetFuncCallOutputFifoName(func_call.full_call_id), /* nonblocking= */ true);
-    if (output_fifo == -1) {
-        LOG(ERROR) << "FifoOpenForReadWrite failed";
-        return false;
-    }
-    auto close_output_fifo = gsl::finally([output_fifo] {
-        if (close(output_fifo) != 0) {
-            PLOG(ERROR) << "close failed";
-        }
-    });
-    // Send message to engine (dispatcher)
-    {
-        absl::MutexLock lk(&mu_);
-        invoke_func_message->send_timestamp = GetMonotonicMicroTimestamp();
-        PCHECK(io_utils::SendMessage(output_pipe_fd_, *invoke_func_message));
-    }
-    VLOG(1) << "InvokeFuncMessage sent to engine";
-    int timeout_ms = -1;
-    if (func_call_timeout_ != absl::InfiniteDuration()) {
-        timeout_ms = gsl::narrow_cast<int>(absl::ToInt64Milliseconds(func_call_timeout_));
-    }
-    if (!ipc::FifoPollForRead(output_fifo, timeout_ms)) {
-        LOG(ERROR) << "FifoPollForRead failed";
-        return false;
-    }
-    char* pipe_buffer;
-    {
-        absl::MutexLock lk(&mu_);
-        size_t size;
-        buffer_pool_for_pipes_.Get(&pipe_buffer, &size);
-        DCHECK(size == PIPE_BUF);
-    }
-    std::unique_ptr<ipc::ShmRegion> output_region;
-    bool success = false;
-    bool pipe_buffer_used = false;
-    std::span<const char> output;
-    if (worker_lib::GetFuncCallOutput(
-            func_call, output_fifo, pipe_buffer,
-            &success, &output, &output_region, &pipe_buffer_used)) {
-        absl::MutexLock lk(&mu_);
-        InvokeFuncResource invoke_func_resource = {
-            .func_call = func_call,
-            .output_region = nullptr,
-            .pipe_buffer = nullptr
-        };
-        if (pipe_buffer_used) {
-            invoke_func_resource.pipe_buffer = pipe_buffer;
-        } else {
-            buffer_pool_for_pipes_.Return(pipe_buffer);
-        }
-        if (output_region != nullptr) {
-            invoke_func_resource.output_region = std::move(output_region);
-        }
-        invoke_func_resources_.push_back(std::move(invoke_func_resource));
-        if (success) {
-            *output_data = output.data();
-            *output_length = output.size();
-            return true;
-        } else {
-            return false;
-        }
-    } else {
-        absl::MutexLock lk(&mu_);
-        buffer_pool_for_pipes_.Return(pipe_buffer);
-        return false;
-    }
-}
-
-bool FuncWorker::NaiveWaitInvokeFunc(Message* invoke_func_message,
-                                     const char** output_data, size_t* output_length) {
     FuncCall func_call = GetFuncCallFromMessage(*invoke_func_message);
     // Send message to engine (dispatcher)
     {
@@ -344,6 +264,86 @@ bool FuncWorker::NaiveWaitInvokeFunc(Message* invoke_func_message,
         ongoing_invoke_func_ = false;
     }
     return true;
+}
+
+bool FuncWorker::FifoWaitInvokeFunc(Message* invoke_func_message,
+                                    const char** output_data, size_t* output_length) {
+    FuncCall func_call = GetFuncCallFromMessage(*invoke_func_message);
+    // Create fifo for output
+    if (!ipc::FifoCreate(ipc::GetFuncCallOutputFifoName(func_call.full_call_id))) {
+        LOG(ERROR) << "FifoCreate failed";
+        return false;
+    }
+    auto remove_output_fifo = gsl::finally([func_call] {
+        ipc::FifoRemove(ipc::GetFuncCallOutputFifoName(func_call.full_call_id));
+    });
+    int output_fifo = ipc::FifoOpenForReadWrite(
+        ipc::GetFuncCallOutputFifoName(func_call.full_call_id), /* nonblocking= */ true);
+    if (output_fifo == -1) {
+        LOG(ERROR) << "FifoOpenForReadWrite failed";
+        return false;
+    }
+    auto close_output_fifo = gsl::finally([output_fifo] {
+        if (close(output_fifo) != 0) {
+            PLOG(ERROR) << "close failed";
+        }
+    });
+    // Send message to engine (dispatcher)
+    {
+        absl::MutexLock lk(&mu_);
+        invoke_func_message->send_timestamp = GetMonotonicMicroTimestamp();
+        PCHECK(io_utils::SendMessage(output_pipe_fd_, *invoke_func_message));
+    }
+    VLOG(1) << "InvokeFuncMessage sent to engine";
+    int timeout_ms = -1;
+    if (func_call_timeout_ != absl::InfiniteDuration()) {
+        timeout_ms = gsl::narrow_cast<int>(absl::ToInt64Milliseconds(func_call_timeout_));
+    }
+    if (!ipc::FifoPollForRead(output_fifo, timeout_ms)) {
+        LOG(ERROR) << "FifoPollForRead failed";
+        return false;
+    }
+    char* pipe_buffer;
+    {
+        absl::MutexLock lk(&mu_);
+        size_t size;
+        buffer_pool_for_pipes_.Get(&pipe_buffer, &size);
+        DCHECK(size == PIPE_BUF);
+    }
+    std::unique_ptr<ipc::ShmRegion> output_region;
+    bool success = false;
+    bool pipe_buffer_used = false;
+    std::span<const char> output;
+    if (worker_lib::FifoGetFuncCallOutput(
+            func_call, output_fifo, pipe_buffer,
+            &success, &output, &output_region, &pipe_buffer_used)) {
+        absl::MutexLock lk(&mu_);
+        InvokeFuncResource invoke_func_resource = {
+            .func_call = func_call,
+            .output_region = nullptr,
+            .pipe_buffer = nullptr
+        };
+        if (pipe_buffer_used) {
+            invoke_func_resource.pipe_buffer = pipe_buffer;
+        } else {
+            buffer_pool_for_pipes_.Return(pipe_buffer);
+        }
+        if (output_region != nullptr) {
+            invoke_func_resource.output_region = std::move(output_region);
+        }
+        invoke_func_resources_.push_back(std::move(invoke_func_resource));
+        if (success) {
+            *output_data = output.data();
+            *output_length = output.size();
+            return true;
+        } else {
+            return false;
+        }
+    } else {
+        absl::MutexLock lk(&mu_);
+        buffer_pool_for_pipes_.Return(pipe_buffer);
+        return false;
+    }
 }
 
 void FuncWorker::ReclaimInvokeFuncResources() {

@@ -13,6 +13,7 @@ ABSL_FLAG(double, concurrency_limit_coef, 1.0, "");
 ABSL_FLAG(double, expected_concurrency_coef, 1.0, "");
 ABSL_FLAG(int, min_worker_request_interval_ms, 200, "");
 ABSL_FLAG(bool, always_request_worker_if_possible, false, "");
+ABSL_FLAG(bool, disable_concurrency_limiter, false, "");
 
 namespace faas {
 namespace engine {
@@ -254,6 +255,9 @@ size_t Dispatcher::DetermineExpectedConcurrency() {
 }
 
 size_t Dispatcher::DetermineConcurrencyLimit() {
+    if (absl::GetFlag(FLAGS_disable_concurrency_limiter)) {
+        return max_workers_;
+    }
     size_t result = std::numeric_limits<size_t>::max();
     double average_running_delay = engine_->tracer()->GetAverageRunningDelay(func_id_);
     double average_instant_rps = engine_->tracer()->GetAverageInstantRps(func_id_);

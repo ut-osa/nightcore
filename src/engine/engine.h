@@ -74,7 +74,7 @@ private:
     std::string func_config_json_;
     FuncConfig func_config_;
     bool func_worker_use_engine_socket_;
-    bool use_naive_nested_call_;
+    bool use_fifo_for_nested_call_;
 
     uv_stream_t* uv_handle_;
 

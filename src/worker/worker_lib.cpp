@@ -97,9 +97,9 @@ bool GetFuncCallInput(const Message& dispatch_func_call_message,
     return true;
 }
 
-void FuncCallFinished(const FuncCall& func_call,
-                      bool success, std::span<const char> output, int32_t processing_time,
-                      char* pipe_buf, Message* response) {
+void FifoFuncCallFinished(const FuncCall& func_call,
+                          bool success, std::span<const char> output, int32_t processing_time,
+                          char* pipe_buf, Message* response) {
     if (success) {
         *response = NewFuncCallCompleteMessage(func_call, processing_time);
     } else {
@@ -128,9 +128,9 @@ void FuncCallFinished(const FuncCall& func_call,
     }
 }
 
-void NaiveFuncCallFinished(const protocol::FuncCall& func_call,
-                           bool success, std::span<const char> output, int32_t processing_time,
-                           protocol::Message* response) {
+void FuncCallFinished(const protocol::FuncCall& func_call,
+                      bool success, std::span<const char> output, int32_t processing_time,
+                      protocol::Message* response) {
     if (success) {
         *response = NewFuncCallCompleteMessage(func_call, processing_time);
         if (output.size() <= MESSAGE_INLINE_DATA_SIZE) {
@@ -172,11 +172,11 @@ bool PrepareNewFuncCall(const FuncCall& func_call, uint64_t parent_func_call,
     return true;
 }
 
-bool GetFuncCallOutput(const FuncCall& func_call,
-                       int output_fifo_fd, char* pipe_buf,
-                       bool* success, std::span<const char>* output,
-                       std::unique_ptr<ipc::ShmRegion>* shm_region,
-                       bool* pipe_buf_used) {
+bool FifoGetFuncCallOutput(const FuncCall& func_call,
+                           int output_fifo_fd, char* pipe_buf,
+                           bool* success, std::span<const char>* output,
+                           std::unique_ptr<ipc::ShmRegion>* shm_region,
+                           bool* pipe_buf_used) {
     ssize_t nread = read(output_fifo_fd, pipe_buf, PIPE_BUF);
     if (nread < 0) {
         PLOG(ERROR) << "Failed to read from fifo";

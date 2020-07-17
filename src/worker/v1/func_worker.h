@@ -45,7 +45,7 @@ private:
     std::string func_library_path_;
     bool use_engine_socket_;
     int engine_tcp_port_;
-    bool use_naive_nested_call_;
+    bool use_fifo_for_nested_call_;
     absl::Duration func_call_timeout_;
 
     absl::Mutex mu_;
@@ -87,8 +87,8 @@ private:
                     const char** output_data, size_t* output_length);
     bool WaitInvokeFunc(protocol::Message* invoke_func_message,
                         const char** output_data, size_t* output_length);
-    bool NaiveWaitInvokeFunc(protocol::Message* invoke_func_message,
-                             const char** output_data, size_t* output_length);
+    bool FifoWaitInvokeFunc(protocol::Message* invoke_func_message,
+                            const char** output_data, size_t* output_length);
     void ReclaimInvokeFuncResources();
 
     // Assume caller_context is an instance of FuncWorker

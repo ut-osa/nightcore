@@ -93,7 +93,7 @@ void EventDrivenWorker::OnFuncExecutionFinished(int64_t handle, bool success,
         GetMonotonicMicroTimestamp() - func_call_state->start_timestamp);
     VLOG(1) << "Finish executing func_call " << FuncCallDebugString(func_call);
     Message response;
-    worker_lib::FuncCallFinished(
+    worker_lib::FifoFuncCallFinished(
         func_call, success, output, processing_time, main_pipe_buf_, &response);
     VLOG(1) << "Send response to engine";
     response.dispatch_delay = func_call_state->dispatch_delay;
@@ -295,7 +295,7 @@ void EventDrivenWorker::OnOutputPipeReadable(OutgoingFuncCallState* func_call_st
     bool success = false;
     bool pipe_buffer_used = false;
     std::span<const char> output;
-    if (worker_lib::GetFuncCallOutput(
+    if (worker_lib::FifoGetFuncCallOutput(
             func_call_state->func_call, output_fifo, main_pipe_buf_,
             &success, &output, &output_region, &pipe_buffer_used)) {
         outgoing_func_call_complete_cb_(func_call_to_handle(func_call_state->func_call),

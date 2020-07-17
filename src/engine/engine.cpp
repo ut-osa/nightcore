@@ -13,7 +13,7 @@
 
 ABSL_FLAG(bool, disable_monitor, false, "");
 ABSL_FLAG(bool, func_worker_use_engine_socket, false, "");
-ABSL_FLAG(bool, use_naive_nested_call, false, "");
+ABSL_FLAG(bool, use_fifo_for_nested_call, false, "");
 
 #define HLOG(l) LOG(l) << "Engine: "
 #define HVLOG(l) VLOG(l) << "Engine: "
@@ -44,7 +44,7 @@ Engine::Engine()
       gateway_conn_per_worker_(kDefaultGatewayConnPerWorker),
       engine_tcp_port_(-1),
       func_worker_use_engine_socket_(absl::GetFlag(FLAGS_func_worker_use_engine_socket)),
-      use_naive_nested_call_(absl::GetFlag(FLAGS_use_naive_nested_call)),
+      use_fifo_for_nested_call_(absl::GetFlag(FLAGS_use_fifo_for_nested_call)),
       uv_handle_(nullptr),
       next_gateway_conn_worker_id_(0),
       next_ipc_conn_worker_id_(0),
@@ -200,8 +200,8 @@ bool Engine::OnNewHandshake(MessageConnection* connection,
                                                   func_config_json_.size());
     } else {
         *response = NewHandshakeResponseMessage(0);
-        if (use_naive_nested_call_) {
-            response->flags |= protocol::kUseNaiveNestedCallFlag;
+        if (use_fifo_for_nested_call_) {
+            response->flags |= protocol::kUseFifoForNestedCallFlag;
         }
         *response_payload = std::span<const char>();
     }
@@ -303,7 +303,7 @@ void Engine::OnRecvMessage(MessageConnection* connection, const Message& message
                 }
             }
         }
-        if (success && func_call.client_id > 0 && use_naive_nested_call_) {
+        if (success && func_call.client_id > 0 && !use_fifo_for_nested_call_) {
             Message message_copy = message;
             worker_manager_->GetFuncWorker(func_call.client_id)->SendMessage(&message_copy);
         }
@@ -463,9 +463,13 @@ void Engine::ProcessDiscardedFuncCallIfNecessary() {
         char pipe_buf[PIPE_BUF];
         Message dummy_message;
         for (const FuncCall& func_call : discarded_internal_func_calls) {
-            worker_lib::FuncCallFinished(
-                func_call, /* success= */ false, /* output= */ std::span<const char>(),
-                /* processing_time= */ 0, pipe_buf, &dummy_message);
+            if (use_fifo_for_nested_call_) {
+                worker_lib::FifoFuncCallFinished(
+                    func_call, /* success= */ false, /* output= */ std::span<const char>(),
+                    /* processing_time= */ 0, pipe_buf, &dummy_message);
+            } else {
+                // TODO: handle this case
+            }
         }
     }
 }

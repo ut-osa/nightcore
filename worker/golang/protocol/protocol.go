@@ -54,6 +54,15 @@ const MessageHeaderByteSize = 64
 const MessageFullByteSize = 1024
 const MessageInlineDataSize = MessageFullByteSize - MessageHeaderByteSize
 
+const (
+	FLAG_FuncWorkerUseEngineSocket uint32 = 1
+	FLAG_UseFifoForNestedCall      uint32 = 2
+)
+
+func GetFlagsFromMessage(buffer []byte) uint32 {
+	return binary.LittleEndian.Uint32(buffer[28:32])
+}
+
 func GetFuncCallFromMessage(buffer []byte) FuncCall {
 	tmp := binary.LittleEndian.Uint64(buffer[0:8])
 	return FuncCallFromFullCallId(tmp >> MessageTypeBits)
@@ -74,6 +83,14 @@ func IsCreateFuncWorkerMessage(buffer []byte) bool {
 
 func IsDispatchFuncCallMessage(buffer []byte) bool {
 	return getMessageType(buffer) == MessageType_DISPATCH_FUNC_CALL
+}
+
+func IsFuncCallCompleteMessage(buffer []byte) bool {
+	return getMessageType(buffer) == MessageType_FUNC_CALL_COMPLETE
+}
+
+func IsFuncCallFailedMessage(buffer []byte) bool {
+	return getMessageType(buffer) == MessageType_FUNC_CALL_FAILED
 }
 
 func NewEmptyMessage() []byte {

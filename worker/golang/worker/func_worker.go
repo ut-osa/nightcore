@@ -21,28 +21,35 @@ import (
 const PIPE_BUF = 4096
 
 type FuncWorker struct {
-	funcId      uint16
-	clientId    uint16
-	factory     types.FuncHandlerFactory
-	configEntry *config.FuncConfigEntry
-	isGrpcSrv   bool
-	engineConn  net.Conn
-	inputPipe   *os.File
-	outputPipe  *os.File // protected by mux
-	handler     types.FuncHandler
-	grpcHandler types.GrpcFuncHandler
-	nextCallId  uint32
-	currentCall uint64
-	mux         sync.Mutex
+	funcId               uint16
+	clientId             uint16
+	factory              types.FuncHandlerFactory
+	configEntry          *config.FuncConfigEntry
+	isGrpcSrv            bool
+	useFifoForNestedCall bool
+	engineConn           net.Conn
+	newFuncCallChan      chan []byte
+	inputPipe            *os.File
+	outputPipe           *os.File                 // protected by mux
+	outgoingFuncCalls    map[uint64](chan []byte) // protected by mux
+	handler              types.FuncHandler
+	grpcHandler          types.GrpcFuncHandler
+	nextCallId           uint32
+	currentCall          uint64
+	mux                  sync.Mutex
 }
 
 func NewFuncWorker(funcId uint16, clientId uint16, factory types.FuncHandlerFactory) (*FuncWorker, error) {
 	w := &FuncWorker{
-		funcId:      funcId,
-		clientId:    clientId,
-		factory:     factory,
-		nextCallId:  0,
-		currentCall: 0,
+		funcId:               funcId,
+		clientId:             clientId,
+		factory:              factory,
+		isGrpcSrv:            false,
+		useFifoForNestedCall: false,
+		newFuncCallChan:      make(chan []byte),
+		outgoingFuncCalls:    make(map[uint64](chan []byte)),
+		nextCallId:           0,
+		currentCall:          0,
 	}
 	return w, nil
 }
@@ -54,7 +61,29 @@ func (w *FuncWorker) Run() {
 		log.Fatalf("[FATAL] Handshake failed: %v", err)
 	}
 	log.Printf("[INFO] Handshake with engine done")
-	w.servingLoop()
+
+	go w.servingLoop()
+	for {
+		message := protocol.NewEmptyMessage()
+		n, err := w.inputPipe.Read(message)
+		if err != nil || n != protocol.MessageFullByteSize {
+			log.Fatal("[FATAL] Failed to read engine message")
+		}
+		if protocol.IsDispatchFuncCallMessage(message) {
+			w.newFuncCallChan <- message
+		} else if protocol.IsFuncCallCompleteMessage(message) || protocol.IsFuncCallFailedMessage(message) {
+			funcCall := protocol.GetFuncCallFromMessage(message)
+			w.mux.Lock()
+			ch, exists := w.outgoingFuncCalls[funcCall.FullCallId()]
+			if exists {
+				ch <- message
+				delete(w.outgoingFuncCalls, funcCall.FullCallId())
+			}
+			w.mux.Unlock()
+		} else {
+			log.Fatal("[FATAL] Unknown message type")
+		}
+	}
 }
 
 func (w *FuncWorker) doHandshake() error {
@@ -83,6 +112,12 @@ func (w *FuncWorker) doHandshake() error {
 		return fmt.Errorf("Unexpcted size for handshake response")
 	} else if !protocol.IsHandshakeResponseMessage(response) {
 		return fmt.Errorf("Unexpcted type of response")
+	}
+
+	flags := protocol.GetFlagsFromMessage(response)
+	if (flags & protocol.FLAG_UseFifoForNestedCall) != 0 {
+		log.Printf("[INFO] Use FIFO for nested calls")
+		w.useFifoForNestedCall = true
 	}
 
 	w.configEntry = config.FindByFuncId(w.funcId)
@@ -116,16 +151,8 @@ func (w *FuncWorker) doHandshake() error {
 
 func (w *FuncWorker) servingLoop() {
 	for {
-		message := protocol.NewEmptyMessage()
-		n, err := w.inputPipe.Read(message)
-		if err != nil || n != protocol.MessageFullByteSize {
-			log.Fatal("[FATAL] Failed to read engine message")
-		}
-		if protocol.IsDispatchFuncCallMessage(message) {
-			w.executeFunc(message)
-		} else {
-			log.Fatal("[FATAL] Unknown message type")
-		}
+		message := <-w.newFuncCallChan
+		w.executeFunc(message)
 	}
 }
 
@@ -182,7 +209,12 @@ func (w *FuncWorker) executeFunc(dispatchFuncMessage []byte) {
 		log.Printf("[ERROR] FuncCall failed with error: %v", err)
 	}
 
-	response := w.funcCallFinished(funcCall, err == nil, output, int32(processingTime))
+	var response []byte
+	if w.useFifoForNestedCall {
+		response = w.fifoFuncCallFinished(funcCall, err == nil, output, int32(processingTime))
+	} else {
+		response = w.funcCallFinished(funcCall, err == nil, output, int32(processingTime))
+	}
 	protocol.SetDispatchDelayInMessage(response, int32(dispatchDelay))
 	protocol.SetSendTimestampInMessage(response, common.GetMonotonicMicroTimestamp())
 	w.mux.Lock()
@@ -194,6 +226,27 @@ func (w *FuncWorker) executeFunc(dispatchFuncMessage []byte) {
 }
 
 func (w *FuncWorker) funcCallFinished(funcCall protocol.FuncCall, success bool, output []byte, processingTime int32) []byte {
+	var response []byte
+	if success {
+		response = protocol.NewFuncCallCompleteMessage(funcCall, processingTime)
+		if len(output) > protocol.MessageInlineDataSize {
+			err := w.writeOutputToShm(funcCall, output)
+			if err != nil {
+				log.Printf("[ERROR] writeOutputToShm failed: %v", err)
+				response = protocol.NewFuncCallFailedMessage(funcCall)
+			} else {
+				protocol.SetPayloadSizeInMessage(response, int32(-len(output)))
+			}
+		} else if len(output) > 0 {
+			protocol.FillInlineDataInMessage(response, output)
+		}
+	} else {
+		response = protocol.NewFuncCallFailedMessage(funcCall)
+	}
+	return response
+}
+
+func (w *FuncWorker) fifoFuncCallFinished(funcCall protocol.FuncCall, success bool, output []byte, processingTime int32) []byte {
 	var response []byte
 	if success {
 		response = protocol.NewFuncCallCompleteMessage(funcCall, processingTime)
@@ -275,6 +328,8 @@ func (w *FuncWorker) newFuncCallCommon(funcCall protocol.FuncCall, input []byte)
 
 	var inputRegion *ipc.ShmRegion
 	var outputFifo *os.File
+	var outputChan chan []byte
+	var output []byte
 	var err error
 
 	if len(input) > protocol.MessageInlineDataSize {
@@ -292,58 +347,91 @@ func (w *FuncWorker) newFuncCallCommon(funcCall protocol.FuncCall, input []byte)
 		protocol.FillInlineDataInMessage(message, input)
 	}
 
-	outputFifoName := ipc.GetFuncCallOutputFifoName(funcCall.FullCallId())
-	err = ipc.FifoCreate(outputFifoName)
-	if err != nil {
-		return nil, fmt.Errorf("FifoCreate failed: %v", err)
+	if w.useFifoForNestedCall {
+		outputFifoName := ipc.GetFuncCallOutputFifoName(funcCall.FullCallId())
+		err = ipc.FifoCreate(outputFifoName)
+		if err != nil {
+			return nil, fmt.Errorf("FifoCreate failed: %v", err)
+		}
+		defer ipc.FifoRemove(outputFifoName)
+		outputFifo, err = ipc.FifoOpenForReadWrite(outputFifoName, true)
+		if err != nil {
+			return nil, fmt.Errorf("FifoOpenForReadWrite failed: %v", err)
+		}
+		defer outputFifo.Close()
 	}
-	defer ipc.FifoRemove(outputFifoName)
-	outputFifo, err = ipc.FifoOpenForReadWrite(outputFifoName, true)
-	if err != nil {
-		return nil, fmt.Errorf("FifoOpenForReadWrite failed: %v", err)
-	}
-	defer outputFifo.Close()
 
 	w.mux.Lock()
+	if !w.useFifoForNestedCall {
+		outputChan = make(chan []byte)
+		w.outgoingFuncCalls[funcCall.FullCallId()] = outputChan
+	}
 	_, err = w.outputPipe.Write(message)
 	w.mux.Unlock()
 
-	headerBuf := make([]byte, 4)
-	nread, err := outputFifo.Read(headerBuf)
-	if err != nil {
-		return nil, fmt.Errorf("Failed to read from fifo: %v", err)
-	} else if nread < len(headerBuf) {
-		return nil, fmt.Errorf("Failed to read header from output fifo")
-	}
-
-	header := int32(binary.LittleEndian.Uint32(headerBuf))
-	if header < 0 {
-		return nil, fmt.Errorf("FuncCall failed")
-	}
-
-	outputSize := int(header)
-	output := make([]byte, outputSize)
-	if outputSize+4 > PIPE_BUF {
-		outputRegion, err := ipc.ShmOpen(ipc.GetFuncCallOutputShmName(funcCall.FullCallId()), true)
-		if err != nil {
-			return nil, fmt.Errorf("ShmOpen failed: %v", err)
-		}
-		defer func() {
-			outputRegion.Close()
-			outputRegion.Remove()
-		}()
-		if outputRegion.Size != outputSize {
-			return nil, fmt.Errorf("Shm size mismatch with header read from output fifo")
-		}
-		copy(output, outputRegion.Data)
-	} else {
-		nread, err = outputFifo.Read(output)
+	if w.useFifoForNestedCall {
+		headerBuf := make([]byte, 4)
+		nread, err := outputFifo.Read(headerBuf)
 		if err != nil {
 			return nil, fmt.Errorf("Failed to read from fifo: %v", err)
-		} else if nread < outputSize {
-			return nil, fmt.Errorf("Failed to read output from fifo")
+		} else if nread < len(headerBuf) {
+			return nil, fmt.Errorf("Failed to read header from output fifo")
+		}
+
+		header := int32(binary.LittleEndian.Uint32(headerBuf))
+		if header < 0 {
+			return nil, fmt.Errorf("FuncCall failed")
+		}
+
+		outputSize := int(header)
+		output = make([]byte, outputSize)
+		if outputSize+4 > PIPE_BUF {
+			outputRegion, err := ipc.ShmOpen(ipc.GetFuncCallOutputShmName(funcCall.FullCallId()), true)
+			if err != nil {
+				return nil, fmt.Errorf("ShmOpen failed: %v", err)
+			}
+			defer func() {
+				outputRegion.Close()
+				outputRegion.Remove()
+			}()
+			if outputRegion.Size != outputSize {
+				return nil, fmt.Errorf("Shm size mismatch with header read from output fifo")
+			}
+			copy(output, outputRegion.Data)
+		} else {
+			nread, err = outputFifo.Read(output)
+			if err != nil {
+				return nil, fmt.Errorf("Failed to read from fifo: %v", err)
+			} else if nread < outputSize {
+				return nil, fmt.Errorf("Failed to read output from fifo")
+			}
+		}
+	} else {
+		message := <-outputChan
+		if protocol.IsFuncCallFailedMessage(message) {
+			return nil, fmt.Errorf("FuncCall failed")
+		}
+		payloadSize := protocol.GetPayloadSizeFromMessage(message)
+		if payloadSize < 0 {
+			outputSize := int(-payloadSize)
+			output = make([]byte, outputSize)
+			outputRegion, err := ipc.ShmOpen(ipc.GetFuncCallOutputShmName(funcCall.FullCallId()), true)
+			if err != nil {
+				return nil, fmt.Errorf("ShmOpen failed: %v", err)
+			}
+			defer func() {
+				outputRegion.Close()
+				outputRegion.Remove()
+			}()
+			if outputRegion.Size != outputSize {
+				return nil, fmt.Errorf("Shm size mismatch with header read from output fifo")
+			}
+			copy(output, outputRegion.Data)
+		} else {
+			output = protocol.GetInlineDataFromMessage(message)
 		}
 	}
+
 	return output, nil
 }
 
