@@ -242,9 +242,9 @@ bool FuncWorker::WaitInvokeFunc(Message* invoke_func_message,
             LOG(ERROR) << "Output size mismatch";
             return false;
         }
-        invoke_func_resource.output_region = std::move(output_region);
         *output_data = output_region->base();
         *output_length = output_region->size();
+        invoke_func_resource.output_region = std::move(output_region);
         absl::MutexLock lk(&mu_);
         invoke_func_resources_.push_back(std::move(invoke_func_resource));
         ongoing_invoke_func_ = false;
