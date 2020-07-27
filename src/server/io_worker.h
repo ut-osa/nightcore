@@ -35,8 +35,8 @@ public:
     void ReturnWriteBuffer(char* buf);
     uv_write_t* NewWriteRequest();
     void ReturnWriteRequest(uv_write_t* write_req);
-    // Pick a random connection of given type managed by this IOWorker
-    ConnectionBase* PickRandomConnection(int type);
+    // Pick a connection of given type managed by this IOWorker
+    ConnectionBase* PickConnection(int type);
 
     // Schedule a function to run on this IO worker's event loop
     // thread. It can be called safely from other threads.
@@ -60,10 +60,10 @@ private:
     uv_async_t run_fn_event_;
 
     base::Thread event_loop_thread_;
-    absl::BitGen random_bit_gen_;
     absl::flat_hash_map</* id */ int, ConnectionBase*> connections_;
     absl::flat_hash_map</* type */ int, absl::flat_hash_set</* id */ int>> connections_by_type_;
-    absl::flat_hash_map</* type */ int, std::vector<ConnectionBase*>> connections_for_random_pick_;
+    absl::flat_hash_map</* type */ int, std::vector<ConnectionBase*>> connections_for_pick_;
+    absl::flat_hash_map</* type */ int, size_t> connections_for_pick_rr_;
     utils::BufferPool read_buffer_pool_;
     utils::BufferPool write_buffer_pool_;
     utils::SimpleObjectPool<uv_write_t> write_req_pool_;

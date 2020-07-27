@@ -97,24 +97,25 @@ void IOWorker::ReturnWriteRequest(uv_write_t* write_req) {
     write_req_pool_.Return(write_req);
 }
 
-ConnectionBase* IOWorker::PickRandomConnection(int type) {
+ConnectionBase* IOWorker::PickConnection(int type) {
     DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
     if (!connections_by_type_.contains(type) || connections_by_type_[type].empty()) {
         return nullptr;
     }
     size_t n_conn = connections_by_type_[type].size();
-    if (!connections_for_random_pick_.contains(type)) {
+    if (!connections_for_pick_.contains(type)) {
         std::vector<ConnectionBase*> conns;
         for (int id : connections_by_type_[type]) {
             DCHECK(connections_.contains(id));
             conns.push_back(connections_[id]);
         }
-        connections_for_random_pick_[type] = std::move(conns);
+        connections_for_pick_[type] = std::move(conns);
     } else {
-        DCHECK_EQ(connections_for_random_pick_[type].size(), n_conn);
+        DCHECK_EQ(connections_for_pick_[type].size(), n_conn);
     }
-    size_t idx = absl::Uniform<size_t>(random_bit_gen_, 0, n_conn);
-    return connections_for_random_pick_[type][idx];
+    size_t idx = connections_for_pick_rr_[type] % n_conn;
+    connections_for_pick_rr_[type]++;
+    return connections_for_pick_[type][idx];
 }
 
 void IOWorker::ScheduleFunction(ConnectionBase* owner, std::function<void()> fn) {
@@ -144,8 +145,8 @@ void IOWorker::OnConnectionClose(ConnectionBase* connection) {
     if (connection->type() >= 0) {
         DCHECK(connections_by_type_[connection->type()].contains(connection->id()));
         connections_by_type_[connection->type()].erase(connection->id());
-        if (connections_for_random_pick_.contains(connection->type())) {
-            connections_for_random_pick_.erase(connection->type());
+        if (connections_for_pick_.contains(connection->type())) {
+            connections_for_pick_.erase(connection->type());
         }
         HLOG(INFO) << fmt::format("One connection of type {0} closed, total of type {0} is {1}",
                                   connection->type(),
@@ -206,8 +207,8 @@ UV_READ_CB_FOR_CLASS(IOWorker, NewConnection) {
     connections_[connection->id()] = connection;
     if (connection->type() >= 0) {
         connections_by_type_[connection->type()].insert(connection->id());
-        if (connections_for_random_pick_.contains(connection->type())) {
-            connections_for_random_pick_[connection->type()].push_back(connection);
+        if (connections_for_pick_.contains(connection->type())) {
+            connections_for_pick_[connection->type()].push_back(connection);
         }
         HLOG(INFO) << fmt::format("New connection of type {0}, total of type {0} is {1}",
                                   connection->type(),

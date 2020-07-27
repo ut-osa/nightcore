@@ -76,7 +76,6 @@ private:
 
     absl::Mutex mu_;
     std::vector</* node_id */ uint16_t> connected_nodes_ ABSL_GUARDED_BY(mu_);
-    size_t next_dispatch_node_idx_;
 
     struct FuncCallState {
         protocol::FuncCall func_call;
@@ -94,6 +93,10 @@ private:
     };
 
     absl::BitGen random_bit_gen_ ABSL_GUARDED_BY(mu_);
+    absl::flat_hash_map</* func_id */ uint16_t, size_t>
+        next_dispatch_node_idx_  ABSL_GUARDED_BY(mu_);
+    absl::flat_hash_map</* func_id */ uint16_t, size_t>
+        inflight_requests_per_node_  ABSL_GUARDED_BY(mu_);
     absl::flat_hash_map</* full_call_id */ uint64_t, FuncCallState>
         running_func_calls_ ABSL_GUARDED_BY(mu_);
     std::queue<FuncCallState> pending_func_calls_ ABSL_GUARDED_BY(mu_);
@@ -127,6 +130,7 @@ private:
                         FuncCallContext* func_call_context);
     void TickNewFuncCall(uint16_t func_id, int64_t current_timestamp)
         ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
+    uint16_t PickNextNode(const protocol::FuncCall& func_call) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
 
     DECLARE_UV_CONNECTION_CB_FOR_CLASS(HttpConnection);
     DECLARE_UV_CONNECTION_CB_FOR_CLASS(GrpcConnection);

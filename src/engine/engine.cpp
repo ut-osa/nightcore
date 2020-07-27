@@ -379,7 +379,7 @@ void Engine::ExternalFuncCallCompleted(const protocol::FuncCall& func_call,
     inflight_external_requests_.fetch_add(-1);
     server::IOWorker* io_worker = server::IOWorker::current();
     DCHECK(io_worker != nullptr);
-    server::ConnectionBase* gateway_connection = io_worker->PickRandomConnection(
+    server::ConnectionBase* gateway_connection = io_worker->PickConnection(
         GatewayConnection::kTypeId);
     if (gateway_connection == nullptr) {
         HLOG(ERROR) << "There is not GatewayConnection associated with current IOWorker";
@@ -394,7 +394,7 @@ void Engine::ExternalFuncCallFailed(const protocol::FuncCall& func_call, int sta
     inflight_external_requests_.fetch_add(-1);
     server::IOWorker* io_worker = server::IOWorker::current();
     DCHECK(io_worker != nullptr);
-    server::ConnectionBase* gateway_connection = io_worker->PickRandomConnection(
+    server::ConnectionBase* gateway_connection = io_worker->PickConnection(
         GatewayConnection::kTypeId);
     if (gateway_connection == nullptr) {
         HLOG(ERROR) << "There is not GatewayConnection associated with current IOWorker";

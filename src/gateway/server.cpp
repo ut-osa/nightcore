@@ -11,6 +11,8 @@
 #include <absl/flags/flag.h>
 
 ABSL_FLAG(size_t, max_running_requests, 0, "");
+ABSL_FLAG(bool, lb_per_fn_round_robin, false, "");
+ABSL_FLAG(bool, lb_pick_least_load, false, "");
 
 #define HLOG(l) LOG(l) << "Server: "
 #define HVLOG(l) VLOG(l) << "Server: "
@@ -42,7 +44,6 @@ Server::Server()
       next_grpc_connection_id_(0),
       read_buffer_pool_("HandshakeRead", 128),
       next_call_id_(1),
-      next_dispatch_node_idx_(0),
       last_request_timestamp_(-1),
       incoming_requests_stat_(
           stat::Counter::StandardReportCallback("incoming_requests")),
@@ -171,7 +172,7 @@ void Server::DiscardFuncCall(FuncCallContext* func_call_context) {
     discarded_func_calls_.insert(func_call_context->func_call().full_call_id);
 }
 
-void Server::OnRecvEngineMessage(EngineConnection* connection, const GatewayMessage& message,
+void Server::OnRecvEngineMessage(EngineConnection* src_connection, const GatewayMessage& message,
                                  std::span<const char> payload) {
     int64_t current_timestamp = GetMonotonicMicroTimestamp();
     if (IsFuncCallCompleteMessage(message)
@@ -181,7 +182,7 @@ void Server::OnRecvEngineMessage(EngineConnection* connection, const GatewayMess
         std::shared_ptr<server::ConnectionBase> connection;
         FuncCallContext* next_func_call = nullptr;
         std::shared_ptr<server::ConnectionBase> next_connection;
-        uint16_t node_id;
+        uint16_t node_id = 0;
         {
             absl::MutexLock lk(&mu_);
             if (running_func_calls_.contains(func_call.full_call_id)) {
@@ -199,28 +200,29 @@ void Server::OnRecvEngineMessage(EngineConnection* connection, const GatewayMess
                     current_timestamp - full_call_state.dispatch_timestamp - message.processing_time));
                 running_func_calls_.erase(func_call.full_call_id);
                 FuncCallState state;
-                while (!pending_func_calls_.empty()) {
-                    state = std::move(pending_func_calls_.front());
-                    pending_func_calls_.pop();
-                    if (discarded_func_calls_.contains(state.func_call.full_call_id)) {
-                        discarded_func_calls_.erase(state.func_call.full_call_id);
-                        continue;
-                    }
-                    if (connections_.contains(state.connection_id)) {
-                        next_connection = connections_[state.connection_id];
-                        next_func_call = state.context;
-                        break;
+                if (max_running_requests_ == 0 || running_func_calls_.size() < max_running_requests_) {
+                    while (!pending_func_calls_.empty()) {
+                        state = std::move(pending_func_calls_.front());
+                        pending_func_calls_.pop();
+                        if (discarded_func_calls_.contains(state.func_call.full_call_id)) {
+                            discarded_func_calls_.erase(state.func_call.full_call_id);
+                            continue;
+                        }
+                        if (connections_.contains(state.connection_id)) {
+                            next_connection = connections_[state.connection_id];
+                            next_func_call = state.context;
+                            break;
+                        }
                     }
                 }
+                inflight_requests_per_node_[src_connection->node_id()]--;
                 if (next_func_call != nullptr) {
                     FuncCall func_call = next_func_call->func_call();
                     state.dispatch_timestamp = current_timestamp;
                     queueing_delay_stat_.AddSample(gsl::narrow_cast<int32_t>(
                         current_timestamp - state.recv_timestamp));
                     running_func_calls_[func_call.full_call_id] = std::move(state);
-                    size_t idx = absl::Uniform<size_t>(random_bit_gen_, 0, connected_nodes_.size());
-                    node_id = connected_nodes_[idx];
-                    dispatched_requests_stat_[idx]->Tick();
+                    node_id = PickNextNode(func_call);
                     running_requests_stat_.AddSample(
                         gsl::narrow_cast<uint16_t>(running_func_calls_.size()));
                 }
@@ -268,6 +270,28 @@ void Server::TickNewFuncCall(uint16_t func_id, int64_t current_timestamp) {
     per_func_stat->last_request_timestamp = current_timestamp;
 }
 
+uint16_t Server::PickNextNode(const protocol::FuncCall& func_call) {
+    size_t idx;
+    if (absl::GetFlag(FLAGS_lb_per_fn_round_robin)) {
+        idx = next_dispatch_node_idx_[func_call.func_id];
+        next_dispatch_node_idx_[func_call.func_id] = (idx + 1) % connected_nodes_.size();
+    } else if (absl::GetFlag(FLAGS_lb_pick_least_load)) {
+        idx = 0;
+        for (size_t i = 1; i < connected_nodes_.size(); i++) {
+            if (inflight_requests_per_node_[connected_nodes_[i]]
+                  < inflight_requests_per_node_[connected_nodes_[idx]]) {
+                idx = i;
+            }
+        }
+    } else {
+        idx = absl::Uniform<size_t>(random_bit_gen_, 0, connected_nodes_.size());
+    }
+    dispatched_requests_stat_[idx]->Tick();
+    uint16_t node_id = connected_nodes_[idx];
+    inflight_requests_per_node_[node_id]++;
+    return node_id;
+}
+
 void Server::OnNewFuncCallCommon(std::shared_ptr<server::ConnectionBase> parent_connection,
                                  FuncCallContext* func_call_context) {
     FuncCall func_call = func_call_context->func_call();
@@ -305,9 +329,7 @@ void Server::OnNewFuncCallCommon(std::shared_ptr<server::ConnectionBase> parent_
             } else {
                 state.dispatch_timestamp = current_timestamp;
                 running_func_calls_[func_call.full_call_id] = std::move(state);
-                size_t idx = absl::Uniform<size_t>(random_bit_gen_, 0, connected_nodes_.size());
-                node_id = connected_nodes_[idx];
-                dispatched_requests_stat_[idx]->Tick();
+                node_id = PickNextNode(func_call);
                 running_requests_stat_.AddSample(
                     gsl::narrow_cast<uint16_t>(running_func_calls_.size()));
             }
@@ -332,7 +354,7 @@ void Server::DispatchFuncCall(std::shared_ptr<server::ConnectionBase> parent_con
     FuncCall func_call = func_call_context->func_call();
     server::IOWorker* io_worker = server::IOWorker::current();
     DCHECK(io_worker != nullptr);
-    server::ConnectionBase* engine_connection = io_worker->PickRandomConnection(
+    server::ConnectionBase* engine_connection = io_worker->PickConnection(
         EngineConnection::type_id(node_id));
     if (engine_connection != nullptr) {
         GatewayMessage dispatch_message = NewDispatchFuncCallGatewayMessage(func_call);
