@@ -47,8 +47,10 @@ private:
 
 class ExpMovingAvgExt {
 public:
-    explicit ExpMovingAvgExt(double tau_ms = 100, double p = 1.0, size_t min_samples = 128)
-        : tau_us_(tau_ms * 1000), p_(p), min_samples_(min_samples), avg_(0),
+    explicit ExpMovingAvgExt(double tau_ms = 0, double alpha = 0.001,
+                             double p = 1.0, size_t min_samples = 128)
+        : tau_us_(tau_ms * 1000), alpha_(alpha),
+          p_(p), min_samples_(min_samples), avg_(0),
           n_samples_(0), last_timestamp_us_(-1) {}
     ~ExpMovingAvgExt() {}
 
@@ -68,7 +70,10 @@ public:
                 avg_ += std::pow(static_cast<double>(sample), p_) / min_samples_;
             }
         } else {
-            double alpha = 1.0 - std::exp(-(timestamp_us - last_timestamp_us_) / tau_us_);
+            double alpha = alpha_;
+            if (tau_us_ > 0) {
+                alpha = 1.0 - std::exp(-(timestamp_us - last_timestamp_us_) / tau_us_);
+            }
             if (p_ == 0) {
                 avg_ += alpha * (std::log(static_cast<double>(sample)) - avg_);
             } else {
@@ -99,6 +104,7 @@ public:
 
 private:
     double tau_us_;
+    double alpha_;
     double p_;
     size_t min_samples_;
     double avg_;

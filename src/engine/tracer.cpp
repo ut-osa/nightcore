@@ -9,7 +9,8 @@
 #define HVLOG(l) VLOG(l) << "Tracer: "
 
 ABSL_FLAG(double, instant_rps_p_norm, 1.0, "");
-ABSL_FLAG(double, instant_rps_tau_ms, 100, "");
+ABSL_FLAG(double, instant_rps_ema_alpha, 0.001, "");
+ABSL_FLAG(double, instant_rps_ema_tau_ms, 0, "");
 
 namespace faas {
 namespace engine {
@@ -313,7 +314,8 @@ Tracer::PerFuncStatistics::PerFuncStatistics(uint16_t func_id)
           fmt::format("running_delay[{}]", func_id))),
       inflight_requests_stat(stat::StatisticsCollector<uint16_t>::StandardReportCallback(
           fmt::format("inflight_requests[{}]", func_id))),
-      instant_rps_ema(absl::GetFlag(FLAGS_instant_rps_tau_ms),
+      instant_rps_ema(absl::GetFlag(FLAGS_instant_rps_ema_tau_ms),
+                      absl::GetFlag(FLAGS_instant_rps_ema_alpha),
                       absl::GetFlag(FLAGS_instant_rps_p_norm)),
       running_delay_ema(/* alpha= */ 0.001),
       processing_time_ema(/* alpha= */ 0.001),
