@@ -87,10 +87,10 @@ private:
         stat::StatisticsCollector<int32_t>  running_delay_stat     ABSL_GUARDED_BY(mu);
         stat::StatisticsCollector<uint16_t> inflight_requests_stat ABSL_GUARDED_BY(mu);
 
-        utils::ExpMovingAvg instant_rps_ema      ABSL_GUARDED_BY(mu);
-        utils::ExpMovingAvg running_delay_ema    ABSL_GUARDED_BY(mu);
-        utils::ExpMovingAvg processing_time_ema  ABSL_GUARDED_BY(mu);
-        utils::ExpMovingAvg processing_time2_ema ABSL_GUARDED_BY(mu);
+        utils::ExpMovingAvgExt instant_rps_ema      ABSL_GUARDED_BY(mu);
+        utils::ExpMovingAvg    running_delay_ema    ABSL_GUARDED_BY(mu);
+        utils::ExpMovingAvg    processing_time_ema  ABSL_GUARDED_BY(mu);
+        utils::ExpMovingAvg    processing_time2_ema ABSL_GUARDED_BY(mu);
 
         explicit PerFuncStatistics(uint16_t func_id);
     };

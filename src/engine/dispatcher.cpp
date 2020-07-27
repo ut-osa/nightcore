@@ -9,8 +9,8 @@
 #define HVLOG(l) VLOG(l) << log_header_
 
 ABSL_FLAG(double, max_relative_queueing_delay, 0.0, "");
-ABSL_FLAG(double, concurrency_limit_coef, 1.0, "");
-ABSL_FLAG(double, expected_concurrency_coef, 1.0, "");
+ABSL_FLAG(double, concurrency_limit_coef, 1.5, "");
+ABSL_FLAG(double, expected_concurrency_coef, 1.5, "");
 ABSL_FLAG(int, min_worker_request_interval_ms, 200, "");
 ABSL_FLAG(bool, always_request_worker_if_possible, false, "");
 ABSL_FLAG(bool, disable_concurrency_limiter, false, "");
@@ -37,6 +37,8 @@ Dispatcher::Dispatcher(Engine* engine, uint16_t func_id)
           fmt::format("running_workers[{}]", func_id))),
       max_concurrency_stat_(stat::StatisticsCollector<uint32_t>::StandardReportCallback(
           fmt::format("max_concurrency[{}]", func_id))),
+      estimated_rps_stat_(stat::StatisticsCollector<float>::StandardReportCallback(
+          fmt::format("estimated_rps[{}]", func_id))),
       estimated_concurrency_stat_(stat::StatisticsCollector<float>::StandardReportCallback(
           fmt::format("estimated_concurrency[{}]", func_id))) {
     const FuncConfig::Entry* func_entry = engine_->func_config()->find_by_func_id(func_id);
@@ -248,6 +250,7 @@ size_t Dispatcher::DetermineExpectedConcurrency() {
     if (average_processing_time > 0 && average_instant_rps > 0) {
         double estimated_concurrency = absl::GetFlag(FLAGS_expected_concurrency_coef)
                                      * average_processing_time * average_instant_rps / 1e6;
+        estimated_rps_stat_.AddSample(gsl::narrow_cast<float>(average_instant_rps));
         return gsl::narrow_cast<size_t>(0.5 + estimated_concurrency);
     } else {
         return 0;
@@ -264,6 +267,7 @@ size_t Dispatcher::DetermineConcurrencyLimit() {
     if (average_running_delay > 0 && average_instant_rps > 0) {
         double estimated_concurrency = absl::GetFlag(FLAGS_concurrency_limit_coef)
                                      * average_running_delay * average_instant_rps / 1e6;
+        estimated_rps_stat_.AddSample(gsl::narrow_cast<float>(average_instant_rps));
         estimated_concurrency_stat_.AddSample(gsl::narrow_cast<float>(estimated_concurrency));
         result = gsl::narrow_cast<size_t>(0.5 + estimated_concurrency);
     }

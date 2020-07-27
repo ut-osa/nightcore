@@ -9,6 +9,7 @@
 #define HVLOG(l) VLOG(l) << "Tracer: "
 
 ABSL_FLAG(double, instant_rps_p_norm, 1.0, "");
+ABSL_FLAG(double, instant_rps_tau_ms, 100, "");
 
 namespace faas {
 namespace engine {
@@ -87,7 +88,7 @@ Tracer::FuncCallInfo* Tracer::OnNewFuncCall(const FuncCall& func_call,
             double instant_rps = gsl::narrow_cast<double>(
                 1e6 / (current_timestamp - per_func_stat->last_request_timestamp));
             per_func_stat->instant_rps_stat.AddSample(instant_rps);
-            per_func_stat->instant_rps_ema.AddSample(instant_rps);
+            per_func_stat->instant_rps_ema.AddSample(current_timestamp, instant_rps);
         }
         per_func_stat->last_request_timestamp = current_timestamp;
         per_func_stat->inflight_requests++;
@@ -312,10 +313,11 @@ Tracer::PerFuncStatistics::PerFuncStatistics(uint16_t func_id)
           fmt::format("running_delay[{}]", func_id))),
       inflight_requests_stat(stat::StatisticsCollector<uint16_t>::StandardReportCallback(
           fmt::format("inflight_requests[{}]", func_id))),
-      instant_rps_ema(/* alpha= */ 0.999, /* p= */ absl::GetFlag(FLAGS_instant_rps_p_norm)),
-      running_delay_ema(/* alpha= */ 0.999, /* p= */ 1.0),
-      processing_time_ema(/* alpha= */ 0.999, /* p= */ 1.0),
-      processing_time2_ema(/* alpha= */ 0.999, /* p= */ 1.0) {}
+      instant_rps_ema(absl::GetFlag(FLAGS_instant_rps_tau_ms),
+                      absl::GetFlag(FLAGS_instant_rps_p_norm)),
+      running_delay_ema(/* alpha= */ 0.001),
+      processing_time_ema(/* alpha= */ 0.001),
+      processing_time2_ema(/* alpha= */ 0.001) {}
 
 }  // namespace engine
 }  // namespace faas

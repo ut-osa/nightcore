@@ -63,6 +63,7 @@ private:
     stat::StatisticsCollector<uint16_t> idle_workers_stat_ ABSL_GUARDED_BY(mu_);
     stat::StatisticsCollector<uint16_t> running_workers_stat_ ABSL_GUARDED_BY(mu_);
     stat::StatisticsCollector<uint32_t> max_concurrency_stat_ ABSL_GUARDED_BY(mu_);
+    stat::StatisticsCollector<float> estimated_rps_stat_ ABSL_GUARDED_BY(mu_);
     stat::StatisticsCollector<float> estimated_concurrency_stat_ ABSL_GUARDED_BY(mu_);
 
     void FuncWorkerFinished(FuncWorker* func_worker) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
