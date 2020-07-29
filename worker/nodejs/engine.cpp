@@ -1,10 +1,14 @@
 #define __FAAS_NODE_ADDON_SRC
+#include "base/logging.h"
+#include "utils/env_variables.h"
 #include "engine.h"
 
 namespace faas {
 namespace nodejs {
 
 Napi::Object Engine::Init(Napi::Env env, Napi::Object exports) {
+    logging::Init(utils::GetEnvVariableAsInt("FAAS_VLOG_LEVEL", 0));
+
     Napi::Function func = DefineClass(
         env, "Engine",
         {
@@ -257,14 +261,14 @@ void Engine::OnIncomingFuncCall(int64_t handle, std::string_view method,
                                 std::span<const char> request) {
     Napi::HandleScope scope(env_);
     if (worker_->is_grpc_service()) {
-        handler_.Call(env_.Global(), {
+        handler_.MakeCallback(env_.Global(), {
             Napi::Number::New(env_, encode_to_double(handle)),
             Napi::String::New(env_, std::string(method)),
             Napi::Buffer<char>::Copy(env_, request.data(), request.size()),
             Napi::Function::New<Engine::IncomingFuncCallFinished>(env_, "func_finished_cb", this)
         });
     } else {
-        handler_.Call(env_.Global(), {
+        handler_.MakeCallback(env_.Global(), {
             Napi::Number::New(env_, encode_to_double(handle)),
             Napi::Buffer<char>::Copy(env_, request.data(), request.size()),
             Napi::Function::New<Engine::IncomingFuncCallFinished>(env_, "func_finished_cb", this)
