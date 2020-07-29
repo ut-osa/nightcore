@@ -11,7 +11,8 @@ Napi::Object Engine::Init(Napi::Env env, Napi::Object exports) {
             InstanceMethod("isGrpcService", &Engine::IsGrpcService),
             InstanceMethod("getFuncName", &Engine::GetFuncName),
             InstanceMethod("start", &Engine::Start),
-            InstanceMethod("invokeFunc", &Engine::InvokeFunc)
+            InstanceMethod("invokeFunc", &Engine::InvokeFunc),
+            InstanceMethod("grpcCall", &Engine::GrpcCall)
         }
     );
 
@@ -96,12 +97,18 @@ Napi::Value Engine::Start(const Napi::CallbackInfo& info) {
 }
 
 namespace {
-static std::string int64_to_str(int64_t value) {
-    return fmt::format("{}", value);
+static double encode_to_double(int64_t value) {
+    static_assert(sizeof(double) == sizeof(int64_t));
+    double result;
+    memcpy(&result, &value, sizeof(double));
+    return result;
 }
 
-static int64_t str_to_int64(const std::string& str) {
-    return atoll(str.c_str());
+static int64_t decode_from_double(double value) {
+    static_assert(sizeof(double) == sizeof(int64_t));
+    int64_t result;
+    memcpy(&result, &value, sizeof(int64_t));
+    return result;
 }
 }
 
@@ -111,8 +118,8 @@ Napi::Value Engine::InvokeFunc(const Napi::CallbackInfo& info) {
             .ThrowAsJavaScriptException();
         return info.Env().Undefined();
     }
-    if (!info[0].IsString()) {
-        Napi::TypeError::New(info.Env(), "The 1st argument should be a string")
+    if (!info[0].IsNumber()) {
+        Napi::TypeError::New(info.Env(), "The 1st argument should be a number")
             .ThrowAsJavaScriptException();
         return info.Env().Undefined();
     }
@@ -132,18 +139,68 @@ Napi::Value Engine::InvokeFunc(const Napi::CallbackInfo& info) {
         return info.Env().Undefined();
     }
 
-    int64_t parent_handle = str_to_int64(std::string(info[0].As<Napi::String>()));
-    std::string method(info[1].As<Napi::String>());
+    int64_t parent_handle = decode_from_double(info[0].As<Napi::Number>().DoubleValue());
+    std::string func_name(info[1].As<Napi::String>());
     Napi::Buffer<char> buffer = info[2].As<Napi::Buffer<char>>();
     std::span<const char> input(buffer.Data(), buffer.Length());
 
     Napi::Function cb = info[3].As<Napi::Function>();
     int64_t handle;
-    if (worker_->NewOutgoingFuncCall(parent_handle, method, input, &handle)) {
+    if (worker_->NewOutgoingFuncCall(parent_handle, func_name, input, &handle)) {
         outgoing_func_call_cbs_[handle] = Napi::Persistent(cb);
     } else {
         cb.Call(info.Env().Global(), {
             Napi::TypeError::New(info.Env(), "NewOutgoingFuncCall failed").Value()
+        });
+    }
+    return info.Env().Undefined();
+}
+
+Napi::Value Engine::GrpcCall(const Napi::CallbackInfo& info) {
+    if (info.Length() != 5) {
+        Napi::TypeError::New(info.Env(), "grpcCall takes 5 arguments")
+            .ThrowAsJavaScriptException();
+        return info.Env().Undefined();
+    }
+    if (!info[0].IsNumber()) {
+        Napi::TypeError::New(info.Env(), "The 1st argument should be a number")
+            .ThrowAsJavaScriptException();
+        return info.Env().Undefined();
+    }
+    if (!info[1].IsString()) {
+        Napi::TypeError::New(info.Env(), "The 2nd argument should be a string")
+            .ThrowAsJavaScriptException();
+        return info.Env().Undefined();
+    }
+    if (!info[2].IsString()) {
+        Napi::TypeError::New(info.Env(), "The 3rd argument should be a string")
+            .ThrowAsJavaScriptException();
+        return info.Env().Undefined();
+    }
+    if (!info[3].IsBuffer()) {
+        Napi::TypeError::New(info.Env(), "The 4th argument should be a buffer")
+            .ThrowAsJavaScriptException();
+        return info.Env().Undefined();
+    }
+    if (!info[4].IsFunction()) {
+        Napi::TypeError::New(info.Env(), "The 5th argument should be the callback")
+            .ThrowAsJavaScriptException();
+        return info.Env().Undefined();
+    }
+
+    int64_t parent_handle = decode_from_double(info[0].As<Napi::Number>().DoubleValue());
+    std::string service(info[1].As<Napi::String>());
+    std::string method(info[2].As<Napi::String>());
+    Napi::Buffer<char> buffer = info[3].As<Napi::Buffer<char>>();
+    std::span<const char> input(buffer.Data(), buffer.Length());
+
+    Napi::Function cb = info[4].As<Napi::Function>();
+    int64_t handle;
+    if (worker_->NewOutgoingGrpcCall(parent_handle, service, method, input, &handle)) {
+        outgoing_func_call_cbs_[handle] = Napi::Persistent(cb);
+    } else {
+        cb.Call(info.Env().Global(), {
+            Napi::TypeError::New(info.Env(), "NewOutgoingGrpcCall failed").Value()
         });
     }
     return info.Env().Undefined();
@@ -172,8 +229,8 @@ Napi::Value Engine::IncomingFuncCallFinished(const Napi::CallbackInfo& info) {
             .ThrowAsJavaScriptException();
         return info.Env().Undefined();
     }
-    if (!info[0].IsString()) {
-        Napi::TypeError::New(info.Env(), "The first argument should be a string")
+    if (!info[0].IsNumber()) {
+        Napi::TypeError::New(info.Env(), "The first argument should be a number")
             .ThrowAsJavaScriptException();
         return info.Env().Undefined();
     }
@@ -182,7 +239,7 @@ Napi::Value Engine::IncomingFuncCallFinished(const Napi::CallbackInfo& info) {
             .ThrowAsJavaScriptException();
         return info.Env().Undefined();
     }
-    int64_t handle = str_to_int64(std::string(info[0].As<Napi::String>()));
+    int64_t handle = decode_from_double(info[0].As<Napi::Number>().DoubleValue());
     bool success = info[1].As<Napi::Boolean>().Value();
     std::span<const char> output;
     if (success) {
@@ -201,14 +258,14 @@ void Engine::OnIncomingFuncCall(int64_t handle, std::string_view method,
     Napi::HandleScope scope(env_);
     if (worker_->is_grpc_service()) {
         handler_.Call(env_.Global(), {
-            Napi::String::New(env_, int64_to_str(handle)),
+            Napi::Number::New(env_, encode_to_double(handle)),
             Napi::String::New(env_, std::string(method)),
             Napi::Buffer<char>::Copy(env_, request.data(), request.size()),
             Napi::Function::New<Engine::IncomingFuncCallFinished>(env_, "func_finished_cb", this)
         });
     } else {
         handler_.Call(env_.Global(), {
-            Napi::String::New(env_, int64_to_str(handle)),
+            Napi::Number::New(env_, encode_to_double(handle)),
             Napi::Buffer<char>::Copy(env_, request.data(), request.size()),
             Napi::Function::New<Engine::IncomingFuncCallFinished>(env_, "func_finished_cb", this)
         });

@@ -59,6 +59,7 @@ private:
     IncomingFuncCallCallback          incoming_func_call_cb_;
     OutgoingFuncCallCompleteCallback  outgoing_func_call_complete_cb_;
 
+    bool use_fifo_for_nested_call_;
     int message_pipe_fd_;
     FuncConfig func_config_;
     const FuncConfig::Entry* config_entry_;
@@ -117,6 +118,7 @@ private:
     void OnMessagePipeReadable();
     void OnEnginePipeReadable(FuncWorkerState* state);
     void OnOutputPipeReadable(OutgoingFuncCallState* state);
+    void OnOutgoingFuncCallFinished(const protocol::Message& message, OutgoingFuncCallState* state);
 
     DISALLOW_COPY_AND_ASSIGN(EventDrivenWorker);
 };

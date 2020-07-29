@@ -35,6 +35,7 @@ private:
     Napi::Value GetFuncName(const Napi::CallbackInfo& info);
     Napi::Value Start(const Napi::CallbackInfo& info);
     Napi::Value InvokeFunc(const Napi::CallbackInfo& info);
+    Napi::Value GrpcCall(const Napi::CallbackInfo& info);
     static Napi::Value IncomingFuncCallFinished(const Napi::CallbackInfo& info);
 
     void AddWatchFdReadable(int fd);

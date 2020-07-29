@@ -18,9 +18,12 @@ using protocol::NewFuncCallWithMethod;
 using protocol::FuncCallDebugString;
 using protocol::Message;
 using protocol::GetFuncCallFromMessage;
+using protocol::GetInlineDataFromMessage;
 using protocol::IsHandshakeResponseMessage;
 using protocol::IsCreateFuncWorkerMessage;
 using protocol::IsDispatchFuncCallMessage;
+using protocol::IsFuncCallCompleteMessage;
+using protocol::IsFuncCallFailedMessage;
 using protocol::NewFuncWorkerHandshakeMessage;
 using protocol::NewFuncCallFailedMessage;
 
@@ -31,6 +34,8 @@ EventDrivenWorker::EventDrivenWorker() {
     if (!worker_created.compare_exchange_strong(zero, 1)) {
         LOG(FATAL) << "More than one EventDrivenWorker created";
     }
+
+    use_fifo_for_nested_call_ = false;
 
     ipc::SetRootPathForIpc(utils::GetEnvVariable("FAAS_ROOT_PATH_FOR_IPC", ""));
     int func_id = utils::GetEnvVariableAsInt("FAAS_FUNC_ID", -1);
@@ -93,8 +98,13 @@ void EventDrivenWorker::OnFuncExecutionFinished(int64_t handle, bool success,
         GetMonotonicMicroTimestamp() - func_call_state->start_timestamp);
     VLOG(1) << "Finish executing func_call " << FuncCallDebugString(func_call);
     Message response;
-    worker_lib::FifoFuncCallFinished(
-        func_call, success, output, processing_time, main_pipe_buf_, &response);
+    if (use_fifo_for_nested_call_) {
+        worker_lib::FifoFuncCallFinished(
+            func_call, success, output, processing_time, main_pipe_buf_, &response);
+    } else {
+        worker_lib::FuncCallFinished(
+            func_call, success, output, processing_time, &response);
+    }
     VLOG(1) << "Send response to engine";
     response.dispatch_delay = func_call_state->dispatch_delay;
     response.send_timestamp = GetMonotonicMicroTimestamp();
@@ -176,6 +186,12 @@ void EventDrivenWorker::NewFuncWorker(uint16_t client_id) {
         << "Failed to receive handshake response from engine";
     CHECK(IsHandshakeResponseMessage(response))
         << "Receive invalid handshake response";
+    if (response.flags & protocol::kUseFifoForNestedCallFlag) {
+        if (!use_fifo_for_nested_call_) {
+            LOG(INFO) << "Use extra FIFOs for handling nested call";
+            use_fifo_for_nested_call_ = true;
+        }
+    }
     int output_pipe_fd = ipc::FifoOpenForWrite(ipc::GetFuncWorkerOutputFifoName(client_id));
     LOG(INFO) << "Handshake done: client_id=" << client_id;
 
@@ -233,26 +249,32 @@ bool EventDrivenWorker::NewOutgoingFuncCallCommon(const protocol::FuncCall& pare
             func_call, parent_call.full_call_id, input, &input_region, &invoke_func_message)) {
         return false;
     }
-    // Create fifo for output
-    if (!ipc::FifoCreate(ipc::GetFuncCallOutputFifoName(func_call.full_call_id))) {
-        LOG(ERROR) << "FifoCreate failed";
-        return false;
+
+    int output_fifo = -1;
+    if (use_fifo_for_nested_call_) {
+        // Create fifo for output
+        if (!ipc::FifoCreate(ipc::GetFuncCallOutputFifoName(func_call.full_call_id))) {
+            LOG(ERROR) << "FifoCreate failed";
+            return false;
+        }
+        output_fifo = ipc::FifoOpenForReadWrite(
+            ipc::GetFuncCallOutputFifoName(func_call.full_call_id), /* nonblocking= */ true);
+        if (output_fifo == -1) {
+            LOG(ERROR) << "FifoOpenForReadWrite failed";
+            ipc::FifoRemove(ipc::GetFuncCallOutputFifoName(func_call.full_call_id));
+            return false;
+        }
+        watch_fd_readable_cb_(output_fifo);
     }
-    int output_fifo = ipc::FifoOpenForReadWrite(
-        ipc::GetFuncCallOutputFifoName(func_call.full_call_id), /* nonblocking= */ true);
-    if (output_fifo == -1) {
-        LOG(ERROR) << "FifoOpenForReadWrite failed";
-        ipc::FifoRemove(ipc::GetFuncCallOutputFifoName(func_call.full_call_id));
-        return false;
-    }
-    watch_fd_readable_cb_(output_fifo);
 
     OutgoingFuncCallState* func_call_state = outgoing_func_call_pool_.Get();
     func_call_state->func_call = func_call;
     func_call_state->input_region = std::move(input_region);
     func_call_state->output_pipe_fd = output_fifo;
     outgoing_func_calls_[func_call.full_call_id] = func_call_state;
-    outgoing_func_call_by_output_pipe_fd_[output_fifo] = func_call_state;
+    if (output_fifo != -1) {
+        outgoing_func_call_by_output_pipe_fd_[output_fifo] = func_call_state;
+    }
 
     invoke_func_message.send_timestamp = GetMonotonicMicroTimestamp();
     PCHECK(io_utils::SendMessage(worker_state->output_pipe_fd, invoke_func_message));
@@ -277,6 +299,16 @@ void EventDrivenWorker::OnEnginePipeReadable(FuncWorkerState* worker_state) {
         << "Failed to receive message from engine";
     if (IsDispatchFuncCallMessage(message)) {
         ExecuteFunc(worker_state, message);
+    } else if (IsFuncCallCompleteMessage(message) || IsFuncCallFailedMessage(message)) {
+        if (use_fifo_for_nested_call_) {
+            LOG(FATAL) << "UseFifoForNestedCall flag is set, should not receive this message";
+        }
+        FuncCall func_call = GetFuncCallFromMessage(message);
+        if (outgoing_func_calls_.count(func_call.full_call_id) == 0) {
+            LOG(ERROR) << "Unknown outgoing func call: " << FuncCallDebugString(func_call);
+            return;
+        }
+        OnOutgoingFuncCallFinished(message, outgoing_func_calls_[func_call.full_call_id]);
     } else {
         LOG(FATAL) << "Unknown message type";
     }
@@ -305,6 +337,49 @@ void EventDrivenWorker::OnOutputPipeReadable(OutgoingFuncCallState* func_call_st
         outgoing_func_call_complete_cb_(func_call_to_handle(func_call_state->func_call),
                                         /* success= */ false,
                                         /* output= */ std::span<const char>());
+    }
+}
+
+void EventDrivenWorker::OnOutgoingFuncCallFinished(const Message& message,
+                                                   OutgoingFuncCallState* func_call_state) {
+    outgoing_func_calls_.erase(func_call_state->func_call.full_call_id);
+    auto reclaim_func_call_state = gsl::finally([this, func_call_state] {
+        func_call_state->input_region.reset(nullptr);
+        outgoing_func_call_pool_.Return(func_call_state);
+    });
+    if (IsFuncCallFailedMessage(message)) {
+        outgoing_func_call_complete_cb_(func_call_to_handle(func_call_state->func_call),
+                                        /* success= */ false,
+                                        /* output= */ std::span<const char>());
+        return;
+    } else if (!IsFuncCallCompleteMessage(message)) {
+        LOG(FATAL) << "Unknown message type";
+    }
+    std::unique_ptr<ipc::ShmRegion> output_region;
+    if (message.payload_size < 0) {
+        auto output_region = ipc::ShmOpen(
+            ipc::GetFuncCallOutputShmName(func_call_state->func_call.full_call_id));
+        if (output_region == nullptr) {
+            LOG(ERROR) << "ShmOpen failed";
+            outgoing_func_call_complete_cb_(func_call_to_handle(func_call_state->func_call),
+                                            /* success= */ false,
+                                            /* output= */ std::span<const char>());
+            return;
+        }
+        output_region->EnableRemoveOnDestruction();
+        if (output_region->size() != gsl::narrow_cast<size_t>(-message.payload_size)) {
+            LOG(ERROR) << "Output size mismatch";
+            outgoing_func_call_complete_cb_(func_call_to_handle(func_call_state->func_call),
+                                            /* success= */ false,
+                                            /* output= */ std::span<const char>());
+            return;
+        }
+        outgoing_func_call_complete_cb_(func_call_to_handle(func_call_state->func_call),
+                                        /* success= */ true, output_region->to_span());
+    } else {
+        std::span<const char> output = GetInlineDataFromMessage(message);
+        outgoing_func_call_complete_cb_(func_call_to_handle(func_call_state->func_call),
+                                        /* success= */ true, output);
     }
 }
 
