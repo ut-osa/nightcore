@@ -135,7 +135,7 @@ bool EventDrivenWorker::NewOutgoingGrpcCall(int64_t parent_handle, std::string_v
                                             std::string_view method, std::span<const char> request,
                                             int64_t* handle) {
     const FuncConfig::Entry* func_entry = func_config_.find_by_func_name(
-        fmt::format("grpc:%s", service));
+        fmt::format("grpc:{}", service));
     if (func_entry == nullptr || !func_entry->is_grpc_service) {
         LOG(ERROR) << "gRPC service " << service << " does not exist";
         return false;

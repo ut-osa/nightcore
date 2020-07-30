@@ -13,13 +13,32 @@ class Error(Exception):
         return self.message
 
 
+class GrpcChannelWrapper(object):
+    def __init__(self, context):
+        self._context = context
+    
+    def unary_unary(self, path, request_serializer, response_deserializer):
+        async def fn(request):
+            parts = path.split('/')
+            service = parts[1].strip()
+            method = parts[2].strip()
+            response_bytes = await self._context.grpc_call(
+                service, method, request_serializer(request))
+            return response_deserializer(response_bytes)
+        return fn
+
+
 class Context(object):
     def __init__(self, engine, handle):
         self._engine = engine
         self._handle = handle
+        self.grpc_channel = GrpcChannelWrapper(self)
 
     async def invoke_func(self, func_name, input_):
         return await self._engine.invoke_func(self._handle, func_name, input_)
+
+    async def grpc_call(self, service, method, request):
+        return await self._engine.grpc_call(self._handle, service, method, request)
 
 
 class Engine(object):
@@ -102,6 +121,15 @@ class Engine(object):
         handle = self._worker.new_outgoing_func_call(parent_handle, func_name, input_)
         if handle is None:
             fut.set_exception(Error('new_outgoing_func_call failed'))
+        else:
+            self._outgoing_func_calls[handle] = fut
+        return fut
+
+    def grpc_call(self, parent_handle, service, method, request):
+        fut = self._loop.create_future()
+        handle = self._worker.new_outgoing_grpc_call(parent_handle, service, method, request)
+        if handle is None:
+            fut.set_exception(Error('new_outgoing_grpc_call failed'))
         else:
             self._outgoing_func_calls[handle] = fut
         return fut
