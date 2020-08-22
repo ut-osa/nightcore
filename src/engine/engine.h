@@ -100,6 +100,7 @@ private:
 
     int64_t last_external_request_timestamp_ ABSL_GUARDED_BY(mu_);
     stat::Counter incoming_external_requests_stat_ ABSL_GUARDED_BY(mu_);
+    stat::Counter incoming_internal_requests_stat_ ABSL_GUARDED_BY(mu_);
     stat::StatisticsCollector<float> external_requests_instant_rps_stat_ ABSL_GUARDED_BY(mu_);
     stat::StatisticsCollector<uint16_t> inflight_external_requests_stat_ ABSL_GUARDED_BY(mu_);
 

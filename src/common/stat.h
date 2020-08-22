@@ -179,7 +179,8 @@ public:
 
     explicit StatisticsCollector(ReportCallback report_callback)
         : min_report_samples_(kDefaultMinReportSamples),
-          report_callback_(report_callback) {}
+          report_callback_(report_callback),
+          force_enabled_(false) {}
 
     ~StatisticsCollector() {}
 
@@ -189,9 +190,16 @@ public:
     void set_min_report_samples(size_t value) {
         min_report_samples_ = value;
     }
+    void set_force_enabled(bool value) {
+        force_enabled_ = value;
+    }
 
     void AddSample(T sample) {
-#ifndef __FAAS_DISABLE_STAT
+#ifdef __FAAS_DISABLE_STAT
+        if (!force_enabled_) {
+            return;
+        }
+#endif
         samples_.push_back(sample);
         if (samples_.size() >= min_report_samples_ && report_timer_.Check()) {
             int duration_ms;
@@ -201,13 +209,13 @@ public:
             report_timer_.MarkReport(&duration_ms);
             report_callback_(duration_ms, n_samples, report);
         }
-#endif
     }
 
 private:
     size_t min_report_samples_;
     ReportCallback report_callback_;
 
+    bool force_enabled_;
     ReportTimer report_timer_;
     std::vector<T> samples_;
 

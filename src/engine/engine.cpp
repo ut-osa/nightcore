@@ -56,6 +56,8 @@ Engine::Engine()
       last_external_request_timestamp_(-1),
       incoming_external_requests_stat_(
           stat::Counter::StandardReportCallback("incoming_external_requests")),
+      incoming_internal_requests_stat_(
+          stat::Counter::StandardReportCallback("incoming_internal_requests")),
       external_requests_instant_rps_stat_(
           stat::StatisticsCollector<float>::StandardReportCallback("external_requests_instant_rps")),
       inflight_external_requests_stat_(
@@ -227,6 +229,7 @@ void Engine::OnRecvMessage(MessageConnection* connection, const Message& message
         Dispatcher* dispatcher = nullptr;
         {
             absl::MutexLock lk(&mu_);
+            incoming_internal_requests_stat_.Tick();
             if (message.payload_size < 0) {
                 input_use_shm_stat_.Tick();
             }
