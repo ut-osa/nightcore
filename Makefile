@@ -32,7 +32,7 @@ DLINK_FLAGS =
 #### END PROJECT SETTINGS ####
 
 # These options can be overridden in config.mk
-DISABLE_STAT = 0
+DISABLE_STAT = 1
 USE_NEW_STAT_COLLECTOR = 0
 DEBUG_BUILD = 0
 BUILD_BENCH = 0
@@ -41,7 +41,7 @@ ifneq ("$(wildcard config.mk)","")
     include config.mk
 endif
 
-ifeq ($(CXX),clang++)
+ifneq (,$(findstring clang,$(CXX)))
     COMPILE_FLAGS += -Wthread-safety -Wno-unused-private-field
 endif
 
