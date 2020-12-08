@@ -1,14 +1,15 @@
 Nightcore
 ==================================
 
-Nightcore is a research prototype function-as-a-service (FaaS) runtime with μs-scale latency and high throughput.
+Nightcore is a research function-as-a-service (FaaS) runtime with μs-scale latency and high throughput.
 Nightcore targets stateless microservices that requires low latency.
 The current prototype supports functions written in C/C++, Go, Node.js, and Python.
 
 ### Building Nightcore ###
 
 ```
-./build_deps.sh && make -j $(nproc)
+./build_deps.sh
+make -j $(nproc)
 ```
 
 ### Running "Hello world" examples ###
