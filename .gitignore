@@ -15,8 +15,9 @@
 /worker/python/faas/__pycache__/
 
 # Examples related
+/examples/*/outputs
 /examples/c/*.so
-/examples/c/outputs
+/examples/go/main
 
 # Editor related
 /.vscode/

@@ -18,5 +18,5 @@ TODO
 
 ### Running microservice workloads ###
 
-Another repository [ut-osa/nightcore-benchmarks](https://github.com/ut-osa/nightcore-benchmarks)
+A separate repository [ut-osa/nightcore-benchmarks](https://github.com/ut-osa/nightcore-benchmarks)
 includes scripts and detailed instructions on running microservice workloads presented in our ASPLOS paper.

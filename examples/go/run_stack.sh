@@ -21,15 +21,15 @@ $NIGHTCORE_ROOT/bin/$BUILD_TYPE/engine \
 sleep 1
 
 $NIGHTCORE_ROOT/bin/$BUILD_TYPE/launcher \
-    --func_id=1 --fprocess_mode=cpp \
+    --func_id=1 --fprocess_mode=go \
     --fprocess_output_dir=$BASE_DIR/outputs \
-    --fprocess="$NIGHTCORE_ROOT/bin/$BUILD_TYPE/func_worker_v1 $BASE_DIR/libfoo.so" \
+    --fprocess=$BASE_DIR/main \
     --v=1 2>$BASE_DIR/outputs/launcher_foo.log &
 
 $NIGHTCORE_ROOT/bin/$BUILD_TYPE/launcher \
-    --func_id=2 --fprocess_mode=cpp \
+    --func_id=2 --fprocess_mode=go \
     --fprocess_output_dir=$BASE_DIR/outputs \
-    --fprocess="$NIGHTCORE_ROOT/bin/$BUILD_TYPE/func_worker_v1 $BASE_DIR/libbar.so" \
+    --fprocess=$BASE_DIR/main \
     --v=1 2>$BASE_DIR/outputs/launcher_bar.log &
 
 wait
