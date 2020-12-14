@@ -14,7 +14,9 @@ make -j $(nproc)
 
 ### Running "Hello world" examples ###
 
-TODO
+Inside [examples](https://github.com/ut-osa/nightcore/tree/asplos-release/examples),
+we provide "Hello world" example functions implemented in all supported programming languages.
+These function demonstrate the basic usage of Nightcore's API for internal function calls.
 
 ### Running microservice workloads ###
 
