@@ -1,0 +1,8 @@
+{
+  "name": "nightcore-example",
+  "version": "0.1.0",
+  "description": "Nightcore's Node.js example",
+  "dependencies": {
+    "faas": "file:../../worker/nodejs"
+  }
+}
