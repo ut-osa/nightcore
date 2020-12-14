@@ -27,7 +27,7 @@
 
 #include <sys/syscall.h>
 
-static pid_t gettid() {
+static pid_t __gettid() {
     return syscall(SYS_gettid);
 }
 
@@ -99,7 +99,7 @@ LogMessage::LogMessage(const char* file, int line, LogSeverity severity, bool ap
 #ifdef __FAAS_SRC
     sprintf(buffer+21, " %-8.8s", base::Thread::current()->name());
 #else
-    sprintf(buffer+21, " %d", static_cast<int>(gettid()));
+    sprintf(buffer+21, " %d", static_cast<int>(__gettid()));
 #endif
     stream() << fmt::format("{} {}:{}] ", buffer, filename, line);
 }
