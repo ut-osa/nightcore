@@ -14,6 +14,10 @@
 # Python related
 /worker/python/faas/__pycache__/
 
+# Examples related
+/examples/c/*.so
+/examples/c/outputs
+
 # Editor related
 /.vscode/
 
